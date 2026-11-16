@@ -1,0 +1,26 @@
+# Kubernetes sandbox for the agent on Hawk's L4 pool (AWS g6): one container, one GPU.
+# Built by researcharena_inspect.environment.sandbox_spec("k8s", "l4"); see sandbox.py.
+#
+# Upstream asks for 8 CPUs and 64-256 GB on an H100 node. The L4 node Hawk gave us has 8 CPUs
+# and about 32 GB, so this asks for what fits beside the node's own daemons (D-094). Disk:
+# upstream asks for 100 GB; Hawk's GPU nodes keep pod storage on the instance's NVMe disk.
+# allowEntities [world] opens the network as upstream leaves it (ledger D-029). No
+# runtimeClassName: Hawk runs a GPU service on the node's default runtime and adds the GPU
+# pool's toleration itself.
+services:
+  default:
+    image: ghcr.io/archit-manek/researcharena-inspect/arena@sha256:e1cebf2cfc3a3868b272d91413275d884095b930f97475a2180ea1f95ca68d5d
+    nodeSelector:
+      karpenter.k8s.aws/instance-gpu-name: l4
+    resources:
+      requests:
+        cpu: "6"
+        memory: 24Gi
+        ephemeral-storage: 100Gi
+        nvidia.com/gpu: 1
+      limits:
+        cpu: "6"
+        memory: 24Gi
+        nvidia.com/gpu: 1
+allowEntities:
+  - world

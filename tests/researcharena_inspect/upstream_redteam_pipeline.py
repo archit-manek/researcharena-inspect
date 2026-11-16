@@ -1,0 +1,192 @@
+"""Run upstream's `src/pipeline_redteam.sh` for real, as the oracle for workspace staging.
+
+The script runs unchanged from a clean export of the pinned commit, in a Debian container
+with git (`python:3.12-bookworm`). With no Apptainer image it takes its host branch
+(`pipeline_redteam.sh:382-401`): it stages the agent's home exactly as for a container run,
+then runs the staged `agent_solve.sh` with the pipeline's own `HOME`. Upstream's tree is not
+edited; what stands in for the parts that need a cluster lives outside it:
+
+- `$HOME/update_agent_cli.sh`, which every `solve.sh` calls before it starts its CLI, records
+  the agent's home at that moment (the workspace the agent starts with), applies the test's
+  stand-in for the agent's work, and exits 1, so the agent "finishes" there.
+- A `python3` wrapper that, when the pipeline runs `evaluate.py`, records the evaluator's job
+  folder and the submitted `task_snapshot`, then writes a placeholder `metrics.json` so the
+  pipeline does not retry. Every other `python3` call goes to the real interpreter.
+- No-op `nvidia-smi`, `fuse-overlayfs`, `fusermount` and `sleep`, and a `date` that answers
+  `date +%s` with a fixed time, so `timer.sh` is reproducible.
+
+The git identity of the hooks' commit is passed as `GIT_*` variables: upstream's hooks use the
+cluster account's identity, which is not known (a faithful reading, not executed upstream).
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import tarfile
+from dataclasses import dataclass
+from io import BytesIO
+from pathlib import Path
+
+from researcharena_inspect.environment.staging import GIT_IDENTITY
+from researcharena_inspect.pins import UPSTREAM_COMMIT
+from researcharena_inspect.upstream import upstream_dir
+
+IMAGE = "python:3.12-bookworm"
+FIXED_EPOCH = 1_700_000_000
+"""What `date +%s` answers in both containers, so `timer.sh` is the same file."""
+
+MANIFEST_SOURCE = Path(__file__).with_name("tree_manifest.py")
+
+DATE_SHIM = f"""#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = "+%s" ]; then echo {FIXED_EPOCH}; else exec /usr/bin/date "$@"; fi
+"""
+
+# The test's stand-in for an agent's work, run in task/ as the agent's user, on both sides.
+AGENT_WORK = """#!/bin/sh
+set -eu
+printf '// tuned\\n' >> kernels/rmsnorm.cu
+mkdir -p workspace
+printf '1.2345\\n' > workspace/baseline_tps.txt
+chmod 600 workspace/baseline_tps.txt
+mkdir -p scratch_model final_model/sub
+printf '{}' > scratch_model/config.json
+printf 'weights' > scratch_model/model.safetensors
+printf '{}' > final_model/config.json
+printf 'weights' > final_model/model.safetensors
+printf '{}' > final_model/sub/config.json
+printf 'weights' > final_model/sub/model.safetensors
+ln -s kernels/rmsnorm.cu kernel_link
+printf 'note\\n' > .notes
+git add kernels/rmsnorm.cu
+GIT_AUTHOR_NAME=agent GIT_AUTHOR_EMAIL=agent@example.invalid \\
+    GIT_COMMITTER_NAME=agent GIT_COMMITTER_EMAIL=agent@example.invalid git commit -q -m "agent edit"
+"""
+
+UPDATE_CLI_STANDIN = """#!/usr/bin/env bash
+# Stand-in for the CLI updater: record the agent's starting home, do the test's work, stop.
+set -euo pipefail
+JOB_DIR="$(cd .. && pwd)"
+python3 /work/tree_manifest.py "$JOB_DIR" > /capture/home.json
+pwd > /capture/agent_cwd.txt
+sh /work/agent_work.sh
+exit 1
+"""
+
+PYTHON_WRAPPER = """#!/bin/sh
+# python3 wrapper: record the evaluator's view the first time evaluate.py runs.
+if [ "${1:-}" = "evaluate.py" ] && [ ! -e /capture/eval_home.json ]; then
+    submission=""; output=""; prev=""
+    for arg in "$@"; do
+        case "$prev" in --submission-dir) submission="$arg" ;; --output) output="$arg" ;; esac
+        prev="$arg"
+    done
+    /usr/local/bin/python3 /work/tree_manifest.py "$PWD" > /capture/eval_home.json
+    /usr/local/bin/python3 /work/tree_manifest.py "$submission/task_snapshot" > /capture/snapshot.json
+    /usr/local/bin/python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@" > /capture/eval_argv.json
+    printf '{"main_task_score": 0}' > "$output"
+    exit 0
+fi
+exec /usr/local/bin/python3 "$@"
+"""
+
+NOOP = "#!/bin/sh\nexit 0\n"
+
+
+def docker_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    return subprocess.run(["docker", "info"], capture_output=True, check=False).returncode == 0
+
+
+def export_arena(dest: Path, commit: str = UPSTREAM_COMMIT) -> Path:
+    """A clean copy of upstream's tree at `commit`, unchanged."""
+    archive = subprocess.run(
+        ["git", "-C", str(upstream_dir(commit)), "archive", "--format=tar", commit],
+        capture_output=True,
+        check=True,
+    ).stdout
+    dest.mkdir(parents=True)
+    with tarfile.open(fileobj=BytesIO(archive)) as tar:
+        tar.extractall(dest, filter="tar")
+    return dest
+
+
+def _write(path: Path, text: str, mode: int = 0o755) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    path.chmod(mode)
+
+
+def prepare_work(work: Path) -> None:
+    """The stand-ins, shared by every run in `work`."""
+    shims = work / "shims"
+    _write(shims / "date", DATE_SHIM)
+    _write(shims / "python3", PYTHON_WRAPPER)
+    for name in ("nvidia-smi", "fuse-overlayfs", "fusermount", "sleep"):
+        _write(shims / name, NOOP)
+    _write(work / "agent_work.sh", AGENT_WORK)
+    shutil.copy(MANIFEST_SOURCE, work / "tree_manifest.py")
+    (work / "hf").mkdir(exist_ok=True)
+
+
+@dataclass
+class PipelineRun:
+    home: dict
+    """The agent's home when its CLI would start (tree_manifest output)."""
+    agent_cwd: str
+    eval_home: dict | None
+    snapshot: dict | None
+    eval_argv: list[str] | None
+    returncode: int
+    log: str
+
+
+def run_pipeline(
+    work: Path, arena: Path, *, side_task: str, agent: str, redruntime: str = "1"
+) -> PipelineRun:
+    """`pipeline_redteam.sh cuda_kernel <side_task> <redruntime> <agent> test-model 1 test`."""
+    run_dir = work / f"run_{side_task}_{agent}"
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    capture = run_dir / "capture"
+    home = run_dir / "home"
+    capture.mkdir(parents=True)
+    _write(home / "update_agent_cli.sh", UPDATE_CLI_STANDIN)
+
+    def inside(p: Path) -> str:
+        return "/work/" + p.relative_to(work).as_posix()
+
+    env = {
+        "HOME": inside(home),
+        "ARENA_ROOT": inside(arena),
+        "ARENA_CONTAINER_SIF": "/nonexistent/arena.sif",
+        # Inside the container: a macOS bind mount would give symlinks mode 755, not 777.
+        "ARENA_RESULTS_DIR": "/tmp/results",
+        "HF_HOME": "/work/hf",
+        "PATH": "/work/shims:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "CLAUDE_OAUTH_TOKEN": "placeholder-not-a-token",
+        **GIT_IDENTITY,
+    }
+    cmd = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}"]
+    cmd += ["-v", f"{work}:/work", "-v", f"{capture}:/capture"]
+    for key, value in env.items():
+        cmd += ["-e", f"{key}={value}"]
+    cmd += [IMAGE, "bash", f"{inside(arena)}/src/pipeline_redteam.sh"]
+    cmd += ["cuda_kernel", side_task, redruntime, agent, "test-model", "1", "test"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+    def load(name: str):
+        path = capture / name
+        return json.loads(path.read_text()) if path.is_file() else None
+
+    cwd = capture / "agent_cwd.txt"
+    return PipelineRun(
+        home=load("home.json") or {},
+        agent_cwd=cwd.read_text().strip() if cwd.is_file() else "",
+        eval_home=load("eval_home.json"),
+        snapshot=load("snapshot.json"),
+        eval_argv=load("eval_argv.json"),
+        returncode=proc.returncode,
+        log=proc.stdout + proc.stderr,
+    )
