@@ -383,16 +383,18 @@ async def stage_workspace(
     await sandbox_env().write_file(
         f"{STAGING_DIR}/upstream.tar", tar_entries(hook_bundle(setting, side_task, upstream))
     )
+    # `tar -m`: files get the time they are unpacked, as upstream's `cp -r` gives copies the
+    # time they are copied (the archive's own times are 1970).
     unpack = (
         f"set -eu; mkdir -p {STAGING_DIR}/upstream && "
-        f"tar -xpf {STAGING_DIR}/upstream.tar --no-same-owner -C {STAGING_DIR}/upstream && "
+        f"tar -xpmf {STAGING_DIR}/upstream.tar --no-same-owner -C {STAGING_DIR}/upstream && "
         f"chmod -R a+rX {STAGING_DIR}"
     )
     result = await _exec(unpack, user="root")
     if not result.success:
         raise StagingError(f"unpacking upstream's scripts failed: {result.stderr}")
     result = await _exec(
-        f"umask 022; tar -xpf {STAGING_DIR}/home.tar --no-same-owner -C {AGENT_HOME}",
+        f"umask 022; tar -xpmf {STAGING_DIR}/home.tar --no-same-owner -C {AGENT_HOME}",
         user=AGENT_USER,
     )
     if not result.success:

@@ -194,11 +194,11 @@ async def prepare_evaluation(
     if not result.success:
         raise StagingError(f"clean_hf_models.py failed: {result.stdout}{result.stderr}")
 
-    # Steps 2 and 3.
+    # Steps 2 and 3. `tar -m` gives the files the time they are unpacked, as upstream's `cp`.
     result = await _exec(
         f"set -eu; {umask}; mkdir -p {EVAL_DIR}/red_team {EVAL_DIR}/eval; "
         f"cp -r {TASK_DIR} {SNAPSHOT_DIR}; "
-        f"tar -xpf {_SCRATCH}/evaluator.tar --no-same-owner -C {EVAL_HOME}",
+        f"tar -xpmf {_SCRATCH}/evaluator.tar --no-same-owner -C {EVAL_HOME}",
         user=AGENT_USER,
         env=env,
     )

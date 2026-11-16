@@ -72,6 +72,7 @@ def git_state(repo):
 def describe(root, owner=False):
     entries = {}
     repos = {}
+    oldest = None  # the oldest modification time outside .git, links aside
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
         rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
@@ -85,6 +86,8 @@ def describe(root, owner=False):
             full = dirpath if name == "." else os.path.join(dirpath, name)
             rel = "." if name == "." else os.path.relpath(full, root).replace(os.sep, "/")
             info = os.lstat(full)
+            if not stat.S_ISLNK(info.st_mode):
+                oldest = info.st_mtime if oldest is None else min(oldest, info.st_mtime)
             mode = oct(stat.S_IMODE(info.st_mode))
             entry: list[object]
             if stat.S_ISLNK(info.st_mode):
@@ -96,7 +99,7 @@ def describe(root, owner=False):
             if owner:
                 entry.append(info.st_uid)
             entries[rel] = entry
-    return {"entries": entries, "git": repos}
+    return {"entries": entries, "git": repos, "oldest_mtime": oldest}
 
 
 if __name__ == "__main__":

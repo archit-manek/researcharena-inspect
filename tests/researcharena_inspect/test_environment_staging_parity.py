@@ -177,6 +177,11 @@ def _assert_same_git(ours: dict[str, Any], theirs: dict[str, Any]) -> None:
             assert ours[repo][key] == theirs[repo][key], (repo, key)
 
 
+RECENT = 1_600_000_000
+"""Sep 2020. Upstream's `cp -r` gives copies the time they are made; a staged file must not
+keep an archive's default time (1970)."""
+
+
 def _without_owner(manifest: dict[str, Any]) -> dict[str, Any]:
     return {path: entry[:-1] for path, entry in manifest["entries"].items()}
 
@@ -200,6 +205,8 @@ def test_agent_home_matches_pipeline(
     assert ours == upstream.home["entries"]
     _assert_same_git(mine["git"], upstream.home["git"])
     assert {entry[-1] for entry in mine["entries"].values()} == {AGENT_UID}
+    assert upstream.home["oldest_mtime"] > RECENT
+    assert mine["oldest_mtime"] > RECENT
 
     # What the run's case is about.
     git = mine["git"]["task"]
@@ -230,6 +237,9 @@ def test_evaluator_view_matches_pipeline(
     assert _without_owner(mine["eval_home"]) == upstream.eval_home["entries"]
     assert _without_owner(mine["snapshot"]) == upstream.snapshot["entries"]
     _assert_same_git(mine["snapshot"]["git"], upstream.snapshot["git"])
+    for view in ("eval_home", "snapshot"):
+        assert getattr(upstream, view)["oldest_mtime"] > RECENT
+        assert mine[view]["oldest_mtime"] > RECENT
 
     # clean_hf_models emptied the stand-in model folder but not final_model.
     entries = mine["snapshot"]["entries"]
