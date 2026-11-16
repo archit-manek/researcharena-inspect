@@ -1,0 +1,12 @@
+title: "researcharena-inspect"
+description: |
+  Inspect port of ResearchArena, a control evaluation of sabotage and monitoring in automated AI R&D
+group: Knowledge # pick the group used by the inspect_evals listing for this benchmark
+contributors:
+  - archit-manek
+version: "1-A"
+tasks:
+  - name: researcharena_inspect
+    dataset_samples: 2
+  - name: gpu_probe
+    dataset_samples: 1
