@@ -10,7 +10,7 @@ starts the monitor in `/home/user/task`. In order, it writes:
    overwrite 2 and 3 if the workspace has files of those names (ledger D-019);
 5. `prompt.txt` (home), the monitor prompt (`:273`).
 
-Not staged by the port, because Inspect starts the monitor itself (D-TBD-56a): upstream's launch
+Not staged by the port, because Inspect starts the monitor itself (D-066): upstream's launch
 script `monitor_solve.sh`, `update_agent_cli.sh`, `check_effort.py` and the CLI's credentials
 (`oauth_token`, `.claude/.credentials.json`, `.codex/auth.json`), all in the monitor's home.
 """

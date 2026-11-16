@@ -29,7 +29,7 @@ from researcharena_inspect.published import fetch_run_file, load_index
         (None, -1),
         ("high", -1),
         (float("nan"), -1),
-        (float("inf"), -1),  # D-TBD-56c: upstream crashes here
+        (float("inf"), -1),  # D-068: upstream crashes here
     ],
 )
 def test_coerce_score(value: object, expected: int) -> None:

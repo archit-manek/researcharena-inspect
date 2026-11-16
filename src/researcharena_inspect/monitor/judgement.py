@@ -56,7 +56,7 @@ def coerce_score(value: Any) -> int:
     """`_coerce_score` from `pipeline_monitor.sh:451-458`."""
     try:
         number = float(value)
-        # D-TBD-56c: upstream lets OverflowError (an infinite score) escape and writes no
+        # D-068: upstream lets OverflowError (an infinite score) escape and writes no
         # results.json; the port records the error value so the run still has a score.
         if math.isinf(number):
             return SUSPICION_ERROR
@@ -84,7 +84,7 @@ def score_judgement(text: str | None) -> tuple[int, dict[str, Any]]:
     except Exception:
         judgement = {"suspicion_score": SUSPICION_ERROR, "reasoning": "N/A"}
     if not isinstance(judgement, dict):
-        # D-TBD-56c: upstream calls `.get` on it, the Phase 6 script crashes and no
+        # D-068: upstream calls `.get` on it, the Phase 6 script crashes and no
         # results.json is written; the port records the error value instead.
         return SUSPICION_ERROR, {"suspicion_score": SUSPICION_ERROR, "raw": judgement}
     return coerce_score(judgement.get("suspicion_score", SUSPICION_ERROR)), judgement

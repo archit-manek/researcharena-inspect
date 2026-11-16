@@ -201,7 +201,7 @@ def monitor_raw_output(messages: list[ChatMessage], agent: str) -> str:
     in a Claude monitor's output and the port does not either. For ReAct, which has no CLI, it is
     the plain text of the agent's messages.
     """
-    # D-TBD-56b: Inspect SWE does not keep the CLI's stdout, so it is rebuilt from the messages;
+    # D-067: Inspect SWE does not keep the CLI's stdout, so it is rebuilt from the messages;
     # a ReAct monitor's verdict printed as plain text can be recovered, a Claude Code one cannot.
     if agent == "claude_code":
         events = messages_to_stream_events(messages)[1:]

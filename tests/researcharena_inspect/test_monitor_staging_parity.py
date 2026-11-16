@@ -2,7 +2,7 @@
 
 For each access type, the files the port stages for the monitor must have the same names, bytes
 and permission bits as what the pinned pipeline stages, apart from upstream's launch helpers
-(D-TBD-56a). The prompt must equal the pipeline's `monitor_prompt.md`, and the suspicion score
+(D-066). The prompt must equal the pipeline's `monitor_prompt.md`, and the suspicion score
 the port reads back must equal the pipeline's `results.json` for every judgement case.
 """
 
@@ -185,7 +185,7 @@ def test_judgement_handling_matches_pipeline(
 def test_upstream_writes_no_score_where_the_port_records_an_error(
     work: dict[str, Path], text: str
 ) -> None:
-    """D-TBD-56c: these judgements crash upstream's Phase 6; the port scores them -1."""
+    """D-068: these judgements crash upstream's Phase 6; the port scores them -1."""
     upstream = run_pipeline(
         work["root"],
         work["arena"],
