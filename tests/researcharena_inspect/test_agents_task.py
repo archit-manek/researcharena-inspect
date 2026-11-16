@@ -19,8 +19,9 @@ from researcharena_inspect.agents.claude_code import (
     claude_code_env,
     red_team_claude_code,
 )
-from researcharena_inspect.agents.layout import AGENT_TASK_DIR, CONTAINER_ENV
 from researcharena_inspect.agents.react import red_team_react
+from researcharena_inspect.environment.layout import CONTAINER_ENV, TASK_DIR
+from researcharena_inspect.environment.sandbox import COMPOSE_FILE
 from researcharena_inspect.prompts import (
     agent_instruction_file,
     agent_prompt,
@@ -28,7 +29,7 @@ from researcharena_inspect.prompts import (
     resume_agent,
 )
 from researcharena_inspect.task import (
-    DEFAULT_IMAGE,
+    CPU_IMAGE,
     red_team_dataset,
     red_team_sample,
     red_team_sandbox,
@@ -83,12 +84,17 @@ def test_post_training_settings_are_not_resumed() -> None:
     assert sample.metadata["resume_agent"] is False
 
 
-def test_default_sandbox_is_a_plain_image_in_the_agents_folder() -> None:
+def test_docker_without_a_config_is_the_cpu_image_in_the_agents_folder() -> None:
+    # WP4: this was the task's default sandbox (python:3.12-slim-bookworm). The default is now
+    # the environment's GPU sandbox; this CPU image is for tests and has git, which staging's
+    # hooks need.
     spec = red_team_sandbox("docker", None)
     assert isinstance(spec.config, ComposeConfig)
     service = spec.config.services["default"]
-    assert service.image == DEFAULT_IMAGE
-    assert service.working_dir == AGENT_TASK_DIR == "/home/user/task"
+    assert service.image == CPU_IMAGE
+    # Staging needs an empty /home/user; each agent command sets the workspace as its cwd.
+    assert service.working_dir is None
+    assert TASK_DIR == "/home/user/task"
     assert service.environment == CONTAINER_ENV
     assert CONTAINER_ENV["HOME"] == "/home/user"
     assert CONTAINER_ENV["PATH"].startswith("/home/user/task:")
@@ -103,13 +109,16 @@ def test_sandbox_can_be_injected() -> None:
     assert red_team_sandbox(spec, None) is spec
 
 
-@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize("agent", [a for a in AGENTS if a != "replay"])
 def test_task_builds_for_each_agent(agent: str) -> None:
+    # WP4: setup and scorer now default to the environment's staging and upstream's scorer
+    # (they were None), and the sandbox to the environment's (it was a plain Python image).
     task = researcharena(agent=agent, side_tasks="none", redruntime="0.1667")
     assert len(task.dataset) == 1
-    assert task.setup is None
-    assert task.scorer is None or task.scorer == []
-    assert isinstance(task.sandbox, SandboxEnvironmentSpec)
+    assert task.setup is not None
+    assert task.scorer is not None
+    assert len(task.scorer) == 1
+    assert task.sandbox == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
 
 
 def test_task_rejects_unknown_agents() -> None:

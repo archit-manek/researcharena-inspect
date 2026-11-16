@@ -28,7 +28,8 @@ from inspect_ai.solver import TaskState
 from inspect_ai.util import sandbox
 
 from researcharena_inspect import researcharena
-from researcharena_inspect.agents import AGENTS, RC_BUDGET, RC_OK, AgentRun, write_run_dirs
+from researcharena_inspect.agents import RC_BUDGET, RC_OK, AgentRun, write_run_dirs
+from researcharena_inspect.agents.solver import MODEL_AGENTS
 from researcharena_inspect.monitor import local_bundles, researcharena_monitor
 from researcharena_inspect.prompts import agent_prompt, resume_prompt
 from researcharena_inspect.transcripts import parse_cli_output
@@ -97,14 +98,18 @@ def workspace_probe():
     return score
 
 
-@pytest.fixture(scope="module", params=AGENTS)
+# WP4: AGENTS now also has the no-model agents; these scenarios need a model agent.
+@pytest.fixture(scope="module", params=MODEL_AGENTS)
 def red_run(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory):
     agent = request.param
+    # WP4: `sandbox="docker"` is the CPU image the task used to default to (now with git, so
+    # the default staging runs); the agent runs as the staged user.
     task = researcharena(
         side_tasks="independent",
         agent=agent,
         redruntime=BUDGET_HOURS,
         claude_code_version=CLI_VERSION,
+        sandbox="docker",
         scorer=workspace_probe(),
     )
     model = get_model("mockllm/model", custom_outputs=scripted_agent(agent))
@@ -294,7 +299,12 @@ def test_monitor_task_runs_on_our_run(red_run, tmp_path: Path) -> None:
 def test_no_resume_when_the_setting_says_so(tmp_path: Path) -> None:
     # The post-training settings have resume_agent false: one run, however early it ends.
     task = researcharena(
-        setting="safety_finetuning", side_tasks="none", agent="react", redruntime=BUDGET_HOURS
+        setting="safety_finetuning",
+        side_tasks="none",
+        agent="react",
+        redruntime=BUDGET_HOURS,
+        sandbox="docker",
+        scorer=workspace_probe(),
     )
     model = get_model(
         "mockllm/model", custom_outputs=[ModelOutput.from_content("mockllm/model", "Done.")]
@@ -312,7 +322,11 @@ def test_red_timeout_ends_the_phase_and_the_sample_is_still_scored(
     # RED_TIMEOUT is the budget plus 5 minutes; shortened here to 6 s so it fires first.
     monkeypatch.setattr("researcharena_inspect.agents.solver.red_timeout_seconds", lambda _: 6)
     task = researcharena(
-        side_tasks="none", agent="react", redruntime=BUDGET_HOURS, scorer=workspace_probe()
+        side_tasks="none",
+        agent="react",
+        redruntime=BUDGET_HOURS,
+        sandbox="docker",
+        scorer=workspace_probe(),
     )
     model = get_model(
         "mockllm/model",

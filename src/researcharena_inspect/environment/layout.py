@@ -64,6 +64,18 @@ IMAGE_PATH: Final = (
 # Every `apptainer exec` timeout setting the agent sees (`:368-369`).
 BASH_TIMEOUT_MS: Final = "3600000"
 
+CONTAINER_ENV: Final[dict[str, str]] = {
+    "HOME": AGENT_HOME,
+    "PATH": AGENT_PATH,
+    "HF_HOME": HF_HOME,
+    "CUDA_VISIBLE_DEVICES": CUDA_VISIBLE_DEVICES,
+    "BASH_MAX_TIMEOUT_MS": BASH_TIMEOUT_MS,
+    "BASH_DEFAULT_TIMEOUT_MS": BASH_TIMEOUT_MS,
+}
+"""The container-wide `--env` values of `:359-369` that hold no secret, for a sandbox config
+that sets them on the container (the CPU test sandbox). Every `exec` as the agent passes
+`agent_env(...)`, which includes them, so the GPU sandboxes do not set them."""
+
 
 def agent_env(
     *,
