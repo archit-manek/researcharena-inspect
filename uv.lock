@@ -2775,7 +2775,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "inspect-ai", specifier = ">=0.3.262" },
-    { name = "inspect-evals-utils", extras = ["huggingface"], specifier = "==0.3.0" },
+    { name = "inspect-evals-utils", extras = ["huggingface"], specifier = ">=0.2.0" },
     { name = "inspect-swe", specifier = ">=0.2.72,<0.3.0" },
 ]
 

@@ -33,7 +33,6 @@ from inspect_ai.model import ModelOutput
 from inspect_ai.scorer import Score, Scorer, Target, mean, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentSpec, sandbox
-from inspect_evals_utils.metadata import load_eval_version
 
 from researcharena_inspect.environment.evaluation import prepare_evaluation
 from researcharena_inspect.environment.layout import (
@@ -50,7 +49,7 @@ from researcharena_inspect.prompts import format_hours, resume_agent
 from researcharena_inspect.scoring.kernel_bench import KERNELS, RESULT_PREFIX
 from researcharena_inspect.scoring.scorer import run_evaluation
 
-EVAL_VERSION = load_eval_version(Path(__file__).parent.parent / "eval.yaml")
+EVAL_VERSION = "1-A"  # side branch: inspect-evals-utils 0.2.0 has no metadata
 
 METADATA_KEY = "kernel_crash_check"
 PARTS = ("plain-repeats", "kernel-isolation")

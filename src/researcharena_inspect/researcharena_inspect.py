@@ -6,10 +6,9 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import match
 from inspect_ai.solver import generate
-from inspect_evals_utils.metadata import load_eval_version
 
 # The version comes from eval.yaml, the file beside this module.
-EVAL_VERSION = load_eval_version(__file__)
+EVAL_VERSION = "1-A"  # side branch: inspect-evals-utils 0.2.0 has no metadata
 
 # Stands in for the benchmark's dataset. Replace it with a loader: see
 # inspect_evals_utils.datasets for cached JSON and CSV files and

@@ -26,7 +26,6 @@ from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Solver
 from inspect_ai.util import ComposeConfig, ComposeService, SandboxEnvironmentSpec
-from inspect_evals_utils.metadata import load_eval_version
 
 from researcharena_inspect.agents.replay import REPLAY_MODES, ReplayMode, replay_source
 from researcharena_inspect.agents.solver import AGENTS, red_team_agent
@@ -44,7 +43,7 @@ from researcharena_inspect.prompts import (
 )
 from researcharena_inspect.scoring import red_team_scorer
 
-EVAL_VERSION = load_eval_version(__file__)
+EVAL_VERSION = "1-A"  # side branch: inspect-evals-utils 0.2.0 has no metadata
 
 PROMPT_FAMILY = "claude"
 """Whose prompt every agent gets: Claude Code's, with the suffix naming "Read, Write, Bash"."""
