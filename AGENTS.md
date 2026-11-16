@@ -20,6 +20,19 @@ This project uses `uv`. Do not use `pip`, bare `python` or bare `pytest`.
 - `tests/researcharena_inspect/`: the tests.
 - `agent_artefacts/trajectory_analysis/inspect_scout/`: Scout scanners for the transcript audit.
 
+## How the port is built
+
+This repo ports [ResearchArena](https://github.com/aisa-group/ResearchArena) to Inspect. "The original" is upstream's latest code at the commit in `src/researcharena_inspect/pins.py`.
+
+- **Reuse, don't rewrite.** Upstream's task files, scorers and templates are used unchanged from the pinned checkout (`researcharena_inspect.upstream.upstream_dir()`). Only its bash orchestration is rewritten as Inspect code.
+- **Upstream is the oracle.** Where the port re-implements something upstream does (building a prompt, rendering a transcript), a test runs upstream's own script from the pinned checkout and requires identical output. A difference is either a bug in the port or a documented deviation.
+- **Published runs are the second check.** `researcharena_inspect.published` loads the authors' 386 published runs and fetches their files at a pinned revision.
+- **Deviations are explicit.** Upstream's behaviour is the default, flaws included. A bug is fixed only if it stops a run or a score from being produced. Every deviation gets a comment with its ledger id (`# D-NNN`) and a row in the README's deviations table.
+- **No spend in tests.** Tests never call a paid model or need a GPU unless marked `slow` and run on purpose.
+- **New dependencies** must have been on PyPI for at least 7 days, or Hawk refuses to install the package.
+
+Modules: `pins.py`, `upstream.py`, `published.py` (shared base); `prompts/` (agent and monitor prompts); `transcripts/` (the text a monitor reads); `monitor/` (monitor task); `analysis/` (success rules, detection rate, AUROC); `gpu_probe.py` (environment check).
+
 ## Checks
 
 `make check` runs ruff (lint and format), basedpyright in standard mode, inspect-evals-lint, `inspect-evals-readmes generate --check` and the pre-commit stack (zizmor, actionlint, mdformat). CI runs the same through python-project-template's shared workflow plus `eval-checks.yml`.
