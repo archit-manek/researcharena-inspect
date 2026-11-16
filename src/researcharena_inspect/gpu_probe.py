@@ -1,8 +1,10 @@
 """Environment check: report the GPU a sandbox can see. It makes no model calls."""
 
+import tempfile
 from pathlib import Path
 from typing import Literal
 
+import yaml
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import ModelOutput
@@ -22,8 +24,27 @@ NVIDIA_SMI = [
     "--query-gpu=name,memory.total,driver_version,compute_cap",
     "--format=csv,noheader",
 ]
+# Node size as the sandbox sees it: CPU count and total memory.
+NODE_SIZE = ["sh", "-c", "nproc; grep MemTotal /proc/meminfo"]
 PROBE_TIMEOUT_SECONDS = 120
 PROBE_METADATA_KEY = "gpu_probe"
+NODE_SIZE_METADATA_KEY = "node_size"
+
+# Karpenter labels every AWS GPU node with the GPU's short name, so this selector works
+# whatever labels the operator gave the node pool.
+GPU_NAME_LABEL = "karpenter.k8s.aws/instance-gpu-name"
+GpuName = Literal["t4", "l4", "h100"]
+
+
+def k8s_values(gpu_name: GpuName | None) -> Path:
+    """Return the sandbox values file, with a node selector when a GPU model is asked for."""
+    if gpu_name is None:
+        return K8S_VALUES
+    values = yaml.safe_load(K8S_VALUES.read_text())
+    values["services"]["default"]["nodeSelector"] = {GPU_NAME_LABEL: gpu_name}
+    path = Path(tempfile.mkdtemp(prefix="gpu_probe_")) / f"values_{gpu_name}.yaml"
+    path.write_text(yaml.safe_dump(values))
+    return path
 
 
 @solver
@@ -38,6 +59,11 @@ def run_nvidia_smi() -> Solver:
             # The local sandbox raises when the binary is missing; a container returns non-zero.
             success, report = False, f"{type(error).__name__}: {error}"
         state.metadata[PROBE_METADATA_KEY] = {"success": success, "report": report.strip()}
+        try:
+            size = await sandbox().exec(NODE_SIZE, timeout=PROBE_TIMEOUT_SECONDS)
+            state.metadata[NODE_SIZE_METADATA_KEY] = (size.stdout or size.stderr).strip()
+        except (FileNotFoundError, PermissionError, TimeoutError) as error:
+            state.metadata[NODE_SIZE_METADATA_KEY] = f"{type(error).__name__}: {error}"
         state.output = ModelOutput.from_content(model="none", content=report.strip())
         return state
 
@@ -65,18 +91,22 @@ def gpu_visible() -> Scorer:
 
 
 @task
-def gpu_probe(sandbox_type: Literal["k8s", "local"] = "k8s") -> Task:
+def gpu_probe(
+    sandbox_type: Literal["k8s", "local"] = "k8s", gpu_name: GpuName | None = None
+) -> Task:
     """Report the GPU visible to a sandbox, without calling a model.
 
     Args:
         sandbox_type: "k8s" requests one GPU from a Kubernetes cluster (for example Hawk);
             "local" runs on the machine Inspect runs on.
+        gpu_name: ask the cluster for this GPU model ("t4", "l4" or "h100"); None takes
+            whatever GPU node the cluster picks.
 
     Returns:
         A one-sample task whose answer is the `nvidia-smi` line for each visible GPU.
     """
     sandbox_spec: SandboxEnvironmentType = (
-        ("k8s", str(K8S_VALUES)) if sandbox_type == "k8s" else "local"
+        ("k8s", str(k8s_values(gpu_name))) if sandbox_type == "k8s" else "local"
     )
     return Task(
         dataset=MemoryDataset(

@@ -1,12 +1,20 @@
 import importlib
+from pathlib import Path
 
 import pytest
+import yaml
 from inspect_ai import eval
 from inspect_ai.util import ExecResult
 from pytest_inspect_evals.assertions import assert_eval_success
 
 from researcharena_inspect import gpu_probe
-from researcharena_inspect.gpu_probe import K8S_VALUES, NVIDIA_SMI, run_nvidia_smi
+from researcharena_inspect.gpu_probe import (
+    GPU_NAME_LABEL,
+    K8S_VALUES,
+    NODE_SIZE,
+    NVIDIA_SMI,
+    run_nvidia_smi,
+)
 
 # The package exports the task under the module's own name, so fetch the module itself.
 probe_module = importlib.import_module("researcharena_inspect.gpu_probe")
@@ -33,7 +41,7 @@ def run_probe(
         tasks=gpu_probe(sandbox_type="local"), solver=run_nvidia_smi(), model="mockllm/model"
     )
     assert_eval_success(log, expected_sample_count=1)
-    assert fake.commands == [NVIDIA_SMI]
+    assert fake.commands == [NVIDIA_SMI, NODE_SIZE]
     assert log.samples is not None
     assert log.samples[0].scores is not None
     score = log.samples[0].scores["gpu_visible"]
@@ -65,3 +73,12 @@ def test_k8s_sandbox_requests_one_gpu() -> None:
     assert task.sandbox.type == "k8s"
     assert task.sandbox.config == str(K8S_VALUES)
     assert "nvidia.com/gpu: 1" in K8S_VALUES.read_text()
+
+
+def test_k8s_sandbox_selects_the_named_gpu() -> None:
+    task = gpu_probe(gpu_name="h100")
+    assert task.sandbox is not None
+    assert isinstance(task.sandbox.config, str)
+    service = yaml.safe_load(Path(task.sandbox.config).read_text())["services"]["default"]
+    assert service["nodeSelector"] == {GPU_NAME_LABEL: "h100"}
+    assert service["resources"]["limits"]["nvidia.com/gpu"] == 1
