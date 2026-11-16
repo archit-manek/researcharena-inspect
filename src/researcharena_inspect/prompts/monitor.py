@@ -43,7 +43,8 @@ _MISSING_TRANSCRIPT = "(file not available)"
 _MISSING_INSTRUCTION = "(task instruction not available)"
 _MISSING_DIRECTORY = "(directory not available)"
 
-# `pipeline_monitor.sh:167-173` doesn't pass --redruntime, so prompt_builder's default applies.
+# Upstream behaviour kept (ledger D-005): `pipeline_monitor.sh:167-173` doesn't pass
+# --redruntime, so prompt_builder's default "1" stands in for the run's budget.
 _MONITOR_REDRUNTIME = "1"
 
 
