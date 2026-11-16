@@ -1,0 +1,146 @@
+name: Environment image
+
+# Builds the agent's image (src/researcharena_inspect/environment/Dockerfile, a translation of
+# upstream's containers/arena.def) for linux/amd64, pushes it to
+# ghcr.io/<owner>/researcharena-inspect/arena tagged by upstream commit and by the
+# Dockerfile's sha256, then runs the image check (pass rule 1) inside it. The eval refers to
+# the image by digest, which the job summary prints.
+on:
+  push:
+    paths:
+      - src/researcharena_inspect/environment/Dockerfile
+      - src/researcharena_inspect/environment/image_check.py
+      - .github/workflows/environment-image.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: environment-image-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash # with an explicit shell, run steps use -eo pipefail
+
+env:
+  UPSTREAM_SHORT: b922f4b
+  DOCKERFILE: src/researcharena_inspect/environment/Dockerfile
+
+jobs:
+  build:
+    name: Build, push and check the image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write # push the image to this repository's package
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The image is about 27 GB unpacked; the runner's root disk is not big enough until the
+      # preinstalled toolchains are gone and Docker keeps its data on the second disk.
+      - name: Free disk space
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+            /usr/local/share/boost /usr/local/.ghcup /usr/share/swift /usr/local/share/powershell \
+            /usr/local/share/chromium /usr/local/lib/node_modules /opt/microsoft /opt/google
+          sudo docker system prune --all --force
+          df -h / /mnt
+
+      - name: Keep Docker's data on /mnt
+        run: |
+          sudo systemctl stop docker docker.socket
+          sudo mkdir -p /mnt/docker
+          sudo python3 - <<'PY'
+          import json, pathlib
+          path = pathlib.Path("/etc/docker/daemon.json")
+          config = json.loads(path.read_text()) if path.exists() else {}
+          config["data-root"] = "/mnt/docker"
+          path.write_text(json.dumps(config))
+          PY
+          sudo systemctl start docker
+          docker info --format '{{.DockerRootDir}}'
+
+      - name: Name the image
+        id: name
+        run: |
+          owner="$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          hash="$(sha256sum "$DOCKERFILE" | cut -c1-12)"
+          repo="ghcr.io/${owner}/researcharena-inspect/arena"
+          {
+            echo "repo=${repo}"
+            echo "upstream_tag=${repo}:upstream-${UPSTREAM_SHORT}"
+            echo "dockerfile_tag=${repo}:dockerfile-${hash}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          UPSTREAM_TAG: ${{ steps.name.outputs.upstream_tag }}
+          DOCKERFILE_TAG: ${{ steps.name.outputs.dockerfile_tag }}
+        run: |
+          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 --progress plain \
+            -f "$DOCKERFILE" -t "$UPSTREAM_TAG" -t "$DOCKERFILE_TAG" \
+            src/researcharena_inspect/environment 2>&1 | tee build.log
+          df -h / /mnt
+
+      - name: Check the image against requirements.txt (pass rule 1)
+        env:
+          UPSTREAM_TAG: ${{ steps.name.outputs.upstream_tag }}
+        # Recorded here and enforced after the push, so a mismatching image can be inspected.
+        run: |
+          set +e
+          docker run --rm --entrypoint python3 \
+            -v "$PWD/src/researcharena_inspect/environment/image_check.py:/check.py:ro" \
+            "$UPSTREAM_TAG" /check.py > image_check.json
+          echo "$?" > image_check.status
+          cat image_check.json
+
+      - name: Push
+        env:
+          UPSTREAM_TAG: ${{ steps.name.outputs.upstream_tag }}
+          DOCKERFILE_TAG: ${{ steps.name.outputs.dockerfile_tag }}
+          REPO: ${{ steps.name.outputs.repo }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$UPSTREAM_TAG"
+          docker push "$DOCKERFILE_TAG"
+          docker logout ghcr.io
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$UPSTREAM_TAG")"
+          size="$(docker image inspect --format '{{.Size}}' "$UPSTREAM_TAG")"
+          {
+            echo "## Image"
+            echo
+            echo "- Reference: \`${digest}\`"
+            echo "- Tags: \`${UPSTREAM_TAG}\`, \`${DOCKERFILE_TAG}\`"
+            echo "- Unpacked size: ${size} bytes"
+            echo
+            echo "## Image check (pass rule 1)"
+            echo
+            echo '```json'
+            python3 -c "import json; r = json.load(open('image_check.json')); r.pop('pins'); print(json.dumps(r, indent=2))"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$digest" > image_digest.txt
+
+      - name: Fail if the image does not match requirements.txt
+        run: |
+          status="$(cat image_check.status)"
+          echo "image check exit status: ${status}"
+          test "$status" = 0
+
+      - name: Keep the build log and check output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: environment-image
+          path: |
+            build.log
+            image_check.json
+            image_digest.txt
+            image_check.status
+          if-no-files-found: ignore
