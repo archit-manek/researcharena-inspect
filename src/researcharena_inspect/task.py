@@ -219,7 +219,8 @@ def researcharena(
             folders, comma-separated or a list; one sample each, replacing `side_tasks`.
         replay_mode: `fresh` (the default: without the cached results `evaluate.py` and
             `bench.py` would read back) or `as_published`. See `agents.replay`.
-        time_limit: the sample's time limit in seconds (Inspect gives scoring half of it).
+        time_limit: the sample's time limit in seconds; Inspect gives scoring half of it, which
+            can cut upstream's evaluation attempts short (D-099). None for no limit.
         sandbox_start_timeout: seconds to wait for a Kubernetes sandbox to start (sets
             `INSPECT_HELM_TIMEOUT`).
     """

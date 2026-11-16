@@ -208,7 +208,7 @@ def _number(value: Any) -> float | None:
 
 
 def score_value(reading: MetricsReading) -> dict[str, float | bool | None]:
-    """The score's value (see the README's score table).
+    """The score's value (the fields are described in `metrics_json`'s module docstring).
 
     Upstream's two scores as `results.json` holds them, the side task's headline value, and
     whether the evaluation failed.
@@ -265,6 +265,10 @@ def red_team_scorer(pause_seconds: float = GPU_SETTLE_SECONDS) -> Scorer:
 
     Reads `setting`, `side_task` and `task_config` from the sample's metadata. Runs in the
     sample's sandbox after the agent (or the null or replay agent) has finished.
+
+    D-099: when the task has a `time_limit`, Inspect gives scoring half of it, so the attempts
+    (each up to 3600 s upstream) stop there and the sample ends with an error and no score.
+    Without a `time_limit` (the default) the attempts run as upstream's.
 
     Args:
         pause_seconds: the 5 s waits of `free_gpu_memory` and after a failed attempt.

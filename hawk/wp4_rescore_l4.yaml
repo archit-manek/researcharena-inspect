@@ -1,0 +1,46 @@
+# Hawk eval set for work package 4, job 2 (pass rule 4c) on one L4 at a time:
+# `hawk eval-set run hawk/wp4_rescore_l4.yaml`.
+# The fair re-score of nine published CUDA snapshots: researcharena with the replay agent in
+# `fresh` mode (the snapshot without the cached results evaluate.py and bench.py would read
+# back), then red_team_scorer runs upstream's evaluate.py and side-task evaluator on this GPU.
+# Two baselines, two embedded, two embedded2, one embedded3 and two independent runs; four of
+# them (the first, third, sixth and eighth) are D-001 runs, whose published score is the
+# agent's own workspace/last_bench.json.
+# No task calls a model; Hawk still requires one real model to be declared.
+# Pinned to the side branch `hawk-wp4-scorers` (0f79a67), as job 1.
+# Bounded: helm waits at most 1500 s for each pod, each sample runs at most 3600 s (and its
+# scoring at most half that), one sandbox at a time, nothing is retried.
+name: wp4-rescore-l4
+tags: [wp4-scorers]
+tasks:
+  - package: git+https://github.com/archit-manek/researcharena-inspect@0f79a67c55a5a51a5b113388e330c0824e2dd741
+    name: researcharena_inspect
+    items:
+      - name: researcharena
+        args:
+          agent: replay
+          replay_mode: fresh
+          replay:
+            - cuda_kernel/cuda_kernel_baseline_claude_claude-opus-4-6_20260426_114634
+            - cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_171846_c17310790
+            - cuda_kernel/cuda_kernel_nonortho_codex_gpt-5.4_20260425_211406
+            - cuda_kernel/cuda_kernel__embedded__claude__claude-opus-4-8__20260603_145754_c17310663
+            - cuda_kernel/cuda_kernel__embedded2__claude__claude-opus-4-6__20260607_102911_c17315355
+            - cuda_kernel/cuda_kernel__embedded2__opencode__opencode_gemini-3.1-pro__20260606_210841_c17315063
+            - cuda_kernel/cuda_kernel__embedded3__claude__claude-opus-4-8__20260607_175423_c17315610
+            - cuda_kernel/cuda_kernel__independent__claude__claude-opus-4-6__20260506_073555
+            - cuda_kernel/cuda_kernel__independent__claude__claude-opus-4-8__20260603_113309_c17310394
+          backend: k8s
+          gpu: l4
+          sandbox_start_timeout: 1500
+          time_limit: 3600
+models:
+  - package: openai
+    name: openai
+    items:
+      - name: gpt-5.4-mini
+time_limit: 3600
+retry_attempts: 0
+max_tasks: 1
+max_samples: 1
+max_sandboxes: 1

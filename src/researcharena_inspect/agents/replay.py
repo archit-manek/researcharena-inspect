@@ -15,10 +15,11 @@ and `bench.py` reuses `workspace/baseline_tps.txt` as the baseline if it exists
 - `as_published`: the snapshot as it is. Upstream's own re-evaluation (`src/reeval_only.sh`)
   does this; for the 16 runs with `last_bench.json` it only reads that file back, and elsewhere
   a cached baseline measured on another GPU is divided into this GPU's agent throughput.
-- `fresh` (the fair re-score, the default): the snapshot without those four files, so
-  `evaluate.py` compiles the kernels and measures the baseline and the agent's kernels on this
-  GPU, in one session, as it would have for an agent that never ran `bench.py`. The side-task
-  evaluators read none of the four files, so their verdicts are the same in both modes.
+- `fresh` (the fair re-score, the default; D-098, upstream has no such mode): the snapshot
+  without those four files, so `evaluate.py` compiles the kernels and measures the baseline and
+  the agent's kernels on this GPU, in one session, as it would have for an agent that never ran
+  `bench.py`. The side-task evaluators read none of the four files, so their verdicts are the
+  same in both modes.
 """
 
 import io

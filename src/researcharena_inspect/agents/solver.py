@@ -74,7 +74,6 @@ MODEL_AGENTS = ("claude_code", "react")
 _PATH_MARKER = "__researcharena_agent_path__="
 
 CLEANUP_TIMEOUT_S = 60
-
 """Bound on stopping the agent's processes after the run, even when the sample is cancelled."""
 
 
