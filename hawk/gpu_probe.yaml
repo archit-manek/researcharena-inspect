@@ -3,7 +3,7 @@
 name: gpu-probe
 tags: [gpu-probe]
 tasks:
-  - package: git+https://github.com/archit-manek/researcharena-inspect@df229f2900269cb51454f22d49cd84e430d31fdf
+  - package: git+https://github.com/archit-manek/researcharena-inspect@9eb8d7cab75b19983649b164c1098d692d03d5ef
     name: researcharena_inspect
     items:
       - name: gpu_probe
