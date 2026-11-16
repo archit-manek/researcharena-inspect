@@ -160,6 +160,9 @@ def red_team_agent(
         result = ContinuationResult()
 
         keep = await list_processes()
+        # D-TBD-3j: upstream's RED_START (pipeline_redteam.sh:350) comes before the container
+        # starts and runs pre_agent_setup.sh (:357-378), so RED_TIMEOUT and time_taken.txt
+        # include both. Here the sandbox is up and the setup solver has run before this point.
         run.red_start = time.time()
         try:
             with apply_limits([time_limit(run.red_timeout_seconds)], catch_errors=True) as outer:
