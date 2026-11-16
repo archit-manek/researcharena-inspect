@@ -1,0 +1,28 @@
+# Hawk eval set for the environment check on one L4: `hawk eval-set run hawk/environment_check_l4.yaml`.
+# The task makes no model calls; Hawk still requires one real model to be declared.
+# Pinned to the side branch `hawk-environment-check` (2fbfb9a): wp2-environment's code with the
+# inspect-evals-utils pin relaxed, since Hawk refuses 0.3.0 until 18 Nov 2026 (7-day rule).
+# Bounded: helm waits at most 1500 s for the pod (sandbox_start_timeout), the sample at most
+# 3600 s (time_limit), and nothing is retried.
+name: environment-check-l4
+tags: [environment-check]
+tasks:
+  - package: git+https://github.com/archit-manek/researcharena-inspect@2fbfb9a11f77eb661652f7448a30106acb728b9d
+    name: researcharena_inspect
+    items:
+      - name: environment_check
+        args:
+          backend: k8s
+          gpu: l4
+          setting: cuda_kernel
+          side_task: none
+          sandbox_start_timeout: 1500
+          time_limit: 3600
+models:
+  - package: openai
+    name: openai
+    items:
+      - name: gpt-5.4-mini
+limit: 1
+time_limit: 3600
+retry_attempts: 0
