@@ -4,12 +4,12 @@ name: Environment image
 # upstream's containers/arena.def) for linux/amd64, pushes it to
 # ghcr.io/<owner>/researcharena-inspect/arena tagged by upstream commit and by the
 # Dockerfile's sha256, then runs the image check (pass rule 1) inside it. The eval refers to
-# the image by digest, which the job summary prints.
+# the image by digest, which the job summary prints; environment-image-check.yml re-runs the
+# check on that pinned digest whenever the check or the pin changes.
 on:
   push:
     paths:
       - src/researcharena_inspect/environment/Dockerfile
-      - src/researcharena_inspect/environment/image_check.py
       - .github/workflows/environment-image.yml
   workflow_dispatch:
 
@@ -112,6 +112,8 @@ jobs:
           docker logout ghcr.io
           digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$UPSTREAM_TAG")"
           size="$(docker image inspect --format '{{.Size}}' "$UPSTREAM_TAG")"
+          echo "digest: ${digest}"
+          echo "unpacked size: ${size} bytes"
           {
             echo "## Image"
             echo

@@ -46,7 +46,15 @@ where = ["src"]
 include = ["researcharena_inspect*"] # examples/ stays out of the wheel
 
 [tool.setuptools.package-data]
-"*" = ["eval.yaml", "gpu_probe_values.yaml", "data/*.json.gz"]
+"*" = [
+    "eval.yaml",
+    "gpu_probe_values.yaml",
+    "data/*.json.gz",
+    # environment/: the agent's sandbox configs and the Dockerfile they were built from
+    "compose.yaml",
+    "k8s_values_*.yaml",
+    "Dockerfile",
+]
 
 # Layout preset: multi-eval (tests/<package>/, src/<package>/README.md) or
 # single-eval (flat tests/, README at the root). A hybrid repo keeps a preset and

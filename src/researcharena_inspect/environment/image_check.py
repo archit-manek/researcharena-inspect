@@ -11,15 +11,30 @@ does not pin. It exits 1 if a pin is missing or installed at another version.
 """
 
 import argparse
+import importlib
 import json
+import os
 import re
 import subprocess
 import sys
 from importlib import metadata
 from pathlib import Path
+from typing import Any
 
 REQUIREMENTS = Path("/opt/requirements.txt")
 CUDA_VERSION_JSON = Path("/usr/local/cuda/version.json")
+# The base image's own record of its CUDA and cuDNN versions, and arena.def's %environment.
+IMAGE_ENV = (
+    "CUDA_VERSION",
+    "NV_CUDNN_VERSION",
+    "CUDA_HOME",
+    "TORCH_CUDA_ARCH_LIST",
+    "UV_LINK_MODE",
+    "NO_PROXY",
+    "no_proxy",
+    "DEBIAN_FRONTEND",
+    "PATH",
+)
 
 _PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)")
 _URL = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*@\s*(\S+)")
@@ -54,7 +69,7 @@ def parse_requirements(text: str) -> dict[str, str]:
     return pins
 
 
-def compare(pins: dict[str, str], installed: dict[str, str]) -> dict[str, object]:
+def compare(pins: dict[str, str], installed: dict[str, str]) -> dict[str, Any]:
     """Pins that match, differ or are missing, and installed packages nobody pinned."""
     rows = []
     for name, pin in sorted(pins.items()):
@@ -71,9 +86,23 @@ def compare(pins: dict[str, str], installed: dict[str, str]) -> dict[str, object
     }
 
 
-def installed_distributions() -> dict[str, str]:
-    """Every distribution the image's Python sees, by normalised name."""
-    return {normalize(d.metadata["Name"]): d.version for d in metadata.distributions()}
+def installed_distributions() -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Every distribution the image's Python finds, by normalised name.
+
+    Returns the version `import` resolves (the first on `sys.path`, as
+    `importlib.metadata.version` reads it) and, separately, the versions it shadows: Ubuntu's
+    own Python packages in /usr/lib/python3/dist-packages (from `software-properties-common`)
+    are on the same path, after the ones uv installed.
+    """
+    first: dict[str, str] = {}
+    shadowed: dict[str, list[str]] = {}
+    for dist in metadata.distributions():
+        name = normalize(dist.metadata["Name"])
+        if name in first:
+            shadowed.setdefault(name, []).append(f"{dist.version} ({dist.locate_file('')})")
+        else:
+            first[name] = dist.version
+    return first, shadowed
 
 
 def _run(cmd: list[str]) -> str:
@@ -84,14 +113,15 @@ def _run(cmd: list[str]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Check an image against requirements.txt.")
     parser.add_argument("--requirements", type=Path, default=REQUIREMENTS)
     args = parser.parse_args()
 
     pins = parse_requirements(args.requirements.read_text(encoding="utf-8"))
-    result = compare(pins, installed_distributions())
+    installed, shadowed = installed_distributions()
+    result = compare(pins, installed)
     try:
-        import torch
+        torch = importlib.import_module("torch")  # only inside the image
 
         torch_cuda = {"torch": torch.__version__, "torch.version.cuda": torch.version.cuda}
     except Exception as error:
@@ -104,6 +134,8 @@ def main() -> int:
         if CUDA_VERSION_JSON.is_file()
         else None,
         "torch_cuda": torch_cuda,
+        "image_env": {k: os.environ.get(k) for k in IMAGE_ENV},
+        "shadowed_distributions": shadowed,
         "pinned_packages": len(pins),
         **result,
     }
