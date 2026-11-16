@@ -2,7 +2,7 @@
 # Built by researcharena_inspect.environment.sandbox_spec("k8s", "l4"); see sandbox.py.
 #
 # Upstream asks for 8 CPUs and 64-256 GB on an H100 node. The L4 node Hawk gave us has 8 CPUs
-# and about 32 GB, so this asks for what fits beside the node's own daemons (D-079). Disk:
+# and about 32 GB, so this asks for what fits beside the node's own daemons (D-094). Disk:
 # upstream asks for 100 GB; Hawk's GPU nodes keep pod storage on the instance's NVMe disk.
 # allowEntities [world] opens the network as upstream leaves it (ledger D-029). No
 # runtimeClassName: Hawk runs a GPU service on the node's default runtime and adds the GPU

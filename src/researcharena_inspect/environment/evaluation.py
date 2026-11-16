@@ -17,7 +17,7 @@
 
 `prepare_evaluation` does 1-3 in the sample's sandbox and returns step 4 as an
 `EvaluationCommand` for the scorer to run. Before step 1 it ends every process the agent left
-running (D-078): upstream's agent container, with its own process namespace, is gone by then.
+running (D-093): upstream's agent container, with its own process namespace, is gone by then.
 """
 
 import shlex

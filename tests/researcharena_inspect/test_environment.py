@@ -222,7 +222,7 @@ def test_cuda_home_entries_are_upstreams_files() -> None:
     )
     assert entries["agent_solve.sh"].content == (root / "agents/claude/solve.sh").read_bytes()
     assert entries["prompt.txt"].content == prompt.encode()
-    assert "oauth_token" not in entries  # credentials are not staged (D-076)
+    assert "oauth_token" not in entries  # credentials are not staged (D-091)
     assert [h.name for h in pre_agent_hooks("cuda_kernel", "independent")] == [
         "pre_agent.sh",
         "pre_agent.sh",

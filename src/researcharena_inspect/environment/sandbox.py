@@ -6,7 +6,7 @@ Upstream asks its cluster for one "NVIDIA H100 80GB HBM3", 8 CPUs, 64 GB (`run.s
 network limit (ledger D-029). The configs here keep the single GPU and the open network:
 
 - `k8s_values_l4.yaml`: Hawk's L4 pool (AWS g6). The node we got has 8 CPUs and about 32 GB, so
-  the requests are 6 CPUs and 24 GiB (D-079); not the paper's GPU.
+  the requests are 6 CPUs and 24 GiB (D-094); not the paper's GPU.
 - `k8s_values_h100.yaml`: Hawk's H100 pool (p5.4xlarge, 16 vCPUs); upstream's 8 CPUs and 64 GiB.
 - `compose.yaml`: a single-GPU Docker machine with the NVIDIA Container Toolkit; upstream's
   8 CPUs and 64 GB.

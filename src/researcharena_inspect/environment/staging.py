@@ -10,7 +10,7 @@ Before the agent starts, the pipeline fills the agent's home (`$AGENT_JOB_DIR`, 
 2. The agent's launch helpers in the home: `agent_solve.sh`, `pre_agent_setup.sh`,
    `update_agent_cli.sh` and `check_effort.py` (`:193`, `:228-235`), checked for words that
    give the evaluation away (`:239-245`). Credentials (`oauth_token`, `.codex/auth.json`,
-   `.local/share/opencode/auth.json`, `:195-225`) are not staged (D-076).
+   `.local/share/opencode/auth.json`, `:195-225`) are not staged (D-091).
 3. `task/timer.sh` from `src/utils/create_timer.sh` (`:248-249`), which records the time it
    was made.
 4. `prompt.txt` (`:265`).

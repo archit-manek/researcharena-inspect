@@ -16,7 +16,7 @@ and the agent as a non-root user `user` (uid 1000) whose home is the staged job 
 from typing import Final
 
 AGENT_USER: Final = "user"
-"""Account the agent, its hooks and upstream's evaluator run as (D-075)."""
+"""Account the agent, its hooks and upstream's evaluator run as (D-090)."""
 
 AGENT_UID: Final = 1000
 """uid and gid of `AGENT_USER`; upstream's is the cluster account's, unknown to us."""
@@ -81,7 +81,7 @@ def agent_env(
     exec switches user with `runuser`, which resets `HOME`, `USER`, `LOGNAME`, `SHELL` and
     `PATH`. Not included: the CLI credentials and version pins of
     `agents/<family>/keep_env_vars` (the agent runner's business; credentials are not
-    passed, D-066/D-076) and the per-setting `AGENT_EXTRA_ENV_ARGS` (none for `cuda_kernel`).
+    passed, D-066/D-091) and the per-setting `AGENT_EXTRA_ENV_ARGS` (none for `cuda_kernel`).
 
     Args:
         redruntime: the budget in hours as upstream's command line carries it (see
@@ -124,7 +124,7 @@ def evaluator_env(*, seed: int | None = None) -> dict[str, str]:
     `apptainer exec -c` keeps the host job's environment, so upstream's evaluator also sees
     the job's own variables (`USER`, `ARENA_ROOT`, tokens); the port passes only what
     `evaluate.py` can use. `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` are not passed
-    (D-077): the `cuda_kernel` scorers call no model.
+    (D-092): the `cuda_kernel` scorers call no model.
     """
     env = {
         "HOME": EVAL_HOME,
