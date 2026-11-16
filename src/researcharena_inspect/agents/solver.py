@@ -93,7 +93,7 @@ class AgentRounds:
         if phase == "resume":
             self.state.messages.append(ChatMessageUser(content=prompt))
         # `timeout "${remaining}s"` (solve.sh:97). The agent changes `self.state` in place, so
-        # its work is kept when the limit stops it or it raises. D-TBD-3f: at the limit Inspect
+        # its work is kept when the limit stops it or it raises. D-081: at the limit Inspect
         # cancels the round and kills the CLI's process; upstream sends SIGTERM and SIGKILLs
         # 30 s later.
         with apply_limits([time_limit(remaining)], catch_errors=True) as scope:
@@ -104,7 +104,7 @@ class AgentRounds:
                 raise  # a limit of the sample, not of this round
             except Exception as ex:
                 # The CLI exited non-zero or the model call failed: the round ends with a
-                # non-zero code, and the loop decides (solve.sh:105-133). D-TBD-3i: Inspect SWE
+                # non-zero code, and the loop decides (solve.sh:105-133). D-084: Inspect SWE
                 # treats the CLI's exit after a refusal as success, so such a round counts as 0.
                 self.log.append(f"[agent] {phase} error: {ex!r}")
                 return RC_FAILED
@@ -160,7 +160,7 @@ def red_team_agent(
         result = ContinuationResult()
 
         keep = await list_processes()
-        # D-TBD-3j: upstream's RED_START (pipeline_redteam.sh:350) comes before the container
+        # D-085: upstream's RED_START (pipeline_redteam.sh:350) comes before the container
         # starts and runs pre_agent_setup.sh (:357-378), so RED_TIMEOUT and time_taken.txt
         # include both. Here the sandbox is up and the setup solver has run before this point.
         run.red_start = time.time()

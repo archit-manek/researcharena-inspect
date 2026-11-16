@@ -84,7 +84,7 @@ def raw_output(sample: EvalSample, run: AgentRun) -> str:
     For Claude Code, the CLI's stdout. ReAct has no CLI, so its messages are converted to the
     `stream-json` events the Claude parser reads (`transcripts.messages_to_stream_events`).
     """
-    # D-TBD-3g: upstream's file starts with the stdout of pre_agent_setup.sh ("CUDA OK: ...",
+    # D-082: upstream's file starts with the stdout of pre_agent_setup.sh ("CUDA OK: ...",
     # "Pre-agent setup complete."), which the parser skips; here it holds the CLI's lines only.
     if run.agent == "claude_code":
         return "".join(line + "\n" for line in run.stdout)

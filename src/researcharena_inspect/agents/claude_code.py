@@ -14,8 +14,8 @@ state with a new user message, `claude --resume <id> ... -- <message>`: the same
 continued, as `--continue` does with the only session in the folder (upstream's runs keep one
 session id across all rounds too). The model calls go through Inspect's bridge to the task's
 model. What cannot be passed as upstream passes it is marked below with its deviation id:
-the login (D-TBD-3a), the effort and thinking flags (D-TBD-3b), stdin and `--continue`
-(D-TBD-3c), the CLI build (D-TBD-3d) and Inspect SWE's own settings (D-TBD-3e).
+the login (D-076), the effort and thinking flags (D-077), stdin and `--continue`
+(D-078), the CLI build (D-079) and Inspect SWE's own settings (D-080).
 
 Inspect SWE keeps none of the CLI's stdout, which upstream saves as `red_team/solve_out.json`
 and turns into the monitor's transcripts. `capture_cli_output` copies each stdout line and
@@ -58,7 +58,7 @@ def claude_code_env(model: str, effort: str, redruntime: str, resume: bool) -> d
     bridge. Container-wide variables (`PATH`, `HF_HOME`, `CUDA_VISIBLE_DEVICES`) belong to the
     sandbox.
     """
-    # D-TBD-3a: no OAuth token and no ANTHROPIC_API_KEY="" (solve.sh:11-24); the bridge
+    # D-076: no OAuth token and no ANTHROPIC_API_KEY="" (solve.sh:11-24); the bridge
     # authenticates with Inspect's API key.
     return {
         **BASH_TIMEOUT_ENV,
@@ -95,10 +95,10 @@ def red_team_claude_code(
     """
     from inspect_swe import claude_code
 
-    # D-TBD-3b: `--effort` and `--thinking-display summarized` (solve.sh:99) are not CLI flags
+    # D-077: `--effort` and `--thinking-display summarized` (solve.sh:99) are not CLI flags
     # here; the effort is set on the served model and the bridge drops the CLI's own
-    # generation settings. D-TBD-3c: the prompt goes in as an argument, not on stdin, and later
-    # rounds use `--resume <session id>` for `--continue`. D-TBD-3e: Inspect SWE adds its own
+    # generation settings. D-078: the prompt goes in as an argument, not on stdin, and later
+    # rounds use `--resume <session id>` for `--continue`. D-080: Inspect SWE adds its own
     # environment (IS_SANDBOX, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
     # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, MCP settings, the bridge's URL and model names),
     # and routes Haiku-class calls to the task's model unless `small_model` is given.
@@ -137,9 +137,9 @@ async def install_claude_code(version: str, user: str | None = None) -> Installe
     from inspect_swe._claude_code.agentbinary import claude_code_binary_source
     from inspect_swe._util.agentbinary import ensure_agent_binary_installed
 
-    # D-TBD-3d: Anthropic's native build of the same version, not the npm package; linked into
+    # D-079: Anthropic's native build of the same version, not the npm package; linked into
     # /usr/local/bin rather than installed in ~/.agent_cli. A failed install fails the sample
-    # (D-TBD-3h), where upstream's solve.sh exits 1 and the untouched workspace is scored.
+    # (D-083), where upstream's solve.sh exits 1 and the untouched workspace is scored.
     sbox = sandbox()
     path = await ensure_agent_binary_installed(claude_code_binary_source(), version, user, sbox)
     if path != CLI_INSTALL_PATH:
