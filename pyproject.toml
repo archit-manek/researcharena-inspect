@@ -12,7 +12,7 @@ authors = [{ name = "Archit Manek", email = "architmanek@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
     "inspect_ai>=0.3.262",
-    "inspect-evals-utils[huggingface]==0.3.0",
+    "inspect-evals-utils[huggingface]>=0.2.0",
 ]
 
 [project.urls]

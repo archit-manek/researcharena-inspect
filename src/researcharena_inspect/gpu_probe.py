@@ -9,9 +9,8 @@ from inspect_ai.model import ModelOutput
 from inspect_ai.scorer import CORRECT, INCORRECT, Score, Scorer, Target, accuracy, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentType, sandbox
-from inspect_evals_utils.metadata import load_eval_version
 
-EVAL_VERSION = load_eval_version(__file__)
+EVAL_VERSION = "1-A"  # literal on this side branch; main reads it from eval.yaml
 
 # Requests one GPU from the cluster; see the file for why it sets no runtime class.
 K8S_VALUES = Path(__file__).parent / "gpu_probe_values.yaml"

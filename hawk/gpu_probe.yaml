@@ -1,0 +1,17 @@
+# Hawk eval set that runs the gpu_probe task once: `hawk eval-set run hawk/gpu_probe.yaml`.
+# The task makes no model calls; Hawk still requires one real model to be declared.
+name: gpu-probe
+tags: [gpu-probe]
+tasks:
+  - package: git+https://github.com/archit-manek/researcharena-inspect@df229f2900269cb51454f22d49cd84e430d31fdf
+    name: researcharena_inspect
+    items:
+      - name: gpu_probe
+models:
+  - package: openai
+    name: openai
+    items:
+      - name: gpt-5.4-mini
+limit: 1
+time_limit: 600
+retry_attempts: 0
