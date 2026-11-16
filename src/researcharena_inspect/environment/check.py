@@ -20,7 +20,6 @@ finished evaluation); judging the numbers is the scorers' job.
 
 import os
 import time
-from pathlib import Path
 from typing import Any
 
 from inspect_ai import Task, task
@@ -29,7 +28,6 @@ from inspect_ai.model import ModelOutput
 from inspect_ai.scorer import CORRECT, INCORRECT, Score, Scorer, Target, accuracy, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
-from inspect_evals_utils.metadata import load_eval_version
 
 from researcharena_inspect.environment.evaluation import prepare_evaluation
 from researcharena_inspect.environment.layout import (
@@ -43,7 +41,7 @@ from researcharena_inspect.environment.staging import stage_workspace
 from researcharena_inspect.prompts import format_hours, resume_agent
 
 # eval.yaml sits in the package folder, one above this module.
-EVAL_VERSION = load_eval_version(Path(__file__).parent.parent / "eval.yaml")
+EVAL_VERSION = "1-A"  # literal on this side branch; wp2-environment reads it from eval.yaml
 
 CHECK_METADATA_KEY = "environment_check"
 

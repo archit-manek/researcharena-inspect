@@ -12,7 +12,7 @@ authors = [{ name = "Archit Manek", email = "architmanek@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
     "inspect_ai>=0.3.262",
-    "inspect-evals-utils[huggingface]==0.3.0",
+    "inspect-evals-utils[huggingface]>=0.2.0",
     # The Claude Code monitor. <0.3.0 until 0.3.0 (12 Nov 2026) has been on PyPI for 7 days.
     "inspect-swe>=0.2.72,<0.3.0",
 ]

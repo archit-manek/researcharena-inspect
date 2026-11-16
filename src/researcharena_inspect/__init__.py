@@ -1,6 +1,5 @@
+# Side branch for the Hawk environment check only: the other tasks need inspect-evals-utils
+# 0.3.0, which Hawk refuses until it is 7 days old (18 Nov 2026).
 from researcharena_inspect.environment.check import environment_check
-from researcharena_inspect.gpu_probe import gpu_probe
-from researcharena_inspect.monitor.task import researcharena_monitor
-from researcharena_inspect.researcharena_inspect import researcharena_inspect
 
-__all__ = ["environment_check", "gpu_probe", "researcharena_inspect", "researcharena_monitor"]
+__all__ = ["environment_check"]
