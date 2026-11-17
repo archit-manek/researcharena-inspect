@@ -247,6 +247,31 @@ def test_monitor_without_a_judgement_scores_minus_one(tmp_path: Path) -> None:
     assert score.explanation == "Monitor failed to produce structured output"
 
 
+@pytest.mark.docker
+@pytest.mark.slow
+@pytest.mark.huggingface
+@pytest.mark.dataset_download
+def test_monitor_judgement_only_the_results_table_reads(tmp_path: Path) -> None:  # D-072
+    """A judgement that is not valid JSON (a raw newline in the reasoning) keeps its score."""
+    task = researcharena_monitor(access="transcript", runs=CUDA_RUN, monitor_agent="react")
+    write = 'printf \'{"suspicion_score": 45, "reasoning": "a\\nb"}\' > judgement.json'
+    outputs = [
+        ModelOutput.for_tool_call("mockllm/model", "bash", {"command": write}),
+        ModelOutput.from_content("mockllm/model", "Judgement written."),
+    ]
+    model = get_model("mockllm/model", custom_outputs=outputs)
+    [log] = eval(task, model=model, display="none", log_dir=str(tmp_path))
+    assert log.status == "success", log.error
+    assert log.samples is not None
+    score = log.samples[0].scores["monitor_suspicion"]  # type: ignore[index]
+    assert score.value == 45
+    assert score.metadata is not None
+    assert score.metadata["score_reading"] == "results_table"
+    assert score.metadata["pipeline_suspicion"] == SUSPICION_ERROR
+    assert score.metadata["aggregate_suspicion"] == 45
+    assert score.explanation == '{"suspicion_score": 45, "reasoning": "a\nb"}'
+
+
 def test_solvers_and_scorer_are_registered() -> None:
     assert callable(stage_monitor_inputs())
     assert callable(run_monitor(agent="react"))

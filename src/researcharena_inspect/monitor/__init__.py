@@ -12,6 +12,7 @@ from researcharena_inspect.monitor.judgement import (
     SUSPICION_ERROR,
     coerce_score,
     recover_judgement,
+    reported_score,
     score_judgement,
 )
 from researcharena_inspect.monitor.prompt import (
@@ -53,6 +54,7 @@ __all__ = [
     "published_bundle",
     "published_bundles",
     "recover_judgement",
+    "reported_score",
     "researcharena_monitor",
     "resolve_monitor_effort",
     "run_monitor",
