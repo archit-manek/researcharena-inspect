@@ -15,6 +15,11 @@ edited; what stands in for the parts that need a cluster lives outside it:
 - No-op `nvidia-smi`, `fuse-overlayfs`, `fusermount` and `sleep`, and a `date` that answers
   `date +%s` with a fixed time, so `timer.sh` is reproducible.
 
+With `real_evaluate=True` the `python3` wrapper is left out, so the pipeline runs upstream's own
+`evaluate.py` through Phase 4 (its attempt loop and failure record), and the run's `eval/`
+folder (`metrics.json`, `eval_attempt_<n>.log`) is copied out. The stand-in agent's work can be
+chosen per run (`agent_work`).
+
 The git identity of the hooks' commit is passed as `GIT_*` variables: upstream's hooks use the
 cluster account's identity, which is not known (a faithful reading, not executed upstream).
 """
@@ -69,7 +74,7 @@ set -euo pipefail
 JOB_DIR="$(cd .. && pwd)"
 python3 /work/tree_manifest.py "$JOB_DIR" > /capture/home.json
 pwd > /capture/agent_cwd.txt
-sh /work/agent_work.sh
+sh "${AGENT_WORK_SCRIPT:-/work/agent_work.sh}"
 exit 1
 """
 
@@ -121,10 +126,12 @@ def _write(path: Path, text: str, mode: int = 0o755) -> None:
 def prepare_work(work: Path) -> None:
     """The stand-ins, shared by every run in `work`."""
     shims = work / "shims"
-    _write(shims / "date", DATE_SHIM)
+    real = work / "shims_real"  # the same, without the python3 wrapper
+    for folder in (shims, real):
+        _write(folder / "date", DATE_SHIM)
+        for name in ("nvidia-smi", "fuse-overlayfs", "fusermount", "sleep"):
+            _write(folder / name, NOOP)
     _write(shims / "python3", PYTHON_WRAPPER)
-    for name in ("nvidia-smi", "fuse-overlayfs", "fusermount", "sleep"):
-        _write(shims / name, NOOP)
     _write(work / "agent_work.sh", AGENT_WORK)
     shutil.copy(MANIFEST_SOURCE, work / "tree_manifest.py")
     (work / "hf").mkdir(exist_ok=True)
@@ -140,19 +147,37 @@ class PipelineRun:
     eval_argv: list[str] | None
     returncode: int
     log: str
+    eval_files: dict[str, bytes] | None = None
+    """With `real_evaluate`: every file of the run's `eval/` folder, by name."""
 
 
 def run_pipeline(
-    work: Path, arena: Path, *, side_task: str, agent: str, redruntime: str = "1"
+    work: Path,
+    arena: Path,
+    *,
+    side_task: str,
+    agent: str,
+    redruntime: str = "1",
+    agent_work: str | None = None,
+    real_evaluate: bool = False,
+    name: str | None = None,
 ) -> PipelineRun:
-    """`pipeline_redteam.sh cuda_kernel <side_task> <redruntime> <agent> test-model 1 test`."""
-    run_dir = work / f"run_{side_task}_{agent}"
+    """`pipeline_redteam.sh cuda_kernel <side_task> <redruntime> <agent> test-model 1 test`.
+
+    Args:
+        agent_work: the stand-in agent's work (a sh script run in `task/`); `AGENT_WORK` if None.
+        real_evaluate: run upstream's `evaluate.py` and keep the `eval/` folder.
+        name: the run folder's name under `work` (default `run_<side_task>_<agent>`).
+    """
+    run_dir = work / (name or f"run_{side_task}_{agent}")
     if run_dir.exists():
         shutil.rmtree(run_dir)
     capture = run_dir / "capture"
     home = run_dir / "home"
     capture.mkdir(parents=True)
     _write(home / "update_agent_cli.sh", UPDATE_CLI_STANDIN)
+    if agent_work is not None:
+        _write(run_dir / "agent_work.sh", agent_work)
 
     def inside(p: Path) -> str:
         return "/work/" + p.relative_to(work).as_posix()
@@ -164,16 +189,32 @@ def run_pipeline(
         # Inside the container: a macOS bind mount would give symlinks mode 755, not 777.
         "ARENA_RESULTS_DIR": "/tmp/results",
         "HF_HOME": "/work/hf",
-        "PATH": "/work/shims:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "PATH": (
+            f"/work/{'shims_real' if real_evaluate else 'shims'}:"
+            "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ),
         "CLAUDE_OAUTH_TOKEN": "placeholder-not-a-token",
         **GIT_IDENTITY,
     }
+    if agent_work is not None:
+        env["AGENT_WORK_SCRIPT"] = inside(run_dir / "agent_work.sh")
     cmd = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}"]
     cmd += ["-v", f"{work}:/work", "-v", f"{capture}:/capture"]
     for key, value in env.items():
         cmd += ["-e", f"{key}={value}"]
-    cmd += [IMAGE, "bash", f"{inside(arena)}/src/pipeline_redteam.sh"]
-    cmd += ["cuda_kernel", side_task, redruntime, agent, "test-model", "1", "test"]
+    pipeline = [f"{inside(arena)}/src/pipeline_redteam.sh"]
+    pipeline += ["cuda_kernel", side_task, redruntime, agent, "test-model", "1", "test"]
+    if real_evaluate:
+        # The pipeline unchanged, then its eval/ folder copied out (the results stay in the
+        # container's /tmp, as in the staging test).
+        keep_eval = (
+            'bash "$@"; rc=$?; '
+            'for d in /tmp/results/*/*/eval; do cp -r "$d" /capture/eval_out; done; '
+            "exit $rc"
+        )
+        cmd += [IMAGE, "bash", "-c", keep_eval, "pipeline", *pipeline]
+    else:
+        cmd += [IMAGE, "bash", *pipeline]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     def load(name: str):
@@ -181,6 +222,7 @@ def run_pipeline(
         return json.loads(path.read_text()) if path.is_file() else None
 
     cwd = capture / "agent_cwd.txt"
+    eval_out = capture / "eval_out"
     return PipelineRun(
         home=load("home.json") or {},
         agent_cwd=cwd.read_text().strip() if cwd.is_file() else "",
@@ -189,4 +231,9 @@ def run_pipeline(
         eval_argv=load("eval_argv.json"),
         returncode=proc.returncode,
         log=proc.stdout + proc.stderr,
+        eval_files=(
+            {p.name: p.read_bytes() for p in sorted(eval_out.iterdir()) if p.is_file()}
+            if eval_out.is_dir()
+            else None
+        ),
     )

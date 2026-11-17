@@ -12,19 +12,27 @@ Order of events, with upstream's lines at the pinned commit:
 
 The sample then goes on to scoring with the workspace as the agent left it, whether the agent
 finished, ran out of time or failed, as upstream's pipeline goes on to Phase 4.
+
+Every agent runs as the environment's agent user (`environment.AGENT_USER`) with upstream's
+container variables (`environment.agent_env`), in the staged workspace, after its shell has
+sourced `pre_agent_setup.sh` (`:378`: `source /home/user/pre_agent_setup.sh && bash
+/home/user/agent_solve.sh`). Two agents call no model: `null` does nothing and exits at once, so
+the staged workspace is scored as it was staged; `replay` puts a given workspace (a published
+run's `task_snapshot/` or a local one) in place of the agent's work (`agents.replay`).
 """
 
 import os
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from functools import cache
 
 import anyio
 from inspect_ai.agent import Agent, AgentState
 from inspect_ai.model import ChatMessageUser, get_model
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import LimitExceededError, apply_limits, span, time_limit
+from inspect_ai.util import LimitExceededError, apply_limits, sandbox, span, time_limit
 
 from researcharena_inspect.agents.budget import Budget, red_timeout_seconds
 from researcharena_inspect.agents.claude_code import (
@@ -44,10 +52,26 @@ from researcharena_inspect.agents.continuation import (
 from researcharena_inspect.agents.processes import kill_new_processes, list_processes
 from researcharena_inspect.agents.react import red_team_react
 from researcharena_inspect.agents.record import AgentRun
+from researcharena_inspect.agents.replay import (
+    ReplayMode,
+    replay_source,
+    replay_workspace,
+    snapshot_files,
+)
+from researcharena_inspect.environment.layout import (
+    AGENT_USER,
+    PRE_AGENT_SETUP,
+    TASK_DIR,
+    agent_env,
+)
 from researcharena_inspect.pins import UPSTREAM_COMMIT
 from researcharena_inspect.upstream import upstream_dir
 
-AGENTS = ("claude_code", "react")
+AGENTS = ("claude_code", "react", "null", "replay")
+MODEL_AGENTS = ("claude_code", "react")
+"""The agents that call the task's model; `null` and `replay` call none."""
+
+_PATH_MARKER = "__researcharena_agent_path__="
 
 CLEANUP_TIMEOUT_S = 60
 """Bound on stopping the agent's processes after the run, even when the sample is cancelled."""
@@ -74,6 +98,32 @@ def resolve_agent_effort(setting: str, model: str, provider: str = "claude") -> 
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     return result.stdout.strip()
+
+
+@dataclass(frozen=True)
+class PreAgentSetup:
+    returncode: int
+    output: str
+    """What the script printed (upstream's `solve_out.json` starts with its stdout)."""
+    path: str | None
+    """`PATH` in the agent's shell afterwards; None if the script failed."""
+
+
+async def source_pre_agent_setup(env: dict[str, str]) -> PreAgentSetup:
+    """`source /home/user/pre_agent_setup.sh` in the agent's shell, as the agent's user.
+
+    The script prepends the workspace to `PATH`, checks CUDA and runs the workspace's own
+    `hook_pre_agent.sh` if there is one (`src/utils/pre_agent_setup.sh`). The `PATH` it leaves
+    is what the agent's process inherits, so it is read back and given to the agent.
+    """
+    script = f'source {PRE_AGENT_SETUP} && printf "\\n%s%s\\n" "{_PATH_MARKER}" "$PATH"'
+    result = await sandbox().exec(["bash", "-c", script], user=AGENT_USER, env=env, cwd=TASK_DIR)
+    out = result.stdout
+    path = None
+    if result.success and _PATH_MARKER in out:
+        out, _, tail = out.rpartition(f"\n{_PATH_MARKER}")
+        path = tail.strip("\n")
+    return PreAgentSetup(result.returncode, out + result.stderr, path)
 
 
 class AgentRounds:
@@ -118,14 +168,17 @@ def red_team_agent(
     claude_code_version: str = "latest",
     small_model: str | None = None,
     react_compaction: bool = True,
+    replay_mode: ReplayMode = "fresh",
 ) -> Solver:
     """Run the red-team agent on the sample's prompt within upstream's time budget.
 
     Reads `setting`, `redruntime` and `resume_agent` from the sample's metadata (see
-    `task.red_team_sample`) and keeps the run in the store as an `AgentRun`.
+    `task.red_team_sample`), and `replay` for the replay agent, and keeps the run in the store
+    as an `AgentRun`.
 
     Args:
-        agent: `claude_code` (Inspect SWE) or `react`.
+        agent: `claude_code` (Inspect SWE), `react`, `null` (does nothing; no model call) or
+            `replay` (puts the sample's `replay` workspace in place; no model call).
         effort: the agent's reasoning effort; `auto` reads upstream's `effort.json`
             (`xhigh`), `default` sets none.
         claude_code_version: Claude Code version to install (`latest`, `stable`, `2.1.162`,
@@ -133,6 +186,8 @@ def red_team_agent(
         small_model: model for Claude Code's Haiku-class background calls; `None` uses the
             task's model.
         react_compaction: let ReAct summarise its conversation near the context limit.
+        replay_mode: for `replay`: `fresh` (without the scorer's cached results) or
+            `as_published` (see `agents.replay`).
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -164,36 +219,76 @@ def red_team_agent(
         # starts and runs pre_agent_setup.sh (:357-378), so RED_TIMEOUT and time_taken.txt
         # include both. Here the sandbox is up and the setup solver has run before this point.
         run.red_start = time.time()
+        # The container's `--env` values (pipeline_redteam.sh:359-369); credentials are not
+        # passed (D-076, D-091).
+        env = agent_env(
+            redruntime=redruntime,
+            resume_agent=resume,
+            agent_config=model.name,
+            agent_effort=resolved,
+        )
+        no_model_exit: int | None = None
+
+        def model_agent() -> Agent:
+            if agent == "claude_code":
+                return red_team_claude_code(
+                    effort=resolved,
+                    env=env | claude_code_env(model.name, resolved, redruntime, resume),
+                    small_model=small_model,
+                    user=AGENT_USER,
+                )
+            return red_team_react(
+                model,
+                resolved,
+                compaction=react_compaction,
+                user=AGENT_USER,
+                env=env,
+                cwd=TASK_DIR,
+            )
+
         try:
             with apply_limits([time_limit(run.red_timeout_seconds)], catch_errors=True) as outer:
-                if agent == "claude_code":
-                    cli = await install_claude_code(claude_code_version)
-                    run.cli_path, run.cli_version, run.cli_requested = (
-                        cli.path,
-                        cli.version,
-                        cli.requested,
+                setup = await source_pre_agent_setup(env)
+                run.pre_agent_setup_rc = setup.returncode
+                run.pre_agent_setup_output = setup.output
+                env["PATH"] = setup.path or env["PATH"]
+                if setup.path is None:
+                    # `source pre_agent_setup.sh && bash agent_solve.sh`: no agent at all.
+                    log.append(
+                        f"[agent] pre_agent_setup.sh exited {setup.returncode}; "
+                        "the agent did not start"
                     )
-                    inner = red_team_claude_code(
-                        effort=resolved,
-                        env=claude_code_env(model.name, resolved, redruntime, resume),
-                        small_model=small_model,
-                    )
+                elif agent == "null":
+                    done = await sandbox().exec(["true"], user=AGENT_USER, env=env, cwd=TASK_DIR)
+                    no_model_exit = done.returncode
+                elif agent == "replay":
+                    source = replay_source(meta["replay"])
+                    files = await anyio.to_thread.run_sync(snapshot_files, source)
+                    replayed = await replay_workspace(files, replay_mode)
+                    run.replay = {"source": source.source, **replayed}
+                    no_model_exit = 0
                 else:
-                    inner = red_team_react(model, resolved, compaction=react_compaction)
-                rounds = AgentRounds(inner, agent_state, agent, log)
-                budget = Budget(redruntime)
-                run.budget_seconds = budget.total_seconds
-                run.budget_start = budget.start
-                with capture_cli_output(stdout, stderr):
-                    await run_with_continuation(
-                        rounds,
-                        budget,
-                        prompt,
-                        resume,
-                        log.append,
-                        cli="claude" if agent == "claude_code" else agent,
-                        result=result,
-                    )
+                    if agent == "claude_code":
+                        cli = await install_claude_code(claude_code_version, user=AGENT_USER)
+                        run.cli_path, run.cli_version, run.cli_requested = (
+                            cli.path,
+                            cli.version,
+                            cli.requested,
+                        )
+                    rounds = AgentRounds(model_agent(), agent_state, agent, log)
+                    budget = Budget(redruntime)
+                    run.budget_seconds = budget.total_seconds
+                    run.budget_start = budget.start
+                    with capture_cli_output(stdout, stderr):
+                        await run_with_continuation(
+                            rounds,
+                            budget,
+                            prompt,
+                            resume,
+                            log.append,
+                            cli="claude" if agent == "claude_code" else agent,
+                            result=result,
+                        )
             if outer.limit_error is not None:
                 run.outer_timeout = True
                 log.append(f"[agent] stopped by RED_TIMEOUT ({run.red_timeout_seconds}s)")
@@ -205,7 +300,7 @@ def red_team_agent(
                     log.append(f"[agent] could not stop the agent's processes: {ex!r}")
             run.red_end = time.time()
             run.rounds = result.to_dicts()
-            run.exit_code = result.exit_code if result.rounds else None
+            run.exit_code = result.exit_code if result.rounds else no_model_exit
             run.stdout, run.stderr, run.log = stdout, stderr, log
             if rounds is not None:
                 agent_state = rounds.state

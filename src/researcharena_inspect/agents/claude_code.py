@@ -32,7 +32,7 @@ from typing import Any
 from inspect_ai.agent import Agent
 from inspect_ai.util import sandbox
 
-from researcharena_inspect.agents.layout import AGENT_TASK_DIR
+from researcharena_inspect.environment.layout import TASK_DIR
 
 CLI_INSTALL_PATH = "/usr/local/bin/claude"
 """Where the installed CLI is linked, so `claude` is on the agent's PATH (upstream puts
@@ -103,7 +103,7 @@ def red_team_claude_code(
     # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, MCP settings, the bridge's URL and model names),
     # and routes Haiku-class calls to the task's model unless `small_model` is given.
     return claude_code(
-        cwd=AGENT_TASK_DIR,
+        cwd=TASK_DIR,
         effort=None if effort == "default" else effort,  # type: ignore[arg-type]
         # Installed before the budget starts (install_claude_code); "sandbox" reuses it.
         version="sandbox",

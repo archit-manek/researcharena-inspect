@@ -33,7 +33,7 @@ class AgentRun(StoreModel):
     """One sample's red-team run, kept in the sample's store."""
 
     agent: str = ""
-    """`claude_code` or `react`."""
+    """`claude_code`, `react`, `null` or `replay`."""
     model: str = ""
     """The task model's name, as upstream's `RED_MODEL` (e.g. `claude-sonnet-4-6`)."""
     effort: str = ""
@@ -64,6 +64,13 @@ class AgentRun(StoreModel):
     """The `[agent] ...` lines `solve.sh` writes to stderr, and errors."""
     killed: list[str] = Field(default_factory=list)
     """Processes the agent left running, killed when it stopped ("<pid> <command line>")."""
+    pre_agent_setup_rc: int | None = None
+    """Exit status of `source pre_agent_setup.sh` in the agent's shell; the agent starts only
+    if it is 0 (`pipeline_redteam.sh:378`)."""
+    pre_agent_setup_output: str = ""
+    """What `pre_agent_setup.sh` printed (the start of upstream's `solve_out.json`, D-082)."""
+    replay: dict[str, Any] | None = None
+    """For the replay agent: the source, the mode and the files put in place."""
 
     @property
     def time_taken_s(self) -> int | None:
