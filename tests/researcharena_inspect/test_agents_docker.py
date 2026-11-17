@@ -109,6 +109,7 @@ def red_run(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFac
         agent=agent,
         redruntime=BUDGET_HOURS,
         claude_code_version=CLI_VERSION,
+        small_model=None,  # the mock model answers Claude Code's background calls too
         sandbox="docker",
         scorer=workspace_probe(),
     )

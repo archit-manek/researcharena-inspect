@@ -110,6 +110,8 @@ async def test_claude_code_runs_as_the_agent_user_with_upstreams_environment(
     _assert_setup_sourced_as_upstream(box)
     assert seen["install_user"] == AGENT_USER
     assert seen["user"] == AGENT_USER
+    # Claude Code's background calls go to Haiku 4.5, as in the published runs (D-080).
+    assert seen["small_model"] == "anthropic/claude-haiku-4-5-20251001"
     expected = {**_expected_env(), "PATH": SETUP_PATH} | claude_code_env(
         "model", "xhigh", "1", False
     )

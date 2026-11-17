@@ -33,6 +33,7 @@ from researcharena_inspect.agents.solver import AGENTS, red_team_agent
 from researcharena_inspect.environment.layout import CONTAINER_ENV
 from researcharena_inspect.environment.sandbox import Backend, GpuName, sandbox_spec
 from researcharena_inspect.environment.staging import stage_agent_workspace
+from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
 from researcharena_inspect.prompts import (
     BASELINE,
     agent_instruction_file,
@@ -175,7 +176,7 @@ def researcharena(
     redruntime: str = "1",
     effort: str = "auto",
     claude_code_version: str = "latest",
-    small_model: str | None = None,
+    small_model: str | None = CLAUDE_CODE_SMALL_MODEL,
     react_compaction: bool = True,
     backend: Backend = "docker",
     gpu: GpuName | None = None,
@@ -204,7 +205,8 @@ def researcharena(
             (`xhigh`), `default` sets none.
         claude_code_version: Claude Code version (`latest`, `stable`, or e.g. `2.1.162`).
             Upstream installs the latest release at the start of each run.
-        small_model: model for Claude Code's background calls; the task's model if omitted.
+        small_model: model for Claude Code's own background calls: Haiku 4.5, as in the
+            published runs; `None` sends them to the task's model.
         react_compaction: let the ReAct agent summarise its conversation near the context limit.
         backend: `docker` (a machine with an NVIDIA GPU) or `k8s` (for example Hawk).
         gpu: the GPU model to ask Kubernetes for (`l4` or `h100`; `l4` if omitted); must be

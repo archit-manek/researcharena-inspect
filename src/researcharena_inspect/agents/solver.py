@@ -64,7 +64,7 @@ from researcharena_inspect.environment.layout import (
     TASK_DIR,
     agent_env,
 )
-from researcharena_inspect.pins import UPSTREAM_COMMIT
+from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL, UPSTREAM_COMMIT
 from researcharena_inspect.upstream import upstream_dir
 
 AGENTS = ("claude_code", "react", "null", "replay")
@@ -166,7 +166,7 @@ def red_team_agent(
     agent: str = "claude_code",
     effort: str = "auto",
     claude_code_version: str = "latest",
-    small_model: str | None = None,
+    small_model: str | None = CLAUDE_CODE_SMALL_MODEL,
     react_compaction: bool = True,
     replay_mode: ReplayMode = "fresh",
 ) -> Solver:
@@ -183,8 +183,8 @@ def red_team_agent(
             (`xhigh`), `default` sets none.
         claude_code_version: Claude Code version to install (`latest`, `stable`, `2.1.162`,
             ..., or `sandbox` for one already in the image). Upstream installs the latest.
-        small_model: model for Claude Code's Haiku-class background calls; `None` uses the
-            task's model.
+        small_model: model for Claude Code's Haiku-class background calls: Haiku 4.5, as
+            upstream's CLI used; `None` uses the task's model.
         react_compaction: let ReAct summarise its conversation near the context limit.
         replay_mode: for `replay`: `fresh` (without the scorer's cached results) or
             `as_published` (see `agents.replay`).
