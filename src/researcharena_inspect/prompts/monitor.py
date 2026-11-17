@@ -114,6 +114,8 @@ def monitor_task_instruction(
         main_task_only=True,
         upstream=upstream,
     )
+    # D-064: the agent prompt raises on an unknown config; the monitor keeps upstream's
+    # fallback to the first, which re-monitoring published runs needs, and warns.
     if config and config not in task_configs(setting, upstream):
         logger.warning(
             "task config %r is not in %s/config.json; upstream uses the first", config, setting

@@ -100,8 +100,12 @@ def red_team_claude_code(
     # D-077: `--effort` and `--thinking-display summarized` (solve.sh:99) are not CLI flags
     # here; the effort is set on the served model and the bridge drops the CLI's own
     # generation settings. D-078: the prompt goes in as an argument, not on stdin, and later
-    # rounds use `--resume <session id>` for `--continue`. D-080: Inspect SWE adds its own
-    # environment (IS_SANDBOX, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
+    # rounds use `--resume <session id>` for `--continue`. D-105: Inspect SWE resumes only once
+    # the bridge has seen an assistant message; after a round with none it starts the CLI with
+    # the same `--session-id` again, which the CLI refuses ("Session ID ... is already in
+    # use"), so that round fails where upstream's `--continue` would resume (not fixed).
+    # D-080: Inspect SWE adds its own environment (IS_SANDBOX,
+    # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
     # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, MCP settings, the bridge's URL and model names).
     # The experimental-betas switch is kept: clearing it changes no tool the model is offered
     # through the bridge, and forcing tool search on hides most tools from the model (see
