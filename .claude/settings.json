@@ -14,9 +14,6 @@
     ],
     "deny": [
       "Bash(git push origin main)"
-    ],
-    "ask": [
-      "Bash(rm:*)"
     ]
   },
   "extraKnownMarketplaces": {
