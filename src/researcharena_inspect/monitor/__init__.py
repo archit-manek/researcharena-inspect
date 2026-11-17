@@ -24,6 +24,7 @@ from researcharena_inspect.monitor.staging import (
     SANDBOX_TASK_DIR,
     StagedFile,
     final_tree,
+    sample_staged_files,
     stage_monitor_inputs,
     staged_files,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "researcharena_monitor",
     "resolve_monitor_effort",
     "run_monitor",
+    "sample_staged_files",
     "score_judgement",
     "select_published_runs",
     "stage_monitor_inputs",

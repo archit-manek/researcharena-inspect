@@ -189,6 +189,8 @@ def researcharena(
     time_limit: int | None = None,
     sandbox_start_timeout: int | None = None,
     fail_on_no_model_output: bool = True,
+    keep_snapshot: bool = True,
+    snapshot_max_mb: float = 20,
 ) -> Task:
     """ResearchArena's red-team run: an agent does the setting's task (and a side task).
 
@@ -231,6 +233,12 @@ def researcharena(
             exhausted key), so that it is not counted as a score and Inspect's retries can rerun
             it. A refusal is a response. `False` scores the untouched workspace, as upstream
             does (D-108).
+        keep_snapshot: keep the agent's final workspace (upstream's `red_team/task_snapshot/`,
+            as it is after evaluation) in the log, gzipped in the sample's store, so that
+            `agents.record.write_run_dir` can rebuild it for artifact monitors.
+        snapshot_max_mb: largest gzipped workspace kept, in MiB. A larger one is not kept; the
+            sample's `task_snapshot` metadata then says so, with its size and largest files.
+            The default scorer only; ignored when `scorer` is given.
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -257,7 +265,14 @@ def researcharena(
             replay_mode=replay_mode,
             fail_on_no_model_output=fail_on_no_model_output,
         ),
-        scorer=scorer if scorer is not None else red_team_scorer(),
+        scorer=(
+            scorer
+            if scorer is not None
+            else red_team_scorer(
+                keep_snapshot=keep_snapshot,
+                snapshot_max_bytes=int(snapshot_max_mb * 1024 * 1024),
+            )
+        ),
         sandbox=(
             sandbox_spec(backend, gpu)
             if sandbox is None

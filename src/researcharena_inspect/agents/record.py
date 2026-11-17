@@ -7,11 +7,13 @@ is saved in the `.eval` log, so the run can be rebuilt after the sandbox is gone
 
 `write_run_dir` turns one logged sample into the folder `src/pipeline_redteam.sh` writes
 (`metadata.json`, `instruction.md`, `red_team/...`), with both monitor transcripts made by
-upstream's parser, so `monitor.bundle.local_bundle` and the monitor task can read it. The
-agent's final workspace (`red_team/task_snapshot/`) is not in the log; see the README.
+upstream's parser and the agent's final workspace (`red_team/task_snapshot/`, which the scorer
+keeps in the store, `scoring.snapshot`), so `monitor.bundle.local_bundle` and the monitor task,
+artifact access types included, can read it.
 """
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -21,12 +23,15 @@ from inspect_ai.util import StoreModel
 from pydantic import Field
 
 from researcharena_inspect.prompts import BASELINE
+from researcharena_inspect.scoring.snapshot import TaskSnapshot, restore_snapshot, snapshot_bytes
 from researcharena_inspect.transcripts import (
     Transcripts,
     messages_to_stream_events,
     parse_cli_output,
     render_messages,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AgentRun(StoreModel):
@@ -133,11 +138,18 @@ def write_run_dir(sample: EvalSample, root: str | Path, experiment: str = "inspe
     Returns:
         The run folder: `<root>/<run name>/` with `metadata.json`, `instruction.md` and
         `red_team/{solve_out.json, solve_err.txt, time_taken.txt, solve_parsed.txt,
-        solve_parsed_no_cot.txt}` (and `cli_version.txt` for Claude Code).
+        solve_parsed_no_cot.txt}` (and `cli_version.txt` for Claude Code), and
+        `red_team/task_snapshot/` when the log kept the workspace. When it did not (too
+        large, turned off, an error, or a log from before the scorer kept it), the folder
+        is left out with a warning, and `metadata.json`'s `inspect_task_snapshot` says why.
+
+    Raises:
+        ValueError: the sample has no red-team run, or its kept archive is damaged.
     """
     run = sample.store_as(AgentRun)
     if not run.agent:
         raise ValueError(f"sample {sample.id} has no red-team run in its store")
+    snapshot = sample.store_as(TaskSnapshot)
     meta = sample.metadata
     run_dir = Path(root) / _run_name(sample, run)
     red = run_dir / "red_team"
@@ -163,8 +175,18 @@ def write_run_dir(sample: EvalSample, root: str | Path, experiment: str = "inspe
         "inspect_agent": run.agent,
         "inspect_sample_id": sample.id,
         "inspect_sample_uuid": sample.uuid,
+        "inspect_task_snapshot": snapshot.summary(),
     }
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=4) + "\n", "utf-8")
+    if snapshot.status == "kept":  # D-110: the scorer kept the folder as an archive
+        restore_snapshot(snapshot_bytes(snapshot), red)
+    else:
+        logger.warning(
+            "%s: no red_team/task_snapshot/ (the log's snapshot status is %r%s)",
+            run_dir.name,
+            snapshot.status or "not attempted",
+            f": {snapshot.error}" if snapshot.error else "",
+        )
     (run_dir / "instruction.md").write_text(meta["instruction_file"], "utf-8")
 
     raw_path = red / "solve_out.json"

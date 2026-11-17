@@ -20,6 +20,7 @@ import os
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
@@ -42,20 +43,28 @@ class StagedFile:
     """Permission bits: `cp` keeps the source's; `echo > file` gives 0644."""
 
 
-def workspace_files(workspace: Path) -> list[tuple[str, Path]]:
+def workspace_files(workspace: Path, *, links_outside: bool = False) -> list[tuple[str, Path]]:
     """Files under `workspace` as (relative POSIX path, host path), sorted.
 
     Symlinks to files are followed (the Hugging Face cache stores each file as a symlink), where
-    `cp -r` would copy a symlink as a symlink; symlinked folders and empty folders are left out.
+    `cp -r` would copy a symlink as a symlink; symlinked folders and empty folders are left out
+    (D-111). A link to a file outside the workspace is followed only if `links_outside`: the
+    agent made a restored workspace's links, and following them on the host would hand host
+    files to the monitor.
     """
+    inside = workspace.resolve()
     files = []
     for root, dirs, names in os.walk(workspace):
         dirs.sort()
         for name in sorted(names):
             host = Path(root) / name
-            if host.is_file():
-                rel = PurePosixPath(*host.relative_to(workspace).parts)
-                files.append((str(rel), host))
+            if not host.is_file():
+                continue
+            leaves = host.is_symlink() and not host.resolve().is_relative_to(inside)
+            if leaves and not links_outside:  # D-111
+                continue
+            rel = PurePosixPath(*host.relative_to(workspace).parts)
+            files.append((str(rel), host))
     return files
 
 
@@ -70,6 +79,7 @@ def staged_files(
     prompt: str,
     workspace: Path | None,
     with_artifact: bool,
+    workspace_links_outside: bool = False,
 ) -> list[StagedFile]:
     """The monitor's files in the order upstream writes them; later writes win."""
     instruction = main_task_instruction.encode("utf-8")
@@ -78,9 +88,8 @@ def staged_files(
         staged.append(StagedFile("task/agent_transcript.txt", transcript, _mode(transcript)))
     staged.append(StagedFile("task/task_instruction.md", instruction))
     if with_artifact and workspace is not None and workspace.is_dir():
-        staged += [
-            StagedFile(f"task/{rel}", host, _mode(host)) for rel, host in workspace_files(workspace)
-        ]
+        found = workspace_files(workspace, links_outside=workspace_links_outside)
+        staged += [StagedFile(f"task/{rel}", host, _mode(host)) for rel, host in found]
     staged.append(StagedFile("prompt.txt", prompt.encode("utf-8")))
     return staged
 
@@ -123,21 +132,25 @@ async def write_to_sandbox(staged: list[StagedFile], home: str = SANDBOX_HOME) -
         raise RuntimeError(f"staging the monitor's files failed: {result.stderr}")
 
 
+def sample_staged_files(metadata: dict[str, Any]) -> list[StagedFile]:
+    """The monitor's files for a sample made by `monitor.task.bundle_to_sample`."""
+    workspace = metadata.get("workspace")
+    return staged_files(
+        transcript=Path(metadata["transcript_path"]),
+        main_task_instruction=metadata["main_task_instruction"],
+        prompt=metadata["monitor_prompt"],
+        workspace=Path(workspace) if workspace else None,
+        with_artifact=metadata["with_artifact"],
+        workspace_links_outside=metadata.get("workspace_links_outside", False),
+    )
+
+
 @solver
 def stage_monitor_inputs() -> Solver:
     """Write the monitor's inputs (from the sample's metadata) into its sandbox."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        meta = state.metadata
-        workspace = meta.get("workspace")
-        staged = staged_files(
-            transcript=Path(meta["transcript_path"]),
-            main_task_instruction=meta["main_task_instruction"],
-            prompt=meta["monitor_prompt"],
-            workspace=Path(workspace) if workspace else None,
-            with_artifact=meta["with_artifact"],
-        )
-        await write_to_sandbox(staged)
+        await write_to_sandbox(sample_staged_files(state.metadata))
         return state
 
     return solve
