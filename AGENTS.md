@@ -7,17 +7,22 @@ This repo holds one Inspect AI evaluation, `researcharena-inspect`, as the Pytho
 This project uses `uv`. Do not use `pip`, bare `python` or bare `pytest`.
 
 - `uv sync` installs the project and its dev dependencies.
-- `uv run inspect eval researcharena_inspect/researcharena_inspect --model <provider/model>` runs the eval. `--limit N` runs N samples.
+- `uv run inspect eval researcharena_inspect/researcharena --model <provider/model>` runs the red-team task (it needs one NVIDIA GPU); `researcharena_inspect/researcharena_monitor` runs the monitor on published runs. `--limit N` runs N samples.
+- `uv run inspect eval --run-config src/researcharena_inspect/run_configs/original.yaml` runs the paper's CUDA setup.
+- `hawk eval-set run hawk/<file>.yaml` runs a job on GL's Hawk. Model names, time limits and start timeouts there are explained under "On Hawk" in the eval README.
 - `make test` runs the tests. Slow tests need `uv run pytest --runslow`.
 - `make check` runs every check CI runs.
 - `make readmes` regenerates the README sections that come from `eval.yaml` and the task signatures.
 
 ## Layout
 
-- `src/researcharena_inspect/researcharena_inspect.py`: the task, `record_to_sample`, and the version read from `eval.yaml`.
+- `src/researcharena_inspect/task.py`: the red-team task, `researcharena`. `monitor/task.py`: the monitor task, `researcharena_monitor`. `researcharena` and the check tasks pass the `eval.yaml` version to `Task`; `researcharena_monitor` does not yet.
+- `src/researcharena_inspect/researcharena_inspect.py`: the template's placeholder task (two arithmetic questions); not part of the port and not in `eval.yaml`.
 - `src/researcharena_inspect/eval.yaml`: title, description, contributors, version and tasks. Edit it and run `make readmes`.
-- `src/researcharena_inspect/README.md`: the eval's documentation, including the generated sections.
+- `src/researcharena_inspect/run_configs/`: `original.yaml` and `original_monitor.yaml`, the paper's setup as `inspect eval --run-config` files, each value commented with where upstream sets it.
+- `src/researcharena_inspect/README.md`: the eval's documentation, including the generated sections, what has been verified and the deviations table.
 - `tests/researcharena_inspect/`: the tests.
+- `hawk/`: Hawk job files, kept as they ran.
 - `agent_artefacts/trajectory_analysis/inspect_scout/`: Scout scanners for the transcript audit.
 
 ## How the port is built
@@ -27,11 +32,11 @@ This repo ports [ResearchArena](https://github.com/aisa-group/ResearchArena) to 
 - **Reuse, don't rewrite.** Upstream's task files, scorers and templates are used unchanged from the pinned checkout (`researcharena_inspect.upstream.upstream_dir()`). Only its bash orchestration is rewritten as Inspect code.
 - **Upstream is the oracle.** Where the port re-implements something upstream does (building a prompt, rendering a transcript), a test runs upstream's own script from the pinned checkout and requires identical output. A difference is either a bug in the port or a documented deviation.
 - **Published runs are the second check.** `researcharena_inspect.published` loads the authors' 386 published runs and fetches their files at a pinned revision.
-- **Deviations are explicit.** Upstream's behaviour is the default, flaws included. A bug is fixed only if it stops a run or a score from being produced. Every deviation gets a comment with its ledger id (`# D-NNN`) and a row in the README's deviations table.
+- **Deviations are explicit.** Upstream's behaviour is the default, flaws included. A bug is fixed only if it stops a run or a score from being produced. Every deviation gets a comment with its ledger id (`# D-NNN`) and a row in the deviations table of `src/researcharena_inspect/README.md`.
 - **No spend in tests.** Tests never call a paid model or need a GPU unless marked `slow` and run on purpose.
 - **New dependencies** must have been on PyPI for at least 7 days, or Hawk refuses to install the package.
 
-Modules: `pins.py`, `upstream.py`, `published.py` (shared base); `prompts/` (agent and monitor prompts); `transcripts/` (the text a monitor reads); `monitor/` (monitor task); `analysis/` (success rules, detection rate, AUROC); `gpu_probe.py` (environment check).
+Modules: `pins.py`, `upstream.py`, `published.py` (shared base); `prompts/` (agent and monitor prompts); `task.py` and `agents/` (red-team task; Claude Code, ReAct, null and replay agents; the re-prompting loop); `environment/` (image, sandbox configs, workspace staging, `environment_check`); `scoring/` (upstream's `evaluate.py` as a scorer, `kernel_crash_check`); `transcripts/` (the text a monitor reads); `monitor/` (monitor task); `analysis/` (success rules, detection rate, AUROC, the paper's tables); `gpu_probe.py` (whether a sandbox sees a GPU, outside `eval.yaml`).
 
 ## Checks
 

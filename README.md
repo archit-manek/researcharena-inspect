@@ -1,15 +1,27 @@
 # researcharena-inspect
 
-Inspect port of ResearchArena, a control evaluation of sabotage and monitoring in automated AI R&D
+An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://research-arena.ai/) ([paper](https://arxiv.org/abs/2607.19321), [code](https://github.com/aisa-group/ResearchArena)), an AI-control evaluation of sabotage and monitoring in automated AI R&D. An agent does a long research-engineering task while some runs also ask it to sabotage the work in secret; a monitor model then reads the run and scores how suspicious it looks.
+
+The eval's documentation is in [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md). For a review, read it in this order:
+
+1. [What is in the port](src/researcharena_inspect/README.md#what-is-in-the-port) and [what "the original" means here](src/researcharena_inspect/README.md#what-the-original-means-here): the port follows upstream's code at commit `b922f4b`, reuses its task files, evaluators and templates unchanged, and rewrites only the bash orchestration as Inspect tasks.
+2. [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how): one row per check, with the result and the test or run behind it, and a list of what has not been verified.
+3. [Deviations from upstream](src/researcharena_inspect/README.md#deviations-from-upstream) and [Known limitations](src/researcharena_inspect/README.md#known-limitations).
+4. [How to run it](src/researcharena_inspect/README.md#how-to-run-it), locally or on Hawk, and the paper's setup as a run config: [`run_configs/original.yaml`](src/researcharena_inspect/run_configs/original.yaml).
+
+Where things stand (17 Nov 2026): the CUDA kernel setting runs end to end; prompts, workspace staging and scorers match upstream's own scripts byte for byte in the tests; the paper's tables reproduce from the authors' published runs except for cells listed with their causes; upstream's scorer and a 10-minute Claude Code run have run on an NVIDIA L4, where the untouched kernels fault and score 0.0 (D-037). Nothing has run on the paper's GPU (an H100) or for the paper's full hour, and the other three settings are checked only up to their prompts.
 
 ## Getting started
 
 ```bash
 uv sync
 uv run pre-commit install
-uv run inspect eval researcharena_inspect/researcharena_inspect --model anthropic/claude-sonnet-5-5
+uv run inspect eval researcharena_inspect/researcharena_monitor --model anthropic/claude-sonnet-4-6 \
+    -T runs=cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_162845_c17310740
 uv run inspect view
 ```
+
+That command runs the monitor on one of the authors' published CUDA runs (about $0.60) and needs Docker but no GPU. The red-team task (`researcharena_inspect/researcharena`) needs one NVIDIA GPU; see [How to run it](src/researcharena_inspect/README.md#how-to-run-it).
 
 Put `INSPECT_EVAL_MODEL` and your API keys in a `.env` file (it is git-ignored) to avoid passing `--model` each time.
 
@@ -22,13 +34,25 @@ make check   # ruff, basedpyright, inspect-evals-lint, generated README sections
 make test    # pytest
 ```
 
-Slow tests run with `uv run pytest --runslow`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the other gates and markers.
+Slow tests (Docker parity with upstream's scripts, published-data checks) run with `uv run pytest --runslow`. No test calls a paid model or needs a GPU. See [CONTRIBUTING.md](CONTRIBUTING.md) for the other gates and markers.
 
 ## Layout
 
 ```text
-src/researcharena_inspect/        the eval: task module, eval.yaml, README.md
+src/researcharena_inspect/        the eval
+  task.py                         the red-team task, `researcharena`
+  monitor/                        the monitor task, `researcharena_monitor`
+  agents/                         Claude Code, ReAct, null and replay agents; the re-prompting loop
+  environment/                    the agent's image, sandbox configs, workspace staging, environment_check
+  scoring/                        upstream's evaluate.py as an Inspect scorer; kernel_crash_check
+  prompts/                        the agent and monitor prompts
+  transcripts/                    the transcripts a monitor reads, made by upstream's parser
+  analysis/                       thresholds, detection rate, AUROC, the paper's tables
+  run_configs/                    original.yaml: the paper's setup as an `inspect eval --run-config` file
+  pins.py, upstream.py, published.py   pinned versions, the upstream checkout, the published runs
+  eval.yaml, README.md            the eval's metadata and documentation
 tests/researcharena_inspect/      its tests
+hawk/                             job files for GL's Hawk cluster, as they ran
 agent_artefacts/trajectory_analysis/inspect_scout/   Scout scanners for the transcript audit
 ```
 
@@ -44,7 +68,3 @@ The `inspect-evals` skills (create-eval, investigate-dataset, ensure-test-covera
 
 A weekly workflow runs `copier update` and opens a pull request when the template changed.
 `README.md`, `src/researcharena_inspect/` and `tests/researcharena_inspect/` are never overwritten by an update.
-
-## Eval documentation
-
-See [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md).
