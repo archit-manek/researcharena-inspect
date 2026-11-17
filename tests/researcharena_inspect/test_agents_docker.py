@@ -4,6 +4,7 @@ The scripted agent works in three rounds. In rounds 0 and 1 it writes a file wit
 and then stops (no tool call), as an agent that thinks it is done would; upstream re-prompts it
 each time. In round 2 it starts a background `sleep 300` and a foreground one, so it is still
 working when the budget runs out. The budget is 25 seconds (`redruntime` 0.007 hours).
+A second Claude Code run has the model refuse in rounds 0 and 2 (D-084).
 
 Claude Code is the real CLI (Inspect SWE, version `CLI_VERSION`) talking to the mock model
 through Inspect's bridge. No paid model is called.
@@ -29,6 +30,7 @@ from inspect_ai.util import sandbox
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.agents import RC_BUDGET, RC_OK, AgentRun, write_run_dirs
+from researcharena_inspect.agents.budget import ROUND_KILL_AFTER_S
 from researcharena_inspect.agents.solver import MODEL_AGENTS
 from researcharena_inspect.monitor import local_bundles, researcharena_monitor
 from researcharena_inspect.prompts import agent_prompt, resume_prompt
@@ -41,8 +43,9 @@ BUDGET_HOURS = "0.007"
 BUDGET_S = 25
 
 STOP_TOLERANCE_S = 10
-"""How late after the deadline the last round may end: Inspect's cancellation of the round
-(measured 2-4 s here). Upstream allows the CLI 30 s after SIGTERM (`--kill-after=30s`)."""
+"""How late after the deadline the last round may end: Claude Code's own exit on SIGTERM
+(about 1-2 s measured here; `--kill-after` would allow 30 s) or, for ReAct, Inspect's
+cancellation of the round (2-4 s)."""
 
 CONTINUE = "Continue where you left off"
 
@@ -153,20 +156,34 @@ def test_agent_that_stops_early_is_reprompted_as_upstream(red_run) -> None:
 
 
 def test_agent_still_working_is_stopped_at_the_budget(red_run) -> None:
-    _, log = red_run
+    agent, log = red_run
     sample, run = _sample(log)
     assert run.budget_seconds == BUDGET_S
     last = run.rounds[-1]
     # The round's limit was the time left, so it should end at the deadline (budget start +
-    # 25 s), not earlier, and only as late as the cancellation takes.
+    # 25 s), not earlier, and only as late as the CLI's exit or the cancellation takes.
     assert last["started_at"] + last["remaining_at_start"] == pytest.approx(BUDGET_S, abs=1)
     assert BUDGET_S - 1 <= last["ended_at"] <= BUDGET_S + STOP_TOLERANCE_S
+    assert last["rc"] == RC_BUDGET
     # Nothing the agent started is left running when the scorer runs.
     assert sample.scores is not None
     processes = sample.scores["workspace_probe"].metadata["processes"]  # type: ignore[index]
     assert not [p for p in processes if "sleep 300" in p]
     assert not [p for p in processes if "claude" in p]
-    assert run.killed  # the background sleep, or the CLI and its tool, were killed
+    if agent == "claude_code":
+        # SIGTERM at the deadline, as `timeout` sends it (solve.sh:97). The CLI kills its Bash
+        # tool's commands (both sleeps) itself and exits within the grace, so it is not
+        # SIGKILLed and nothing is left for the end of the agent phase to kill.
+        [stop] = run.deadline_stops
+        assert [p for p in stop["terminated"] if "claude" in p and "--print" in p]
+        # One entry per process, though the CLI's command line holds the prompt's newlines.
+        assert all(p.split(" ", 1)[0].isdigit() for p in stop["terminated"])
+        assert not stop["killed_after_grace"]
+        assert stop["killed"] == []
+        assert stop["ended_after_term_s"] < ROUND_KILL_AFTER_S
+        assert stop["cli_exit_code"] in (0, 143)  # its own code; the round's is 124
+    else:
+        assert run.killed  # ReAct's round is cancelled; its tool's sleeps are killed after
 
 
 def test_budget_counts_what_upstream_counts(red_run) -> None:
@@ -255,8 +272,10 @@ def test_run_folder_for_the_monitor(red_run, tmp_path: Path) -> None:
     if agent == "claude_code":
         assert run.stdout[0].startswith('{"type":"system","subtype":"init"')
         assert '"cwd":"/home/user/task"' in run.stdout[0]
-        # One result event per finished round (the third was stopped).
-        assert sum('"type":"result"' in line for line in run.stdout) == 2
+        # One result event per round. The third got SIGTERM at the deadline; the CLI killed its
+        # tool and, since the mock model then answered without a tool call, finished the turn
+        # and wrote its result before exiting, as upstream's CLI does under `timeout`.
+        assert sum('"type":"result"' in line for line in run.stdout) == 3
         assert parse_cli_output(red / "solve_out.json", "claude").with_cot == with_cot
         assert "Tool call — Bash" in without_cot
         assert "Session start — " in with_cot
@@ -345,3 +364,77 @@ def test_red_timeout_ends_the_phase_and_the_sample_is_still_scored(
     assert sample.scores is not None
     processes = sample.scores["workspace_probe"].metadata["processes"]  # type: ignore[index]
     assert not [p for p in processes if "sleep 300" in p]
+
+
+# --- Refusals (D-084) -------------------------------------------------------------------------
+
+REFUSED_ROUNDS = (0, 2)
+
+
+def refusing_agent(messages, tools, tool_choice, config) -> ModelOutput:
+    """Refuses in rounds 0 and 2 (stop reason `content_filter`, which the bridge sends to the
+    CLI as Anthropic's `refusal`) and ends round 1 normally."""
+    if "Bash" not in {t.name for t in tools}:
+        return ModelOutput.from_content("mockllm/model", "ok")  # Claude Code's side calls
+    n = _round(messages)
+    if n in REFUSED_ROUNDS:
+        return ModelOutput.from_content(
+            "mockllm/model", "I can't help with that.", stop_reason="content_filter"
+        )
+    return ModelOutput.from_content("mockllm/model", f"Finished round {n}.")
+
+
+@pytest.fixture(scope="module")
+def refusal_run(tmp_path_factory: pytest.TempPathFactory) -> EvalLog:
+    task = researcharena(
+        side_tasks="none",
+        agent="claude_code",
+        redruntime="0.02",  # 72 s: enough for three rounds; the refusal ends the loop first
+        claude_code_version=CLI_VERSION,
+        small_model=None,  # the mock model answers Claude Code's background calls too
+        sandbox="docker",
+        scorer=workspace_probe(),
+    )
+    model = get_model("mockllm/model", custom_outputs=refusing_agent)
+    log_dir = tmp_path_factory.mktemp("red_refusal")
+    [log] = eval(task, model=model, display="none", log_dir=str(log_dir))
+    return log
+
+
+def test_cli_exits_1_after_a_refusal(refusal_run: EvalLog) -> None:
+    _, run = _sample(refusal_run)
+    # The CLI's own codes: 1 after each refusal, 0 for the normal round.
+    assert run.cli_exit_codes == [1, 0, 1]
+    results = [line for line in run.stdout if '"type":"result"' in line]
+    assert len(results) == 3
+    for n in REFUSED_ROUNDS:
+        assert '"is_error":true' in results[n]
+        assert '"stop_reason":"refusal"' in results[n]
+        assert "Usage Policy" in results[n]
+    assert '"is_error":false' in results[1]
+
+
+def test_refused_first_round_is_still_resumed(refusal_run: EvalLog) -> None:
+    _, run = _sample(refusal_run)
+    assert run.rounds[0]["phase"] == "exec"
+    assert run.rounds[0]["rc"] == 1
+    assert run.rounds[1]["phase"] == "resume"  # solve.sh:112 resumes any code but 124
+    exec_line = next(line for line in run.log if line.startswith("[agent] exec finished"))
+    assert exec_line.startswith("[agent] exec finished rc=1 remaining_seconds=")
+    assert "[agent] phase 2/2 round 1: claude --continue" in run.log
+
+
+def test_refused_resume_round_stops_the_loop(refusal_run: EvalLog) -> None:
+    sample, run = _sample(refusal_run)
+    assert [(r["phase"], r["number"], r["rc"]) for r in run.rounds] == [
+        ("exec", 0, 1),
+        ("resume", 1, RC_OK),
+        ("resume", 2, 1),
+    ]
+    # Stopped by solve.sh:128-130 with time left, not by the budget.
+    assert run.log[-1] == "[agent] resume failed rc=1; stopping resume loop"
+    assert run.rounds[-1]["ended_at"] < 60
+    assert run.exit_code == 1
+    assert sample.metadata["agent_exit_code"] == 1
+    assert run.deadline_stops == []
+    assert sample.scores is not None  # the workspace is still scored

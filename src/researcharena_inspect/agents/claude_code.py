@@ -19,7 +19,8 @@ the login (D-076), the effort and thinking flags (D-077), stdin and `--continue`
 
 Inspect SWE keeps none of the CLI's stdout, which upstream saves as `red_team/solve_out.json`
 and turns into the monitor's transcripts. `capture_cli_output` copies each stdout line and
-stderr chunk of the CLI as Inspect SWE reads them, for the rounds run inside it.
+stderr chunk of the CLI as Inspect SWE reads them, and its exit code, for the rounds run
+inside it.
 """
 
 import importlib
@@ -159,6 +160,7 @@ async def install_claude_code(version: str, user: str | None = None) -> Installe
 
 _stdout_sink: ContextVar[list[str] | None] = ContextVar("researcharena_cli_stdout", default=None)
 _stderr_sink: ContextVar[list[str] | None] = ContextVar("researcharena_cli_stderr", default=None)
+_exit_sink: ContextVar[list[int] | None] = ContextVar("researcharena_cli_exits", default=None)
 
 _TEE_ATTRIBUTE = "_researcharena_tee"
 _SWE_MODULE = "inspect_swe._claude_code.claude_code"
@@ -169,8 +171,8 @@ def _install_tee() -> None:
 
     `inspect_swe._claude_code.claude_code.claude_code_event_stream` (inspect_swe 0.2.x) turns
     the CLI's stdout into JSON events. The wrapper passes every event on unchanged and, when a
-    capture is open in the current context, also keeps each stdout line and stderr chunk.
-    Outside a capture (the monitor, other tasks) it changes nothing.
+    capture is open in the current context, also keeps each stdout line, stderr chunk and exit
+    code. Outside a capture (the monitor, other tasks) it changes nothing.
     """
     module = importlib.import_module(_SWE_MODULE)
     original = module.claude_code_event_stream
@@ -179,14 +181,17 @@ def _install_tee() -> None:
     stream = importlib.import_module("inspect_swe._claude_code._events.stream")
     line_events = (stream.JsonlEvent, stream.JsonlParseError)
     stderr_event = stream.StderrEvent
+    exit_event = stream.ExitEvent
 
     async def tee(proc: Any) -> AsyncIterator[Any]:
-        out, err = _stdout_sink.get(), _stderr_sink.get()
+        out, err, exits = _stdout_sink.get(), _stderr_sink.get(), _exit_sink.get()
         async for event in original(proc):
             if out is not None and isinstance(event, line_events):
                 out.append(event.line)
             elif err is not None and isinstance(event, stderr_event):
                 err.append(event.data)
+            elif exits is not None and isinstance(event, exit_event):
+                exits.append(event.code)
             yield event
 
     setattr(tee, _TEE_ATTRIBUTE, True)
@@ -194,18 +199,24 @@ def _install_tee() -> None:
 
 
 @contextmanager
-def capture_cli_output(stdout: list[str], stderr: list[str]) -> Iterator[None]:
-    """Append the CLI's stdout lines and stderr chunks to the given lists while open.
+def capture_cli_output(
+    stdout: list[str], stderr: list[str], exit_codes: list[int] | None = None
+) -> Iterator[None]:
+    """Append the CLI's stdout lines, stderr chunks and exit codes to the given lists while open.
 
     Stdout lines are kept as Inspect SWE splits them: one JSON event per line, stripped, blank
     lines dropped. Joined with newlines they are the `stream-json` that upstream's
-    `solve_out.json` holds after its non-JSON preamble.
+    `solve_out.json` holds after its non-JSON preamble. `exit_codes` gets one entry per CLI
+    process that exited (none for one cancelled before it exited), including the exit that
+    Inspect SWE does not raise for: 1 after a refusal (see `solver.AgentRounds`, D-084).
     """
     _install_tee()
     out_token = _stdout_sink.set(stdout)
     err_token = _stderr_sink.set(stderr)
+    exit_token = _exit_sink.set(exit_codes)
     try:
         yield
     finally:
         _stdout_sink.reset(out_token)
         _stderr_sink.reset(err_token)
+        _exit_sink.reset(exit_token)

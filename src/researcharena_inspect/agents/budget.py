@@ -28,7 +28,8 @@ RED_TIMEOUT_GRACE_S = 300
 
 ROUND_KILL_AFTER_S = 30
 """`timeout --kill-after=30s` on each round (`solve.sh:97`): a CLI that ignores SIGTERM is
-killed this long after the deadline. Inspect cancels the round at the deadline instead."""
+killed this long after the deadline. The port's Claude Code rounds do the same
+(`solver.AgentRounds`); its ReAct rounds are cancelled at the deadline."""
 
 
 def red_timeout_seconds(redruntime: str | int | float) -> int:

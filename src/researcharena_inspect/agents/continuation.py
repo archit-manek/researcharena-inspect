@@ -31,7 +31,12 @@ RC_BUDGET = 124
 """GNU `timeout`'s exit code when it stopped the command, and the skip code of
 `run_claude_with_remaining_budget` (`solve.sh:92-95`)."""
 RC_FAILED = 1
-"""What the port records for a round whose agent raised an error (the CLI exited non-zero)."""
+"""What the port records for a failed round whose real exit code it does not have (the model
+call or the agent raised; the CLI's own non-zero exit code is recorded when there is one)."""
+RC_KILLED = 137
+"""What `timeout --kill-after` leaves when it had to SIGKILL the command (`solve.sh:97`): it
+signals its own process group, so `timeout` itself dies of SIGKILL and bash reports 128 + 9.
+Measured with GNU coreutils 8.32 (Ubuntu 22.04, the base of upstream's image)."""
 
 RoundRunner = Callable[[Phase, str, int], Awaitable[int]]
 """Runs one round: `(phase, prompt, remaining_seconds) -> exit code` (0, 124 or other)."""

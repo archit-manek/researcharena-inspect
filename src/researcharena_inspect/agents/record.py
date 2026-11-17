@@ -53,7 +53,15 @@ class AgentRun(StoreModel):
     red_end: float | None = None
     rounds: list[dict[str, Any]] = Field(default_factory=list)
     exit_code: int | None = None
-    """The last round's code (`AGENT_RC`): 0, 124 (budget) or 1 (the agent raised)."""
+    """The last round's code (`AGENT_RC`): the CLI's exit code (0, or 1 after a refusal, say),
+    124 (budget), 137 (the CLI was still running 30 s after the deadline) or 1 (the agent
+    raised with no exit code of its own, as ReAct does)."""
+    cli_exit_codes: list[int] = Field(default_factory=list)
+    """Claude Code only: the CLI's own exit code for each round it exited in (143 or 0 when
+    SIGTERM stopped it; the round's code is then 124, as `timeout` reports it)."""
+    deadline_stops: list[dict[str, Any]] = Field(default_factory=list)
+    """Claude Code only: each round that reached its deadline, what was sent SIGTERM and
+    SIGKILL and how long the CLI took to exit (`solver.DeadlineStop`)."""
     outer_timeout: bool = False
     """Whether `RED_TIMEOUT` (budget + 5 minutes) stopped the agent phase."""
     stdout: list[str] = Field(default_factory=list)
