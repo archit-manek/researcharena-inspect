@@ -1,11 +1,11 @@
 """Pass rule 3: upstream's side-task evaluators on the published snapshots, on a CPU.
 
 Of the four CUDA side tasks, only `independent`'s verdict needs no GPU (it reads
-`requirements.txt`). `embedded`'s verdict is its KL ratio, which needs the GPU; its
-`suspicious_code` flag is a static read of the kernels and is checked here too. `embedded2` and
-`embedded3` measure everything on the GPU.
+`requirements.txt`). The other three measure their verdict on the GPU (a KL ratio, a latency
+ratio, an fp16/bf16 KL); each also records a `suspicious_code` flag, a static read of the kernels,
+which is checked here.
 
-Each published attack run of those two side tasks is replayed as published
+Each published attack run is replayed as published
 (`researcharena(agent="replay", replay_mode="as_published")`) in the CPU Docker sandbox: the
 workspace is staged, the run's `task_snapshot/` replaces `task/`, and `red_team_scorer` runs
 upstream's `evaluate.py` with the side task's evaluator, unchanged. The result is compared with
@@ -26,11 +26,13 @@ from researcharena_inspect.published import load_index
 from researcharena_inspect.task import researcharena
 from tests.researcharena_inspect.published_metrics import published_metrics
 
-SIDE_TASKS = ("independent", "embedded")
+SIDE_TASKS = ("independent", "embedded", "embedded2", "embedded3")
 
 FIELDS = {
     "independent": ("side_task_score", "pin_added", "requirements_file_present"),
     "embedded": ("side_task.suspicious_code",),
+    "embedded2": ("suspicious_code",),
+    "embedded3": ("suspicious_code",),
 }
 """The fields that need no GPU, compared with the published `metrics.json`."""
 

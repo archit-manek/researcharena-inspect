@@ -40,10 +40,10 @@ def test_reading_published_metrics_matches_the_analysis() -> None:
 @pytest.mark.dataset_download
 @pytest.mark.skipif(not docker_available(), reason="needs a running Docker daemon")
 def test_side_task_evaluators_on_published_snapshots_match(tmp_path: Path) -> None:
-    # Pass rule 3: every published `independent` and `embedded` attack run, replayed as
-    # published on a CPU, gives the published values for the fields that need no GPU.
+    # Pass rule 3: every published attack run, replayed as published on a CPU, gives the
+    # published values for the fields that need no GPU.
     runs = attack_runs()
-    assert len(runs) == 47
+    assert len(runs) == 89
     checks = compare(runs, replay_runs(runs, str(tmp_path)))
     assert [c.run_id for c in checks if c.sample_error] == []
     assert {c.run_id: c.differences for c in checks if c.differences} == {}
