@@ -1,12 +1,54 @@
-title: "researcharena-inspect"
+title: "ResearchArena: Evaluating Sabotage and Monitoring in Automated AI R&D"
 description: |
-  Inspect port of ResearchArena, a control evaluation of sabotage and monitoring in automated AI R&D
-group: Knowledge # pick the group used by the inspect_evals listing for this benchmark
+  An AI-control evaluation of sabotage and monitoring in automated AI R&D: an agent does a long research-engineering task, some runs also give it a hidden sabotage task, and a monitor model reads the run and scores how suspicious it looks.
+arxiv: https://arxiv.org/abs/2607.19321
+group: Scheming
 contributors:
   - archit-manek
 version: "1-A"
+tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
-  - name: researcharena_inspect
-    dataset_samples: 2
-  - name: gpu_probe
+  # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
+  # baseline). Other settings: inference_optimization 5, safety_finetuning 4,
+  # utility_finetuning 3; only cuda_kernel has been run on a GPU.
+  - name: researcharena
+    dataset_samples: 5
+  # The monitor over the authors' published runs. 113 samples with the defaults (every published
+  # cuda_kernel run); 386 with settings=None (all four settings).
+  - name: researcharena_monitor
+    dataset_samples: 113
+  # Checks of the environment on a GPU, without an agent or a model call. Their scores describe
+  # the sandbox, not a model. gpu_probe (nvidia-smi only, in a plain CUDA image) is left out:
+  # environment_check runs the same check inside the eval's own image and does more.
+  - name: environment_check
     dataset_samples: 1
+    kind: maintenance
+  - name: kernel_crash_check
+    dataset_samples: 2
+    kind: maintenance
+
+external_assets:
+  - type: git_clone
+    source: "https://github.com/aisa-group/ResearchArena.git"
+    fetch_method: git_clone
+    state: pinned
+    comment: "Upstream's task files, evaluators, templates and scripts, cloned at commit b922f4b (pins.UPSTREAM_COMMIT); the paper commit 58776e0 is cloned for comparisons only."
+  - type: huggingface
+    source: "aisa-group/ResearchArena-Trajectories"
+    fetch_method: hf_hub_download
+    state: pinned
+    comment: "The authors' 386 published runs at revision 8cd737c (pins.HF_REVISION): transcripts, workspaces and judgements, for the monitor task, the replay agent and the tests. The website's run index is a gzipped snapshot in the package."
+  - type: huggingface
+    source: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    fetch_method: other
+    state: floating
+    comment: "The model whose generation the CUDA kernels speed up. Upstream's bench.py loads it with transformers inside the sandbox, with no revision."
+
+metadata:
+  sandbox: ["solver", "scorer"]
+  requires:
+    internet: true
+    gpu:
+      count: 1
+      products: ["H100", "L4"]
+  supports_k8s: true

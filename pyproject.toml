@@ -49,6 +49,7 @@ include = ["researcharena_inspect*"] # examples/ stays out of the wheel
 "*" = [
     "eval.yaml",
     "gpu_probe_values.yaml",
+    "run_configs/*.yaml", # `inspect eval --run-config` files (original.yaml)
     "data/*.json.gz",
     # environment/: the agent's sandbox configs and the Dockerfile they were built from
     "compose.yaml",
@@ -61,8 +62,15 @@ include = ["researcharena_inspect*"] # examples/ stays out of the wheel
 # sets tests_layout or readme_location here on top of it.
 [tool.inspect-evals-lint]
 preset = "multi-eval"
+
+[tool.inspect-evals-lint.per-file-ignores]
 # kernel_bench.py runs in the sandbox image (PyTorch, transformers, upstream's bench.py).
-per-file-ignores = { "src/researcharena_inspect/scoring/kernel_bench.py" = ["external_dependencies"] }
+"src/researcharena_inspect/scoring/kernel_bench.py" = ["external_dependencies"]
+# The GPU sandbox check is `environment_check` (kind: maintenance), which builds the kernels and
+# runs upstream's evaluate.py in the pinned image. It predates the `<eval>_sandbox_check` name
+# the rule looks for, and a fixture workspace with a known verdict is not settled while the
+# untouched kernels fault on the L4 (ledger D-037).
+"src/researcharena_inspect/eval.yaml" = ["gpu_sandbox_check"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

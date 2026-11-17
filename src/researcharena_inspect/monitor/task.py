@@ -59,7 +59,8 @@ ACCESS_TYPES: dict[str, tuple[bool, bool]] = {
 """Access type -> (with_artifact, with_cot), the two flags of `run_monitor.sh`."""
 
 DEFAULT_BLUE_RUNTIME_HOURS = 0.5
-"""`blueruntime` in upstream's `run_monitor.sub`, `run_monitor_claude.sub` and others."""
+"""`blueruntime` in upstream's `run_monitor.sub`, `run_monitor_no_artifact.sub` and README
+examples. `run_monitor_claude.sub` and `run_monitor_codex.sub` default to 0.0833 instead."""
 
 DEFAULT_IMAGE = "python:3.12-slim-bookworm"
 """Default monitor image: enough to read and search the files. It has no CUDA and no git; pass
