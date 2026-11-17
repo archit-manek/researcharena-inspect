@@ -16,7 +16,7 @@ This project uses `uv`. Do not use `pip`, bare `python` or bare `pytest`.
 
 ## Layout
 
-- `src/researcharena_inspect/task.py`: the red-team task, `researcharena`. `monitor/task.py`: the monitor task, `researcharena_monitor`. `researcharena` and the check tasks pass the `eval.yaml` version to `Task`; `researcharena_monitor` does not yet.
+- `src/researcharena_inspect/task.py`: the red-team task, `researcharena`. `monitor/task.py`: the monitor task, `researcharena_monitor`. `researcharena`, `researcharena_monitor` and the check tasks pass the `eval.yaml` version to `Task`.
 - `src/researcharena_inspect/eval.yaml`: title, description, contributors, version and tasks. Edit it and run `make readmes`.
 - `src/researcharena_inspect/run_configs/`: `original.yaml` and `original_monitor.yaml`, the paper's setup as `inspect eval --run-config` files, each value commented with where upstream sets it.
 - `src/researcharena_inspect/README.md`: the eval's documentation, including the generated sections, what has been verified and the deviations table.

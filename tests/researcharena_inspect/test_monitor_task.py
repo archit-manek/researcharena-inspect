@@ -17,6 +17,7 @@ from inspect_ai.scorer import SampleScore, Score
 from inspect_ai.util import ComposeConfig
 from pytest_inspect_evals.metrics import assert_agreeing_epochs_change_nothing, run_metrics
 
+import researcharena_inspect
 from researcharena_inspect.monitor import (
     ACCESS_TYPES,
     SANDBOX_TASK_DIR,
@@ -42,6 +43,7 @@ from researcharena_inspect.monitor.task import (
     published_monitor_dir,
 )
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
+from researcharena_inspect.task import EVAL_VERSION
 
 CUDA_RUN = "cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_162845_c17310740"
 
@@ -173,6 +175,15 @@ def test_bundle_to_sample_from_a_local_run(tmp_path: Path) -> None:
     assert no_cot.metadata is not None
     assert no_cot.metadata["transcript_path"].endswith("solve_parsed_no_cot.txt")
     assert "Environment Snapshot" not in no_cot.input
+
+
+@pytest.mark.dataset_download  # runs upstream's prompt builders from the pinned checkout
+def test_monitor_task_has_the_eval_yaml_version(tmp_path: Path) -> None:
+    write_local_run(tmp_path / "run1")
+    task = researcharena_monitor(access="transcript", local_runs=str(tmp_path))
+    eval_yaml = Path(researcharena_inspect.__file__).parent / "eval.yaml"
+    assert f'version: "{task.version}"' in eval_yaml.read_text("utf-8").splitlines()
+    assert task.version == EVAL_VERSION  # the red-team task's
 
 
 def scripted_monitor(ls_target: str, score: int) -> list[ModelOutput]:
