@@ -34,6 +34,9 @@ class RunBundle:
     transcript_without_cot: Path
     workspace: Path | None = None
     """The agent's final workspace (`red_team/task_snapshot`), or None if not available."""
+    workspace_links_outside: bool = False
+    """Whether staging may follow the workspace's symbolic links to files outside it: true only
+    for a published workspace, whose files are links into the Hugging Face cache."""
     metadata: dict[str, Any] = field(default_factory=dict)
     """For analysis only, never shown to the monitor: scores, condition, published monitors."""
 
@@ -119,6 +122,7 @@ def published_bundle(run: dict[str, Any], with_workspace: bool = False) -> RunBu
         transcript_with_cot=fetch_run_file(run_id, "red_team/solve_parsed_sanitized.txt"),
         transcript_without_cot=fetch_run_file(run_id, "red_team/solve_parsed_no_cot_sanitized.txt"),
         workspace=fetch_workspace(run_id) if with_workspace else None,
+        workspace_links_outside=True,
         metadata={
             "source": "published",
             "run_metadata": meta,

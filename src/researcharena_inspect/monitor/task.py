@@ -7,6 +7,7 @@ agent runs in `/home/user/task` with upstream's prompt and time limit, and the s
 """
 
 import json
+import logging
 import math
 from pathlib import Path
 
@@ -54,6 +55,7 @@ from researcharena_inspect.transcripts import messages_to_stream_events
 
 # eval.yaml sits in the package folder, one above this module.
 EVAL_VERSION = load_eval_version(Path(__file__).parent.parent / "eval.yaml")
+logger = logging.getLogger(__name__)
 
 ACCESS_TYPES: dict[str, tuple[bool, bool]] = {
     "transcript": (False, False),
@@ -129,6 +131,7 @@ def bundle_to_sample(bundle: RunBundle, access: str, prompt_commit: str = "lates
             "with_cot": with_cot,
             "transcript_path": str(transcript),
             "workspace": str(bundle.workspace) if bundle.workspace else None,
+            "workspace_links_outside": bundle.workspace_links_outside,
             "main_task_instruction": built.main_task_instruction,
             "monitor_prompt": built.prompt,
             "prompt_commit": PROMPT_COMMITS[prompt_commit],
@@ -412,6 +415,17 @@ def researcharena_monitor(
             include_excluded=include_excluded,
             with_workspace=with_artifact,
         )
+    if with_artifact:
+        missing = [b.run_id for b in bundles if b.workspace is None]
+        if missing:
+            # Upstream's `cp -r ... || true` goes on without one; say so.
+            logger.warning(
+                "%d of %d runs have no task_snapshot; their %s monitors get no workspace: %s",
+                len(missing),
+                len(bundles),
+                access,
+                ", ".join(missing),
+            )
     samples = [bundle_to_sample(b, access, prompt_commit) for b in bundles]
     return Task(
         dataset=MemoryDataset(samples, name=f"researcharena_monitor_{access}"),

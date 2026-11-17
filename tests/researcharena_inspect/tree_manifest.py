@@ -5,17 +5,19 @@ Docker, and the port's sandbox) and run it there, so both sides are described by
 
     python3 tree_manifest.py ROOT [--owner]
 
-prints JSON: {"entries": {relpath: [...]}, "git": {repo relpath: {...}}}. Paths inside a
-`.git` folder are left out of "entries"; the repository is described under "git" instead, by
+prints JSON: {"entries": {relpath: [...]}, "git": {repo relpath: {...}}, "pyc_code": {...}}.
+Paths inside a `.git` folder are left out of "entries"; the repository is described under "git" instead, by
 what does not depend on when or on which machine the commit was made.
 """
 
 import hashlib
 import json
+import marshal
 import os
 import stat
 import subprocess
 import sys
+import types
 
 # Files in .git whose bytes hold a commit id, a timestamp or file stat data.
 VOLATILE_GIT_FILES = ("index", "ORIG_HEAD", "FETCH_HEAD")
@@ -99,7 +101,42 @@ def describe(root, owner=False):
             if owner:
                 entry.append(info.st_uid)
             entries[rel] = entry
-    return {"entries": entries, "git": repos, "oldest_mtime": oldest}
+    pyc_code = {
+        rel: pyc_digest(os.path.join(root, rel))
+        for rel, entry in entries.items()
+        if entry[0] == "file" and rel.endswith(".pyc")
+    }
+    return {"entries": entries, "git": repos, "oldest_mtime": oldest, "pyc_code": pyc_code}
+
+
+def _code_key(value):
+    if isinstance(value, types.CodeType):
+        fields = ("co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_stacksize")
+        fields += ("co_flags", "co_code", "co_names", "co_varnames", "co_freevars")
+        fields += ("co_cellvars", "co_name", "co_firstlineno")
+        key = [repr(getattr(value, name, None)) for name in fields]
+        return "code(" + ",".join(key) + "," + _code_key(value.co_consts) + ")"
+    if isinstance(value, tuple):
+        return "(" + ",".join(_code_key(v) for v in value) + ")"
+    if isinstance(value, frozenset):
+        return "frozenset(" + ",".join(sorted(_code_key(v) for v in value)) + ")"
+    return repr(value)
+
+
+def pyc_digest(path):
+    """SHA-256 of a .pyc's compiled code, without what depends on where and when it was made.
+
+    The header holds the source's modification time, and every code object the source's
+    absolute path (`co_filename`), which is the run folder's path when an evaluator imports the
+    snapshot's modules. Needs the Python version that wrote the file; None otherwise.
+    """
+    with open(path, "rb") as handle:
+        data = handle.read()
+    try:
+        code = marshal.loads(data[16:])
+    except (ValueError, EOFError, TypeError):
+        return None
+    return hashlib.sha256(_code_key(code).encode("utf-8", "surrogateescape")).hexdigest()
 
 
 if __name__ == "__main__":

@@ -17,7 +17,8 @@ edited; what stands in for the parts that need a cluster lives outside it:
 
 With `real_evaluate=True` the `python3` wrapper is left out, so the pipeline runs upstream's own
 `evaluate.py` through Phase 4 (its attempt loop and failure record), and the run's `eval/`
-folder (`metrics.json`, `eval_attempt_<n>.log`) is copied out. The stand-in agent's work can be
+folder (`metrics.json`, `eval_attempt_<n>.log`) is copied out, and `red_team/task_snapshot` is
+described as Phase 4 leaves it. The stand-in agent's work can be
 chosen per run (`agent_work`).
 
 The git identity of the hooks' commit is passed as `GIT_*` variables: upstream's hooks use the
@@ -149,6 +150,9 @@ class PipelineRun:
     log: str
     eval_files: dict[str, bytes] | None = None
     """With `real_evaluate`: every file of the run's `eval/` folder, by name."""
+    final_snapshot: dict | None = None
+    """With `real_evaluate`: `red_team/task_snapshot` after Phase 4 (tree_manifest output),
+    the folder the run keeps and an artifact monitor is given."""
 
 
 def run_pipeline(
@@ -210,6 +214,8 @@ def run_pipeline(
         keep_eval = (
             'bash "$@"; rc=$?; '
             'for d in /tmp/results/*/*/eval; do cp -r "$d" /capture/eval_out; done; '
+            "for d in /tmp/results/*/*/red_team/task_snapshot; do "
+            'python3 /work/tree_manifest.py "$d" > /capture/final_snapshot.json; done; '
             "exit $rc"
         )
         cmd += [IMAGE, "bash", "-c", keep_eval, "pipeline", *pipeline]
@@ -236,4 +242,5 @@ def run_pipeline(
             if eval_out.is_dir()
             else None
         ),
+        final_snapshot=load("final_snapshot.json"),
     )
