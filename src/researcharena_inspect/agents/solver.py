@@ -6,7 +6,8 @@ Order of events, with upstream's lines at the pinned commit:
    budget plus five minutes (`:344`, `:357`).
 2. Claude Code only: install the CLI and record its version (`solve.sh:35-38`).
 3. Start the agent's clock (`solve.sh:59-65`) and run the rounds: the first prompt, then
-   "Continue where you left off..." until the budget is spent (`agents.continuation`).
+   "Continue where you left off..." until the budget is spent (`agents.continuation`). Each
+   round has the time left as its limit, as `timeout` gives it (`:97`; `AgentRounds`).
 4. Stop everything the agent started (`agents.processes`), as the container teardown and
    `free_gpu_memory` do (`:415`), and record `RED_END` (`:403-406`).
 
@@ -25,7 +26,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from functools import cache
 
 import anyio
@@ -34,7 +35,7 @@ from inspect_ai.model import ChatMessageUser, get_model
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import LimitExceededError, apply_limits, sandbox, span, time_limit
 
-from researcharena_inspect.agents.budget import Budget, red_timeout_seconds
+from researcharena_inspect.agents.budget import ROUND_KILL_AFTER_S, Budget, red_timeout_seconds
 from researcharena_inspect.agents.claude_code import (
     capture_cli_output,
     claude_code_env,
@@ -44,12 +45,17 @@ from researcharena_inspect.agents.claude_code import (
 from researcharena_inspect.agents.continuation import (
     RC_BUDGET,
     RC_FAILED,
+    RC_KILLED,
     RC_OK,
     ContinuationResult,
     Phase,
     run_with_continuation,
 )
-from researcharena_inspect.agents.processes import kill_new_processes, list_processes
+from researcharena_inspect.agents.processes import (
+    kill_new_processes,
+    list_processes,
+    signal_cli,
+)
 from researcharena_inspect.agents.react import red_team_react
 from researcharena_inspect.agents.record import AgentRun
 from researcharena_inspect.agents.replay import (
@@ -126,26 +132,85 @@ async def source_pre_agent_setup(env: dict[str, str]) -> PreAgentSetup:
     return PreAgentSetup(result.returncode, out + result.stderr, path)
 
 
+@dataclass
+class CliStop:
+    """How a Claude Code round ends at its deadline: `timeout --signal=TERM --kill-after=30s`."""
+
+    keep: list[int]
+    """PIDs running before the agent started (`list_processes`); the CLI is among the others."""
+    exit_codes: list[int]
+    """The CLI's exit codes, one per process that exited, as `capture_cli_output` keeps them."""
+    kill_after: float = ROUND_KILL_AFTER_S
+    """Seconds from SIGTERM to SIGKILL (`--kill-after`)."""
+
+
+@dataclass
+class DeadlineStop:
+    """What happened when a Claude Code round reached its deadline."""
+
+    phase: Phase
+    term_at_s: float = 0.0
+    """Seconds from the round's launch to the SIGTERM: its time limit."""
+    terminated: list[str] = field(default_factory=list)
+    """Processes sent SIGTERM at the deadline ("<pid> <command line>"): the CLI and its group."""
+    killed_after_grace: bool = False
+    """Whether the round was still running when the grace ran out (then SIGKILL, cancel)."""
+    killed: list[str] = field(default_factory=list)
+    """Processes sent SIGKILL when the grace ran out."""
+    ended_after_term_s: float | None = None
+    """Seconds from the SIGTERM to the end of the round, however it ended."""
+    cli_exit_code: int | None = None
+    """The CLI's own exit code, if it exited before it was killed (0 or 143 measured)."""
+    agent_error: str | None = None
+    """What Inspect SWE raised for that exit (it raises for any code but 0 and a refusal's 1)."""
+    signal_errors: list[str] = field(default_factory=list)
+    rc: int = RC_BUDGET
+
+
 class AgentRounds:
     """Runs one round of an agent on a shared conversation, for the continuation loop.
 
     A resume round appends the continuation prompt as a user message; Claude Code then runs
-    `claude --resume <session> -- <prompt>` and ReAct carries on from the conversation.
+    `claude --resume <session> -- <prompt>` and ReAct carries on from the conversation. Each
+    round runs as upstream's `timeout "${remaining}s"` (`solve.sh:97`) and returns the code
+    `timeout` would: the CLI's exit code, 124 if the deadline came first, or 137 if the CLI
+    was still running 30 s after it.
+
+    Args:
+        agent: the agent; it changes `state` in place, so its work is kept however it stops.
+        state: the conversation, shared by the rounds.
+        name: the agent's name, for spans and log lines.
+        log: receives error lines.
+        cli: for Claude Code, how to find and stop its CLI and read its exit code; None for
+            ReAct, which has no CLI process.
     """
 
-    def __init__(self, agent: Agent, state: AgentState, name: str, log: list[str]) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        state: AgentState,
+        name: str,
+        log: list[str],
+        cli: CliStop | None = None,
+    ) -> None:
         self.agent = agent
         self.state = state
         self.name = name
         self.log = log
+        self.cli = cli
+        self.deadline_stops: list[DeadlineStop] = []
 
     async def __call__(self, phase: Phase, prompt: str, remaining: int) -> int:
         if phase == "resume":
             self.state.messages.append(ChatMessageUser(content=prompt))
-        # `timeout "${remaining}s"` (solve.sh:97). The agent changes `self.state` in place, so
-        # its work is kept when the limit stops it or it raises. D-081: at the limit Inspect
-        # cancels the round and kills the CLI's process; upstream sends SIGTERM and SIGKILLs
-        # 30 s later.
+        if self.cli is None:
+            return await self._react_round(phase, remaining)
+        return await self._cli_round(phase, remaining, self.cli)
+
+    async def _react_round(self, phase: Phase, remaining: int) -> int:
+        # D-081: ReAct has no CLI process and no upstream counterpart, so nothing can be sent
+        # SIGTERM: at the deadline Inspect cancels the round, and the tool commands it leaves
+        # are killed after the last round (`kill_new_processes`).
         with apply_limits([time_limit(remaining)], catch_errors=True) as scope:
             try:
                 async with span(name=f"{self.name} {phase}", type="agent"):
@@ -153,12 +218,77 @@ class AgentRounds:
             except LimitExceededError:
                 raise  # a limit of the sample, not of this round
             except Exception as ex:
-                # The CLI exited non-zero or the model call failed: the round ends with a
-                # non-zero code, and the loop decides (solve.sh:105-133). D-084: Inspect SWE
-                # treats the CLI's exit after a refusal as success, so such a round counts as 0.
+                # The model call failed: the round ends with a non-zero code, and the loop
+                # decides (solve.sh:105-133).
                 self.log.append(f"[agent] {phase} error: {ex!r}")
                 return RC_FAILED
         return RC_BUDGET if scope.limit_error is not None else RC_OK
+
+    async def _cli_round(self, phase: Phase, remaining: int, cli: CliStop) -> int:
+        # D-081: as `timeout --signal=TERM --kill-after=30s "${remaining}s"` (solve.sh:97), at
+        # the deadline the CLI and its process group get SIGTERM, and SIGKILL `kill_after`
+        # seconds later if the round has not ended; then the round is cancelled. What still
+        # differs: each signal goes out through a sandbox exec, so it lands a fraction of a
+        # second after the deadline, and a killed round ends once Inspect's cancellation
+        # returns (seconds, not at once); the CLI runs in the scorer's sandbox, so whatever the
+        # agent left running is killed after the last round (`kill_new_processes`) rather than
+        # with its container.
+        launched = len(cli.exit_codes)
+        stop: DeadlineStop | None = None
+        error: Exception | None = None
+        start = anyio.current_time()
+        term_time = start
+        with anyio.CancelScope() as round_scope:
+
+            async def at_deadline() -> None:
+                nonlocal stop, term_time
+                await anyio.sleep(remaining)
+                term_time = anyio.current_time()
+                stop = DeadlineStop(phase, term_at_s=round(term_time - start, 3))
+                try:
+                    stop.terminated = await signal_cli("TERM", cli.keep)
+                except Exception as ex:
+                    stop.signal_errors.append(f"TERM: {ex!r}")
+                await anyio.sleep_until(term_time + cli.kill_after)
+                stop.killed_after_grace = True
+                try:
+                    stop.killed = await signal_cli("KILL", cli.keep)
+                except Exception as ex:
+                    stop.signal_errors.append(f"KILL: {ex!r}")
+                round_scope.cancel()
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(at_deadline)
+                try:
+                    async with span(name=f"{self.name} {phase}", type="agent"):
+                        self.state = await self.agent(self.state)
+                except Exception as ex:
+                    error = ex  # raised outside the task group, which would wrap it
+                tg.cancel_scope.cancel()
+        ended = anyio.current_time()
+        if isinstance(error, LimitExceededError):
+            raise error  # a limit of the sample, not of this round
+        codes = cli.exit_codes[launched:]
+        exit_code = codes[-1] if codes else None
+        if stop is not None:
+            # `timeout` returns 124 once its limit has fired, whatever the CLI exits with
+            # (it exits 143 or 0 on SIGTERM), and 137 if it had to SIGKILL it (RC_KILLED).
+            stop.cli_exit_code = exit_code
+            stop.agent_error = None if error is None else repr(error)
+            stop.ended_after_term_s = round(ended - term_time, 3)
+            stop.rc = RC_KILLED if stop.killed_after_grace else RC_BUDGET
+            self.deadline_stops.append(stop)
+            return stop.rc
+        if error is not None:
+            # The CLI exited non-zero or the model call failed: the round ends with the CLI's
+            # code, or 1 if there is none, and the loop decides (solve.sh:105-133).
+            self.log.append(f"[agent] {phase} error: {error!r}")
+            return exit_code or RC_FAILED
+        # D-084: Inspect SWE does not raise when the CLI exits 1 after a refusal (exit 1, no
+        # stderr, stop reason `content_filter`: `_is_claude_code_refusal_exit`), so the round's
+        # code is read from the CLI itself, as upstream's AGENT_RC is. A refused resume round
+        # thus stops the loop, and a refused round 0 is resumed, as in solve.sh:110-133.
+        return exit_code if exit_code is not None else RC_OK
 
 
 @solver
@@ -209,6 +339,7 @@ def red_team_agent(
         run.red_timeout_seconds = red_timeout_seconds(redruntime)
         stdout: list[str] = []
         stderr: list[str] = []
+        cli_exit_codes: list[int] = []
         log: list[str] = []
         agent_state = AgentState(messages=list(state.messages))
         rounds: AgentRounds | None = None
@@ -275,11 +406,16 @@ def red_team_agent(
                             cli.version,
                             cli.requested,
                         )
-                    rounds = AgentRounds(model_agent(), agent_state, agent, log)
+                    cli_stop = (
+                        CliStop(keep, cli_exit_codes, kill_after=ROUND_KILL_AFTER_S)
+                        if agent == "claude_code"
+                        else None
+                    )
+                    rounds = AgentRounds(model_agent(), agent_state, agent, log, cli=cli_stop)
                     budget = Budget(redruntime)
                     run.budget_seconds = budget.total_seconds
                     run.budget_start = budget.start
-                    with capture_cli_output(stdout, stderr):
+                    with capture_cli_output(stdout, stderr, cli_exit_codes):
                         await run_with_continuation(
                             rounds,
                             budget,
@@ -302,8 +438,10 @@ def red_team_agent(
             run.rounds = result.to_dicts()
             run.exit_code = result.exit_code if result.rounds else no_model_exit
             run.stdout, run.stderr, run.log = stdout, stderr, log
+            run.cli_exit_codes = cli_exit_codes
             if rounds is not None:
                 agent_state = rounds.state
+                run.deadline_stops = [asdict(s) for s in rounds.deadline_stops]
             state.messages = agent_state.messages
             if agent_state.output:
                 state.output = agent_state.output

@@ -12,7 +12,13 @@ kills every process that is new, except Inspect's own sandbox tools and the shel
 killing. It reads `/proc` and uses only bash and coreutils, so it works in images without `ps`
 or `pkill`. It is needed: cancelling a round leaves Inspect's `bash` tool commands and, for a
 moment, the Claude Code CLI running in the container.
+
+`signal_cli` is the per-round stop of `timeout --signal=TERM --kill-after=30s` (`solve.sh:97`):
+it signals the round's Claude Code CLI and the processes of its process group, the ones
+`timeout` reaches (see `signal_cli`).
 """
+
+from typing import Literal
 
 from inspect_ai.util import sandbox
 
@@ -41,6 +47,89 @@ for d in /proc/[0-9]*; do
 done
 """.replace("__MARKER__", INSPECT_TOOLS_MARKER)
 
+# $1: signal (TERM or KILL); $2: PIDs to keep, space-separated. Prints "<pid> <command line>"
+# (newlines flattened, first 300 characters) for each process signalled. The CLI is a new process (not in $2, not Inspect's) whose argv[0]
+# is `claude` (or `claude-<version>`) and whose flags before `--` include `--print` and
+# `--output-format stream-json`,
+# as Inspect SWE starts it; one with such a CLI among its ancestors (a `claude` the agent ran
+# itself) is not the round's CLI. The CLI's descendants in its process group are signalled too.
+_SIGNAL_CLI = r"""
+sig=$1
+keep=" $2 "
+declare -A parent group
+for d in /proc/[0-9]*; do
+  pid=${d#/proc/}
+  stat=$(cat "$d/stat" 2>/dev/null) || continue
+  rest=${stat##*) }
+  set -- $rest
+  parent[$pid]=$2
+  group[$pid]=$3
+done
+is_new() {
+  case "$keep" in *" $1 "*) return 1 ;; esac
+  local cmd
+  cmd=$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null) || return 1
+  case "$cmd" in *__MARKER__*) return 1 ;; esac
+}
+is_cli() {
+  local -a argv
+  local a prev="" printed="" json=""
+  mapfile -d '' argv < "/proc/$1/cmdline" 2>/dev/null || return 1
+  [ "${#argv[@]}" -gt 0 ] || return 1
+  case "${argv[0]##*/}" in claude | claude-*) ;; *) return 1 ;; esac
+  for a in "${argv[@]:1}"; do
+    [ "$a" = -- ] && break
+    [ "$a" = --print ] && printed=1
+    if [ "$a" = --output-format=stream-json ] ||
+      { [ "$prev" = --output-format ] && [ "$a" = stream-json ]; }; then
+      json=1
+    fi
+    prev=$a
+  done
+  [ -n "$printed" ] && [ -n "$json" ]
+}
+# under PID ANCESTOR: whether ANCESTOR is PID or one of PID's ancestors
+under() {
+  local p=$1
+  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
+    [ "$p" = "$2" ] && return 0
+    p=${parent[$p]}
+  done
+  return 1
+}
+clis=" "
+for pid in "${!parent[@]}"; do
+  if is_new "$pid" && is_cli "$pid"; then clis="$clis$pid "; fi
+done
+targets=""
+for c in $clis; do
+  p=${parent[$c]}
+  nested=""
+  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
+    case "$clis" in *" $p "*) nested=1; break ;; esac
+    p=${parent[$p]}
+  done
+  [ -n "$nested" ] && continue
+  targets="$targets $c"
+  for pid in "${!parent[@]}"; do
+    [ "$pid" != "$c" ] && [ "${group[$pid]}" = "${group[$c]}" ] || continue
+    if is_new "$pid" && under "$pid" "$c"; then targets="$targets $pid"; fi
+  done
+done
+for pid in $targets; do
+  cmd=$(tr '\0\n' '  ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-300)
+  if kill -s "$sig" "$pid" 2>/dev/null; then printf '%s %s\n' "$pid" "$cmd"; fi
+done
+# timeout sends SIGCONT after SIGTERM, so a stopped process can act on it.
+if [ "$sig" = TERM ]; then
+  for pid in $targets; do kill -s CONT "$pid" 2>/dev/null; done
+fi
+exit 0
+""".replace("__MARKER__", INSPECT_TOOLS_MARKER)
+
+SIGNAL_TIMEOUT_S = 30
+"""Bound on one `signal_cli` call, so an unresponsive sandbox cannot hold up the round."""
+
 
 async def list_processes(sandbox_name: str | None = None) -> list[int]:
     """PIDs of the processes running in the sandbox now."""
@@ -60,4 +149,36 @@ async def kill_new_processes(keep: list[int], sandbox_name: str | None = None) -
     result = await sandbox(sandbox_name).exec(
         ["bash", "-c", _KILL_NEW, "kill_new", pids], user="root"
     )
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+async def signal_cli(
+    signal: Literal["TERM", "KILL"], keep: list[int], sandbox_name: str | None = None
+) -> list[str]:
+    """Send `signal` to the round's Claude Code CLI and its process group, as `timeout` does.
+
+    GNU `timeout` (without `--foreground`) runs the command in a new process group and, at the
+    limit, signals the command and that group, then sends SIGCONT after SIGTERM; after
+    `--kill-after` it sends SIGKILL the same way. The group is the CLI and its descendants that
+    stayed in it. Claude Code starts its Bash tool's shell in a new session (measured with
+    2.1.162), so `timeout` does not reach the tool's commands: the CLI deals with them itself.
+    Here the CLI's group also holds the shell Inspect started it with, which `timeout` has no
+    counterpart of, so only the CLI's own descendants in its group are signalled.
+
+    Args:
+        signal: `TERM` at the deadline, `KILL` after the grace.
+        keep: PIDs running before the agent started (`list_processes`); the CLI is new.
+        sandbox_name: the sandbox; the default one if omitted.
+
+    Returns:
+        One "<pid> <command line>" entry per process signalled; empty if no CLI was running.
+    """
+    pids = " ".join(str(p) for p in keep)
+    result = await sandbox(sandbox_name).exec(
+        ["bash", "-c", _SIGNAL_CLI, "signal_cli", signal, pids],
+        user="root",
+        timeout=SIGNAL_TIMEOUT_S,
+    )
+    if not result.success:
+        raise RuntimeError(f"could not signal the CLI ({signal}): {result.stderr}")
     return [line for line in result.stdout.splitlines() if line.strip()]

@@ -13,6 +13,7 @@ from researcharena_inspect.agents.budget import Budget, red_timeout_seconds
 from researcharena_inspect.agents.continuation import (
     RC_BUDGET,
     RC_FAILED,
+    RC_KILLED,
     RC_OK,
     ContinuationResult,
     Round,
@@ -25,6 +26,7 @@ __all__ = [
     "AGENTS",
     "RC_BUDGET",
     "RC_FAILED",
+    "RC_KILLED",
     "RC_OK",
     "AgentRun",
     "Budget",
