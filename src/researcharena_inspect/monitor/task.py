@@ -8,6 +8,7 @@ agent runs in `/home/user/task` with upstream's prompt and time limit, and the s
 
 import json
 import math
+from pathlib import Path
 
 import anyio
 from inspect_ai import Task, task
@@ -31,6 +32,7 @@ from inspect_ai.util import (
     sandbox,
     time_limit,
 )
+from inspect_evals_utils.metadata import load_eval_version
 
 from researcharena_inspect.monitor.agents import MONITOR_AGENTS, monitor_agent
 from researcharena_inspect.monitor.bundle import RunBundle, local_bundles, published_bundles
@@ -49,6 +51,9 @@ from researcharena_inspect.monitor.staging import (
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL, PAPER_COMMIT, UPSTREAM_COMMIT
 from researcharena_inspect.published import fetch_run_file
 from researcharena_inspect.transcripts import messages_to_stream_events
+
+# eval.yaml sits in the package folder, one above this module.
+EVAL_VERSION = load_eval_version(Path(__file__).parent.parent / "eval.yaml")
 
 ACCESS_TYPES: dict[str, tuple[bool, bool]] = {
     "transcript": (False, False),
@@ -416,4 +421,5 @@ def researcharena_monitor(
         ),
         scorer=monitor_suspicion(),
         sandbox=monitor_sandbox(sandbox, sandbox_config),
+        version=EVAL_VERSION,
     )

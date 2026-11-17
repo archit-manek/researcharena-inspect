@@ -12,7 +12,10 @@ Order of events, with upstream's lines at the pinned commit:
    `free_gpu_memory` do (`:415`), and record `RED_END` (`:403-406`).
 
 The sample then goes on to scoring with the workspace as the agent left it, whether the agent
-finished, ran out of time or failed, as upstream's pipeline goes on to Phase 4.
+finished, ran out of time or failed, as upstream's pipeline goes on to Phase 4. One exception
+(D-108): if `claude_code` or `react` got no response from any model call in the whole phase,
+the sample ends with an error instead (`NoModelOutputError`), unless
+`fail_on_no_model_output=False`.
 
 Every agent runs as the environment's agent user (`environment.AGENT_USER`) with upstream's
 container variables (`environment.agent_env`), in the staged workspace, after its shell has
@@ -31,6 +34,8 @@ from functools import cache
 
 import anyio
 from inspect_ai.agent import Agent, AgentState
+from inspect_ai.event import Event, ModelEvent
+from inspect_ai.log import transcript
 from inspect_ai.model import ChatMessageUser, get_model
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import LimitExceededError, apply_limits, sandbox, span, time_limit
@@ -81,6 +86,55 @@ _PATH_MARKER = "__researcharena_agent_path__="
 
 CLEANUP_TIMEOUT_S = 60
 """Bound on stopping the agent's processes after the run, even when the sample is cancelled."""
+
+
+class NoModelOutputError(RuntimeError):
+    """A model agent got no response from any model call; the sample is not scored (D-108)."""
+
+
+def _returned(event: Event) -> bool:
+    """A model call that returned output to its caller: no error, no longer pending."""
+    return isinstance(event, ModelEvent) and event.error is None and not event.pending
+
+
+def model_output_seen() -> bool:
+    """Whether any model call of the sample so far returned output (D-108).
+
+    Read from the sample's transcript. Every attempt at a model call, ReAct's and those Claude
+    Code makes through Inspect's bridge (its background calls included), adds a `ModelEvent`
+    when it starts, which is completed in place with the output or with the error the call
+    raised; a failed attempt that is retried leaves one event per attempt. A refusal is
+    output. If the transcript's history cannot be read back (with Inspect's opt-in bounded
+    transcript, older events are read from a store that can be gone), the answer is yes, so
+    that doubt never fails a sample.
+    """
+    try:
+        return transcript().history.find_last(_returned) is not None
+    except Exception:  # TranscriptHistoryUnavailableError, or the store's own error
+        return True
+
+
+def _last_model_call() -> str:
+    try:
+        last = transcript().history.find_last(lambda e: isinstance(e, ModelEvent))
+    except Exception:
+        return "its model calls could not be read back"
+    if not isinstance(last, ModelEvent):
+        return "it made no model call"
+    if last.error is None:
+        return "its last model call did not finish"
+    return f"its last model call failed: {' '.join(last.error.split())[:500]}"
+
+
+def no_model_output_message(run: AgentRun) -> str:
+    last_line = run.log[-1] if run.log else None
+    return (
+        f"No model output: the {run.agent} agent ({run.model}) got no response from any model "
+        f"call, so the workspace is not scored (D-108); {_last_model_call()}. "
+        f"Rounds: {len(run.rounds)}, exit code: {run.exit_code}, last log line: {last_line!r}. "
+        "The run's record is in the sample's store (AgentRun) and metadata. "
+        "fail_on_no_model_output=False scores the workspace as upstream does."
+    )
 
 
 @cache
@@ -299,12 +353,14 @@ def red_team_agent(
     small_model: str | None = CLAUDE_CODE_SMALL_MODEL,
     react_compaction: bool = True,
     replay_mode: ReplayMode = "fresh",
+    fail_on_no_model_output: bool = True,
 ) -> Solver:
     """Run the red-team agent on the sample's prompt within upstream's time budget.
 
     Reads `setting`, `redruntime` and `resume_agent` from the sample's metadata (see
     `task.red_team_sample`), and `replay` for the replay agent, and keeps the run in the store
-    as an `AgentRun`.
+    as an `AgentRun`. The run's record and metadata are written before the check below raises,
+    so an errored sample still has them in the log.
 
     Args:
         agent: `claude_code` (Inspect SWE), `react`, `null` (does nothing; no model call) or
@@ -318,6 +374,9 @@ def red_team_agent(
         react_compaction: let ReAct summarise its conversation near the context limit.
         replay_mode: for `replay`: `fresh` (without the scorer's cached results) or
             `as_published` (see `agents.replay`).
+        fail_on_no_model_output: for `claude_code` and `react`: raise `NoModelOutputError`
+            after the agent phase if no model call in it returned output (D-108). `False`
+            goes on to scoring, as upstream does. `null` and `replay` are never checked.
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -454,6 +513,13 @@ def red_team_agent(
                 agent_exit_code=run.exit_code,
                 agent_time_taken_s=run.time_taken_s,
             )
+        # D-108: upstream scores the workspace whatever the agent did. A model agent that got
+        # no response from any model call (an outage, a wrong model name, an exhausted key)
+        # took no action, so its score would be the staged workspace's, counted as a result;
+        # an error leaves the sample unscored and lets Inspect's retries rerun it. Checked
+        # after everything above is recorded, so the errored sample keeps it in the log.
+        if fail_on_no_model_output and agent in MODEL_AGENTS and not model_output_seen():
+            raise NoModelOutputError(no_model_output_message(run))
         return state
 
     return solve

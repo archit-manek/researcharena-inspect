@@ -4,7 +4,8 @@ The scripted agent works in three rounds. In rounds 0 and 1 it writes a file wit
 and then stops (no tool call), as an agent that thinks it is done would; upstream re-prompts it
 each time. In round 2 it starts a background `sleep 300` and a foreground one, so it is still
 working when the budget runs out. The budget is 25 seconds (`redruntime` 0.007 hours).
-A second Claude Code run has the model refuse in rounds 0 and 2 (D-084).
+A second Claude Code run has the model refuse in rounds 0 and 2 (D-084). A third pair of runs
+has every model call fail with a 404, as on Hawk, and ends with an error (D-108).
 
 Claude Code is the real CLI (Inspect SWE, version `CLI_VERSION`) talking to the mock model
 through Inspect's bridge. No paid model is called.
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 from inspect_ai import eval
 from inspect_ai.event import ModelEvent
-from inspect_ai.log import EvalLog, EvalSample, resolve_sample_attachments
+from inspect_ai.log import EvalLog, EvalSample, read_eval_log, resolve_sample_attachments
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageTool,
@@ -438,3 +439,90 @@ def test_refused_resume_round_stops_the_loop(refusal_run: EvalLog) -> None:
     assert sample.metadata["agent_exit_code"] == 1
     assert run.deadline_stops == []
     assert sample.scores is not None  # the workspace is still scored
+
+
+# --- No model output (D-108) ------------------------------------------------------------------
+
+
+class ModelNotFoundError(Exception):
+    """As OpenRouter's 404 on Hawk (17 Nov 2026); the bridge passes the status to the CLI."""
+
+    status_code = 404
+
+    def __init__(self) -> None:
+        super().__init__("Error code: 404 - {'error': {'message': 'model not found'}}")
+
+
+def model_not_found(messages, tools, tool_choice, config) -> ModelOutput:
+    raise ModelNotFoundError()
+
+
+def _no_output_task(agent: str, fail_on_no_model_output: bool = True):
+    return researcharena(
+        side_tasks="none",
+        agent=agent,
+        redruntime=BUDGET_HOURS,
+        claude_code_version=CLI_VERSION,
+        small_model=None,  # Claude Code's background calls fail too
+        sandbox="docker",
+        scorer=workspace_probe(),
+        fail_on_no_model_output=fail_on_no_model_output,
+    )
+
+
+@pytest.fixture(scope="module", params=MODEL_AGENTS)
+def no_output_run(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[str, EvalSample]:
+    agent = request.param
+    model = get_model("mockllm/model", custom_outputs=model_not_found)
+    log_dir = tmp_path_factory.mktemp(f"no_output_{agent}")
+    [log] = eval(_no_output_task(agent), model=model, display="none", log_dir=str(log_dir))
+    logged = read_eval_log(log.location)  # as a later reader of the log sees it
+    assert logged.samples is not None
+    [sample] = logged.samples
+    return agent, sample
+
+
+def test_no_model_output_ends_the_sample_with_an_error(
+    no_output_run: tuple[str, EvalSample],
+) -> None:
+    agent, sample = no_output_run
+    assert sample.error is not None
+    assert f"No model output: the {agent} agent" in sample.error.message
+    assert "model not found" in sample.error.message
+    assert not sample.scores
+    events = [e for e in sample.events if isinstance(e, ModelEvent)]
+    assert events
+    assert all(e.error is not None for e in events)
+
+
+def test_errored_sample_keeps_the_run_record(no_output_run: tuple[str, EvalSample]) -> None:
+    agent, sample = no_output_run
+    run = sample.store_as(AgentRun)
+    assert run.agent == agent
+    # Round 0 failed, round 1 was a resume and failed too, so the loop stopped with time left
+    # (solve.sh:128-130), as in the Hawk run.
+    assert [(r["phase"], r["rc"]) for r in run.rounds] == [("exec", 1), ("resume", 1)]
+    assert run.exit_code == 1
+    assert run.log[-1] == "[agent] resume failed rc=1; stopping resume loop"
+    assert sample.metadata["agent_exit_code"] == 1
+    assert sample.metadata["agent_rounds"] == 2
+    assert sample.metadata["agent_time_taken_s"] is not None
+    assert sample.metadata["agent_time_taken_s"] < BUDGET_S
+    if agent == "claude_code":
+        assert run.cli_version == f"{CLI_VERSION} (Claude Code)"
+        assert run.cli_exit_codes == [1, 1]
+        assert run.stdout[0].startswith('{"type":"system","subtype":"init"')
+        # Round 1 cannot resume a session with no assistant message (D-105).
+        assert "is already in use" in "".join(run.stderr)
+
+
+def test_without_the_check_the_workspace_is_scored(tmp_path: Path) -> None:
+    model = get_model("mockllm/model", custom_outputs=model_not_found)
+    task = _no_output_task("react", fail_on_no_model_output=False)
+    [log] = eval(task, model=model, display="none", log_dir=str(tmp_path))
+    sample, run = _sample(log)
+    assert sample.error is None
+    assert sample.scores is not None
+    assert run.exit_code == 1

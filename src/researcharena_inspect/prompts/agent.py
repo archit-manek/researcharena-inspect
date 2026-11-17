@@ -205,7 +205,7 @@ def _check_agent_run(
     upstream: Path | None,
 ) -> None:
     # The same checks as upstream's run.sh, plus one it lacks: an unknown task config,
-    # which prompt_builder.py would silently replace with the first one.
+    # which prompt_builder.py would silently replace with the first one (D-064: raised here).
     if not is_valid_setting(setting, upstream):
         raise ValueError(f"unknown setting {setting!r}; available: {list_settings(upstream)}")
     if not is_valid_side_task(setting, side_task, upstream):
