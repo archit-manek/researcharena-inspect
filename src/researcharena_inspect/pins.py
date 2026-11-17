@@ -25,3 +25,7 @@ INDEX_URL = "https://research-arena.ai/traces/data/index.json"
 INDEX_PATH = Path(__file__).parent / "data" / "researcharena_index.json.gz"
 INDEX_SHA256 = "1f7dd4d846a186546fee2c4aa09335621a4135826d33f948a0e6cd6f3bbd752c"
 INDEX_BUILD_TS = "2026-07-20T03:55:29Z"
+
+# The model Claude Code used for its own small background calls in the published runs: the
+# `modelUsage` of their `result` events lists it next to the main model.
+CLAUDE_CODE_SMALL_MODEL = "anthropic/claude-haiku-4-5-20251001"

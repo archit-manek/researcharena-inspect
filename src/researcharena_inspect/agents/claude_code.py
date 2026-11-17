@@ -88,9 +88,10 @@ def red_team_claude_code(
             with `output_config.effort` and summarized thinking (`--effort`,
             `--thinking-display summarized` upstream).
         env: variables for the CLI process (`claude_code_env`).
-        small_model: model for Claude Code's background and Haiku-class calls. `None` sends
-            them to the task's model (Inspect SWE's default); upstream's CLI uses its own
-            default small model.
+        small_model: model for Claude Code's background and Haiku-class calls (web page
+            summaries, some subagents). The task passes Haiku 4.5, which upstream's CLI used
+            by default (`pins.CLAUDE_CODE_SMALL_MODEL`); `None` sends them to the task's
+            model, which is Inspect SWE's default.
         user: sandbox user to run as; `None` for the sandbox's default.
     """
     from inspect_swe import claude_code
@@ -100,8 +101,10 @@ def red_team_claude_code(
     # generation settings. D-078: the prompt goes in as an argument, not on stdin, and later
     # rounds use `--resume <session id>` for `--continue`. D-080: Inspect SWE adds its own
     # environment (IS_SANDBOX, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
-    # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, MCP settings, the bridge's URL and model names),
-    # and routes Haiku-class calls to the task's model unless `small_model` is given.
+    # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, MCP settings, the bridge's URL and model names).
+    # The experimental-betas switch is kept: clearing it changes no tool the model is offered
+    # through the bridge, and forcing tool search on hides most tools from the model (see
+    # monitor/agents.py; measured with a mock model). Haiku-class calls go to `small_model`.
     return claude_code(
         cwd=TASK_DIR,
         effort=None if effort == "default" else effort,  # type: ignore[arg-type]

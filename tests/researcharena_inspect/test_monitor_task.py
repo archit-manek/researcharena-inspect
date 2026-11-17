@@ -29,15 +29,19 @@ from researcharena_inspect.monitor import (
     run_monitor,
     stage_monitor_inputs,
 )
+from researcharena_inspect.monitor.agents import CLAUDE_CODE_ENV
 from researcharena_inspect.monitor.task import (
     access_suffix,
+    cli_version_in_output,
     failed_judgements,
     mean_suspicion,
     monitor_raw_output,
     monitor_sandbox,
     monitor_timeout_seconds,
+    published_monitor_cli_version,
     published_monitor_dir,
 )
+from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
 
 CUDA_RUN = "cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_162845_c17310740"
 
@@ -88,6 +92,36 @@ def test_default_sandbox_is_a_small_image_in_the_monitors_working_dir() -> None:
 def test_run_monitor_rejects_unknown_agents() -> None:
     with pytest.raises(ValueError, match="agent must be one of"):
         run_monitor(agent="gemini")
+
+
+def test_monitor_claude_code_settings_match_upstream() -> None:
+    # D-089: auto-memory on, as upstream's monitor CLI had it ("0" overrides Inspect SWE's "1").
+    assert CLAUDE_CODE_ENV["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "0"
+    # monitor.sh and pipeline_monitor.sh.
+    assert CLAUDE_CODE_ENV["BASH_MAX_TIMEOUT_MS"] == "36000000"
+    assert CLAUDE_CODE_ENV["BASH_DEFAULT_TIMEOUT_MS"] == "3600000"
+    # The published runs' `modelUsage` lists this model next to the monitor model.
+    assert CLAUDE_CODE_SMALL_MODEL == "anthropic/claude-haiku-4-5-20251001"
+
+
+def test_cli_version_is_read_from_the_init_event() -> None:
+    init = {"type": "system", "subtype": "init", "claude_code_version": "2.1.34", "tools": []}
+    output = "\n".join(
+        ["Installing Claude Code...", json.dumps({"type": "assistant"}), json.dumps(init)]
+    )
+    assert cli_version_in_output(output) == "2.1.34"
+    assert cli_version_in_output(json.dumps({"type": "system", "subtype": "init"})) is None
+    assert cli_version_in_output("not json\n{broken") is None
+
+
+@pytest.mark.huggingface
+@pytest.mark.dataset_download
+def test_published_monitor_cli_version_of_a_published_run() -> None:
+    # D-075: the published monitors ran on the release current at the time.
+    version = published_monitor_cli_version(CUDA_RUN, "claude_claude-sonnet-4-6_high")
+    assert version == "2.1.162"
+    with pytest.raises(ValueError, match="no published monitor output"):
+        published_monitor_cli_version(CUDA_RUN, "claude_no-such-model_high")
 
 
 def test_claude_code_raw_output_hides_verdicts_like_stream_json() -> None:
@@ -240,7 +274,11 @@ def claude_code_script(
 @pytest.mark.parametrize("access", ["transcript", "transcript_cot"])
 def test_claude_code_monitor_end_to_end_with_mockllm(access: str, tmp_path: Path) -> None:
     task = researcharena_monitor(
-        access=access, runs=CUDA_RUN, monitor_agent="claude_code", claude_code_version="stable"
+        access=access,
+        runs=CUDA_RUN,
+        monitor_agent="claude_code",
+        claude_code_version="stable",
+        small_model=None,  # the mock model answers Claude Code's background calls too
     )
     model = get_model("mockllm/model", custom_outputs=claude_code_script)
     [log] = eval(task, model=model, display="none", log_dir=str(tmp_path))

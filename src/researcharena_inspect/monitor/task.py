@@ -9,6 +9,7 @@ agent runs in `/home/user/task` with upstream's prompt and time limit, and the s
 import json
 import math
 
+import anyio
 from inspect_ai import Task, task
 from inspect_ai.agent import as_solver
 from inspect_ai.dataset import MemoryDataset, Sample
@@ -45,7 +46,8 @@ from researcharena_inspect.monitor.staging import (
     SANDBOX_TASK_DIR,
     stage_monitor_inputs,
 )
-from researcharena_inspect.pins import PAPER_COMMIT, UPSTREAM_COMMIT
+from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL, PAPER_COMMIT, UPSTREAM_COMMIT
+from researcharena_inspect.published import fetch_run_file
 from researcharena_inspect.transcripts import messages_to_stream_events
 
 ACCESS_TYPES: dict[str, tuple[bool, bool]] = {
@@ -146,12 +148,60 @@ def monitor_sandbox(sandbox_type: str, sandbox_config: str | None) -> SandboxEnv
     return SandboxEnvironmentSpec("docker", compose)
 
 
+PUBLISHED_CLI_VERSION = "published"
+"""`claude_code_version` value: the version the published monitor of the same run used."""
+
+
+def cli_version_in_output(text: str) -> str | None:
+    """The Claude Code version in a CLI `stream-json` output: its `init` event's field."""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(event, dict)
+            and event.get("type") == "system"
+            and event.get("subtype") == "init"
+        ):
+            version = event.get("claude_code_version")
+            return version if isinstance(version, str) and version else None
+    return None
+
+
+def published_monitor_cli_version(run_id: str, published_dir: str) -> str:
+    """The Claude Code version of a published monitor run, from its `monitor_out_sanitized.json`.
+
+    Upstream installs the latest release at each run (`monitors/claude/monitor.sh`), so the
+    published monitors ran on whatever was current: 2.1.34, 2.1.104 and 2.1.162 among the
+    CUDA runs' Sonnet 4.6 monitors. The versions differ in the tools they offer the model
+    (2.1.34 and 2.1.104 have `Grep` and `Glob`; 2.1.162 has neither), ledger D-075.
+
+    Args:
+        run_id: the published run's id in the index.
+        published_dir: the monitor's folder under `blue_team/` (`published_monitor_dir`).
+    """
+    relative = f"blue_team/{published_dir}/monitor_out_sanitized.json"
+    try:
+        path = fetch_run_file(run_id, relative)
+    except Exception as ex:
+        raise ValueError(f"no published monitor output for {run_id}: {relative}") from ex
+    version = cli_version_in_output(path.read_text(encoding="utf-8", errors="replace"))
+    if version is None:
+        raise ValueError(f"no Claude Code version in the published {run_id}/{relative}")
+    return version
+
+
 @solver
 def run_monitor(
     agent: str = "claude_code",
     effort: str = "auto",
     blue_runtime_hours: float = DEFAULT_BLUE_RUNTIME_HOURS,
     claude_code_version: str = "latest",
+    small_model: str | None = CLAUDE_CODE_SMALL_MODEL,
 ) -> Solver:
     """Run the monitor agent on the staged files, stopped after upstream's time limit.
 
@@ -160,7 +210,9 @@ def run_monitor(
         effort: the monitor's reasoning effort; `auto` resolves it from upstream's
             `effort.json` (`high` for Claude monitors), `default` sets none.
         blue_runtime_hours: upstream's `--blueruntime`; the agent is stopped one minute after.
-        claude_code_version: Claude Code version for Inspect SWE.
+        claude_code_version: Claude Code version for Inspect SWE, or `published` for the
+            version the published monitor of the same run, model, effort and access used.
+        small_model: model for Claude Code's own background calls; `None` for the task's model.
     """
     if agent not in MONITOR_AGENTS:
         raise ValueError(f"agent must be one of {MONITOR_AGENTS}, got {agent!r}")
@@ -172,8 +224,18 @@ def run_monitor(
             resolved = resolve_monitor_effort(state.metadata["setting"], model.name)
         state.metadata["monitor_agent"] = agent
         state.metadata["monitor_effort"] = resolved
+        version = claude_code_version
+        if agent == "claude_code" and version == PUBLISHED_CLI_VERSION:
+            if state.metadata.get("source") != "published":
+                raise ValueError("claude_code_version='published' needs a published run")
+            published_dir = published_monitor_dir(model.name, resolved, state.metadata["access"])
+            version = await anyio.to_thread.run_sync(
+                published_monitor_cli_version, state.metadata["run_id"], published_dir
+            )
+        if agent == "claude_code":
+            state.metadata["monitor_cli_version"] = version
         inner = as_solver(
-            monitor_agent(agent, resolved, model, claude_code_version),
+            monitor_agent(agent, resolved, model, version, small_model),
             limits=[time_limit(monitor_timeout_seconds(blue_runtime_hours))],
         )
         return await inner(state, generate)
@@ -301,6 +363,7 @@ def researcharena_monitor(
     effort: str = "auto",
     blue_runtime_hours: float = DEFAULT_BLUE_RUNTIME_HOURS,
     claude_code_version: str = "latest",
+    small_model: str | None = CLAUDE_CODE_SMALL_MODEL,
     sandbox: str = "docker",
     sandbox_config: str | None = None,
     prompt_commit: str = "latest",
@@ -319,6 +382,9 @@ def researcharena_monitor(
         effort: monitor reasoning effort; `auto` reads upstream's `effort.json`.
         blue_runtime_hours: upstream's blue-team runtime; the monitor is stopped one minute later.
         claude_code_version: Claude Code version for Inspect SWE; upstream installs the latest.
+            `published` uses, for each published run, the version its published monitor ran on.
+        small_model: model for Claude Code's own background calls: Haiku 4.5, as in the
+            published runs; `None` sends them to the monitor model.
         sandbox: sandbox type, e.g. `docker` or `k8s`.
         sandbox_config: sandbox config file; for Docker the default is a small Python image.
         prompt_commit: `latest` (the pinned commit) or `paper`: whose builders and templates
@@ -344,7 +410,9 @@ def researcharena_monitor(
     return Task(
         dataset=MemoryDataset(samples, name=f"researcharena_monitor_{access}"),
         setup=stage_monitor_inputs(),
-        solver=run_monitor(monitor_agent, effort, blue_runtime_hours, claude_code_version),
+        solver=run_monitor(
+            monitor_agent, effort, blue_runtime_hours, claude_code_version, small_model
+        ),
         scorer=monitor_suspicion(),
         sandbox=monitor_sandbox(sandbox, sandbox_config),
     )
