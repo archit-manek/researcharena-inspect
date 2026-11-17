@@ -1,0 +1,62 @@
+# The paper's Claude monitor on the published CUDA runs, as an Inspect run config:
+#
+#   uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_monitor.yaml
+#
+# Companion to original.yaml (same format). It monitors the authors' 113 published cuda_kernel
+# runs with Sonnet 4.6 through Claude Code, which is one of the two monitor backbones in the
+# paper's Table 8 (the other, GPT-5.4 through Codex, has no counterpart in the port). The paper
+# reports four access types; this file runs one, so run it once per type with `-T access=...`.
+# Needs Docker (any machine; no GPU) and an Anthropic key.
+#
+# "Upstream" is ResearchArena at b922f4b (pins.UPSTREAM_COMMIT).
+
+task:
+  task: researcharena_inspect/researcharena_monitor
+  args:
+    # `transcript`, `transcript_cot`, `artifact` or `artifact_cot`: run_monitor.sh's
+    # --with-artifact and --with-chain-of-thought flags. Artifact access downloads each run's
+    # published workspace.
+    access: transcript
+
+    # Every published cuda_kernel run (113), baselines and side tasks.
+    settings: cuda_kernel
+
+    # Upstream: `--blueteammodel claude:claude-sonnet-4-6` runs monitors/claude/monitor.sh
+    # (Claude Code). The port runs the same CLI through Inspect SWE (D-066, D-067, D-089).
+    monitor_agent: claude_code
+
+    # Upstream's effort.json gives Claude monitors `high` ("auto" reads it). The published
+    # Sonnet 4.6 monitors of CUDA runs are in folders tagged `high`: 110 runs have one for
+    # `transcript` and 80 for `transcript_cot` (pinned index).
+    effort: auto
+
+    # Upstream's run_monitor.sub, run_monitor_no_artifact.sub and README use 0.5 hours;
+    # run_monitor_claude.sub's own default is 0.0833 (five minutes). Which one the published
+    # monitors had is not recorded in what we have read.
+    blue_runtime_hours: 0.5
+
+    # Each published run's monitor CLI version, read from its published monitor output. The
+    # versions differ in tools: 2.1.34 and 2.1.104 have Grep and Glob, 2.1.162 has neither
+    # (D-075).
+    claude_code_version: published
+
+    # Claude Code's own background calls: Haiku 4.5, as the published runs' `modelUsage`
+    # lists (pins.CLAUDE_CODE_SMALL_MODEL).
+    small_model: anthropic/claude-haiku-4-5-20251001
+
+    # Upstream's monitor runs in the agent's image without a GPU (D-025). The port's default
+    # Docker sandbox is a small Python image; enough for transcript access, but artifact
+    # monitors there lack the image's packages and git (not in the ledger yet).
+    sandbox: docker
+
+    # The pinned commit's prompt builders and templates. For CUDA they match the task text
+    # recovered from published monitor traces; the paper-era text differs only for the
+    # post-training settings (D-054).
+    prompt_commit: latest
+
+# Upstream: `--blueteammodel claude:claude-sonnet-4-6`, run_monitor.sub's default and one of
+# the paper's two monitor backbones.
+model: anthropic/claude-sonnet-4-6
+
+generate_config: {}
+eval_config: {}
