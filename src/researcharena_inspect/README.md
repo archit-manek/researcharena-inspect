@@ -33,8 +33,6 @@ Status on 17 Nov 2026, in short: the prompts, workspace staging and scorers matc
 | Run configs | `run_configs/original.yaml`: the paper's red-team setup for `cuda_kernel` (Claude Code, Sonnet 4.6, one hour, all four side tasks and the baseline). `run_configs/original_monitor.yaml`: the paper's Sonnet 4.6 monitor on the published CUDA runs. Each value has a comment saying where upstream sets it. | `run_configs/` |
 | Hawk job files | The jobs run so far on GL's Hawk cluster, kept as they ran. | `hawk/` at the repository root |
 
-`researcharena_inspect` (two arithmetic questions) is the template's placeholder task. It is not part of the port and is not in `eval.yaml`.
-
 Pinned versions, in `pins.py` and `environment/image.py`:
 
 | What | Pin |
