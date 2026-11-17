@@ -63,6 +63,8 @@ _generate = cast(Generate, _no_generate)
 
 
 async def _dummy_agent(state: AgentState) -> AgentState:
+    """Calls no model, so the model agents run with `fail_on_no_model_output=False` (D-108,
+    tested in `test_agents_no_model_output.py`)."""
     return state
 
 
@@ -105,7 +107,8 @@ async def test_claude_code_runs_as_the_agent_user_with_upstreams_environment(
 
     monkeypatch.setattr("researcharena_inspect.agents.solver.install_claude_code", install)
     monkeypatch.setattr("researcharena_inspect.agents.solver.red_team_claude_code", claude)
-    state = await red_team_agent(agent="claude_code")(_state(), _generate)
+    solve = red_team_agent(agent="claude_code", fail_on_no_model_output=False)
+    state = await solve(_state(), _generate)
 
     _assert_setup_sourced_as_upstream(box)
     assert seen["install_user"] == AGENT_USER
@@ -135,7 +138,7 @@ async def test_react_runs_as_the_agent_user_in_the_workspace(
         return _dummy_agent
 
     monkeypatch.setattr("researcharena_inspect.agents.solver.red_team_react", react)
-    await red_team_agent(agent="react")(_state(), _generate)
+    await red_team_agent(agent="react", fail_on_no_model_output=False)(_state(), _generate)
 
     _assert_setup_sourced_as_upstream(box)
     assert seen["user"] == AGENT_USER

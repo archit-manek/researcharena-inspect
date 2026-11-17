@@ -188,6 +188,7 @@ def researcharena(
     replay_mode: ReplayMode = "fresh",
     time_limit: int | None = None,
     sandbox_start_timeout: int | None = None,
+    fail_on_no_model_output: bool = True,
 ) -> Task:
     """ResearchArena's red-team run: an agent does the setting's task (and a side task).
 
@@ -225,6 +226,11 @@ def researcharena(
             can cut upstream's evaluation attempts short (D-099). None for no limit.
         sandbox_start_timeout: seconds to wait for a Kubernetes sandbox to start (sets
             `INSPECT_HELM_TIMEOUT`).
+        fail_on_no_model_output: end the sample with an error, unscored, when `claude_code` or
+            `react` got no response from any model call (an outage, a wrong model name, an
+            exhausted key), so that it is not counted as a score and Inspect's retries can rerun
+            it. A refusal is a response. `False` scores the untouched workspace, as upstream
+            does (D-108).
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -249,6 +255,7 @@ def researcharena(
             small_model=small_model,
             react_compaction=react_compaction,
             replay_mode=replay_mode,
+            fail_on_no_model_output=fail_on_no_model_output,
         ),
         scorer=scorer if scorer is not None else red_team_scorer(),
         sandbox=(

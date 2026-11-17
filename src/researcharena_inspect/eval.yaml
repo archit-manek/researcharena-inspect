@@ -5,7 +5,7 @@ arxiv: https://arxiv.org/abs/2607.19321
 group: Scheming
 contributors:
   - archit-manek
-version: "1-A"
+version: "1-B"
 tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
