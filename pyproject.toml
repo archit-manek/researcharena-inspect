@@ -71,6 +71,14 @@ preset = "multi-eval"
 # the rule looks for, and a fixture workspace with a known verdict is not settled while the
 # untouched kernels fault on the L4 (ledger D-037).
 "src/researcharena_inspect/eval.yaml" = ["gpu_sandbox_check"]
+# Each task lives beside the code it runs (AGENTS.md, "Layout") and __init__.py exports all of
+# them; there is no researcharena_inspect.py or tasks.py since the template's placeholder task
+# was removed.
+"src/researcharena_inspect/task.py" = ["main_file"]
+"src/researcharena_inspect/monitor/task.py" = ["main_file"]
+"src/researcharena_inspect/environment/check.py" = ["main_file"]
+"src/researcharena_inspect/scoring/crash_check.py" = ["main_file"]
+"src/researcharena_inspect/gpu_probe.py" = ["main_file"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
