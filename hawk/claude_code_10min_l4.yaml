@@ -1,0 +1,65 @@
+# Hawk eval set: the first real-agent run. Claude Code on the baseline CUDA sample for 10 minutes
+# on one L4, then upstream's scorer: `hawk eval-set run hawk/claude_code_10min_l4.yaml`.
+#
+# It checks the plumbing with a real model: the CLI install, Inspect's bridge, tools on the GPU
+# sandbox, the stop at the deadline, and scoring after an agent that used the GPU. Its score is
+# not comparable with the paper's: an L4, not an H100 (D-094), and a 10-minute budget.
+#
+# Model route: GL's Hawk refuses direct Anthropic models ("dead models", 17 Nov 2026), so Sonnet
+# 4.6 and Haiku 4.5 go through Hawk's OpenRouter route. Upstream ran Claude Code on Anthropic
+# directly, so this route is a deviation; caching and thinking through it are not yet measured.
+#
+# Model names: Hawk's proxy knows these models as `openrouter/anthropic/...`. Inspect's
+# `openrouter` provider strips one `openrouter/`, so the Inspect name carries it twice
+# (`openrouter/openrouter/anthropic/claude-sonnet-4.6`). With one prefix the proxy answers
+# 404 "model not found" (job claude-code-10min-l4-br0y5a8sndgji5b2, 17 Nov 2026).
+#
+# Ran on 17 Nov 2026 (job claude-code-10min-l4-5sow3s9ug5yzn74a): CLI 2.1.326, 8 model calls,
+# SIGTERM at 600.006 s, CLI exit 143, round code 124, then upstream's scorer; $0.73 by the prices
+# below. At effort xhigh the agent only read files in 10 minutes (three calls took 69-247 s).
+#
+# Bounded: 600 s agent budget (RED_TIMEOUT 901 s), 3600 s per sample (scoring gets half, D-099),
+# $2 and 3,000,000 tokens per sample, one sandbox, nothing retried.
+name: claude-code-10min-l4
+tags: [l3-smoke]
+tasks:
+  - package: git+https://github.com/archit-manek/researcharena-inspect@50b5f56e54d96847e263aa8f7b41bd176cde3af8
+    name: researcharena_inspect
+    items:
+      - name: researcharena
+        args:
+          agent: claude_code
+          side_tasks: "none"
+          redruntime: "0.1667"
+          small_model: openrouter/openrouter/anthropic/claude-haiku-4.5
+          backend: k8s
+          gpu: l4
+          sandbox_start_timeout: 3600
+          time_limit: 3600
+models:
+  - package: openai
+    name: openrouter
+    items:
+      - name: openrouter/anthropic/claude-sonnet-4.6
+additional_models:
+  - package: openai
+    name: openrouter
+    items:
+      - name: openrouter/anthropic/claude-haiku-4.5
+# Dollars per million tokens (platform.claude.com/docs/en/about-claude/pricing, read 17 Nov 2026).
+# Only the task model: Inspect's `set_model_cost` refuses `openrouter/anthropic/claude-haiku-4.5`
+# ("not found" in its model database), and the cost limit needs prices for the task model only.
+# The key is the task model's full Inspect name (checked on Hawk's Inspect, 0.3.286.dev10).
+model_cost_config:
+  openrouter/openrouter/anthropic/claude-sonnet-4.6:
+    input: 3.0
+    output: 15.0
+    input_cache_write: 3.75
+    input_cache_read: 0.30
+time_limit: 3600
+cost_limit: 2.0
+token_limit: 3000000
+retry_attempts: 0
+max_tasks: 1
+max_samples: 1
+max_sandboxes: 1
