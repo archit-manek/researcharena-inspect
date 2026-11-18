@@ -15,12 +15,20 @@ Hawk accepts only the values its validator has reviewed (`hawk/runner/sandbox_va
 METR/hawk v4.1.0): these use `services.default.{image, nodeSelector, resources}` and
 `allowEntities`, all on its allowlist. Hawk adds the GPU pool's toleration itself and runs a
 GPU service on the node's default runtime (gVisor cannot pass a GPU through).
+
+For a setting whose servers run vLLM (`inference_optimization`), the Docker sandbox is
+`compose.yaml` with two additions (`vllm_compose`): a larger `/dev/shm` (D-132) and, if given,
+a host Hugging Face cache mounted read-only at `model_cache.SEED_MOUNT` (D-130). Kubernetes
+gets the same values as every other setting; the model is then downloaded at staging.
 """
 
 from pathlib import Path
 from typing import Final, Literal
 
-from inspect_ai.util import SandboxEnvironmentSpec
+import yaml
+from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
+
+from researcharena_inspect.environment.model_cache import PROVISIONED_SETTINGS, SEED_MOUNT
 
 Backend = Literal["docker", "k8s"]
 GpuName = Literal["l4", "h100"]
@@ -35,22 +43,60 @@ K8S_VALUES: Final[dict[str, Path]] = {
 # Karpenter's label for the GPU model of an AWS node; Hawk's validator allows `nodeSelector`.
 GPU_NAME_LABEL: Final = "karpenter.k8s.aws/instance-gpu-name"
 
+VLLM_SHM_SIZE: Final = "16gb"
+"""`/dev/shm` for a sandbox that runs vLLM (D-132). Docker's default is 64 MB; vLLM's Docker
+guide asks for `--ipc=host` or a larger `--shm-size`. Upstream's Apptainer containers have no
+Docker default; the size they had is not known."""
 
-def sandbox_spec(backend: Backend = "k8s", gpu: GpuName | None = None) -> SandboxEnvironmentSpec:
+
+def vllm_compose(hf_seed: str | None = None) -> ComposeConfig:
+    """`compose.yaml` with a larger `/dev/shm` and, if given, the host cache mounted read-only.
+
+    Args:
+        hf_seed: absolute path on the Docker host of a Hugging Face cache (`HF_HOME` layout,
+            `<path>/hub/models--...`, or hub layout) that holds the pinned model; staging copies
+            the model from it (`model_cache`).
+    """
+    config = ComposeConfig.model_validate(yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8")))
+    service = config.services["default"]
+    service.shm_size = VLLM_SHM_SIZE  # D-132
+    if hf_seed is not None:  # D-130: the host's cache, copied at staging
+        if not Path(hf_seed).is_absolute():
+            raise ValueError(
+                f"hf_seed must be an absolute path on the Docker host, got {hf_seed!r}"
+            )
+        service.volumes = [*(service.volumes or []), f"{hf_seed}:{SEED_MOUNT}:ro"]
+    return config
+
+
+def sandbox_spec(
+    backend: Backend = "k8s",
+    gpu: GpuName | None = None,
+    setting: str | None = None,
+    hf_seed: str | None = None,
+) -> SandboxEnvironmentSpec:
     """The Inspect sandbox for the agent.
 
     Args:
         backend: "k8s" for a Kubernetes cluster such as Hawk, "docker" for one Docker machine.
         gpu: the GPU model to ask Kubernetes for ("l4" if None). With Docker the machine's GPU
             is used, so a model cannot be chosen and must be None.
+        setting: the setting the sandbox is for; with Docker, a setting whose servers run vLLM
+            gets `vllm_compose`, every other one `compose.yaml` unchanged.
+        hf_seed: Docker only: a host Hugging Face cache to mount read-only (see `vllm_compose`).
 
     Raises:
-        ValueError: an unknown backend or GPU, or a GPU model with Docker.
+        ValueError: an unknown backend or GPU, a GPU model with Docker, or `hf_seed` with
+            Kubernetes.
     """
     if backend == "docker":
         if gpu is not None:
             raise ValueError("the docker backend uses the machine's GPU; pass gpu=None")
+        if setting in PROVISIONED_SETTINGS or hf_seed is not None:
+            return SandboxEnvironmentSpec("docker", vllm_compose(hf_seed))
         return SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+    if hf_seed is not None:
+        raise ValueError("hf_seed mounts a host folder and needs backend='docker'")
     if backend == "k8s":
         chosen = gpu or "l4"
         if chosen not in K8S_VALUES:

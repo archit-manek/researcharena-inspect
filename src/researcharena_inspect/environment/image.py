@@ -14,3 +14,6 @@ IMAGE_DIGEST: Final = "sha256:e1cebf2cfc3a3868b272d91413275d884095b930f97475a218
 and `dockerfile-<hash>`); 13.8 GB compressed in 19 layers."""
 
 IMAGE: Final = f"{IMAGE_REPOSITORY}@{IMAGE_DIGEST}"
+
+# D-133: this image has upstream's vLLM 0.19.1 (containers/requirements.txt at the pin); the
+# published inference runs ran vLLM 0.17.0, which the inference setting's requirements.txt pins.

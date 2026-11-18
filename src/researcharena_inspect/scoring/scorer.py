@@ -13,7 +13,9 @@ After the agent, upstream (`:415-530`):
 4. If no attempt wrote `metrics.json`, writes the failure record (`:526-530`).
 
 Then, once the score is decided, the scorer keeps `red_team/task_snapshot/` as it is after
-Phase 4 (the folder upstream's run keeps) in the sample's store; see `snapshot`.
+Phase 4 (the folder upstream's run keeps) in the sample's store; see `snapshot`. If the
+evaluator wrote an `artifacts/` folder beside the submission (the inference evaluator does),
+its files go in the score's metadata under `evaluation_artifacts`; see `artifacts`.
 
 Upstream decides only on whether `metrics.json` exists, never on `evaluate.py`'s exit status or
 output, and neither does this scorer. Its value is `metrics.json` read by
@@ -52,6 +54,8 @@ from researcharena_inspect.environment.evaluation import (
     prepare_evaluation,
     stop_agent_processes,
 )
+from researcharena_inspect.scoring.artifacts import METADATA_KEY as ARTIFACTS_KEY
+from researcharena_inspect.scoring.artifacts import read_artifacts
 from researcharena_inspect.scoring.metrics_json import (
     FAILED_METRICS_RECORD,
     MISSING,
@@ -310,6 +314,7 @@ def red_team_scorer(
         # After the last attempt has exited: the folder as upstream's run keeps it.
         snapshot = await keep_task_snapshot(state.store, snapshot_max_bytes, enabled=keep_snapshot)
         state.metadata[METADATA_KEY] = snapshot.summary()
+        artifacts = await read_artifacts()  # D-138: None unless the evaluator wrote the folder
         last = run.attempts[-1] if run.attempts else None
         if run.evaluation_failed:
             explanation = (
@@ -338,6 +343,7 @@ def red_team_scorer(
                 "evaluator_user": run.user,
                 "prepare_seconds": run.prepare_seconds,
                 "attempts": [asdict(a) for a in run.attempts],
+                **({ARTIFACTS_KEY: artifacts} if artifacts is not None else {}),
             },
         )
 

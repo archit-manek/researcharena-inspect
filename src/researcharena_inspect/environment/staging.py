@@ -18,6 +18,11 @@ Before the agent starts, the pipeline fills the agent's home (`$AGENT_JOB_DIR`, 
    `JOB_DIR` and the task config's values in the environment (`:272-309`). For `cuda_kernel`
    the setting's hook makes a git repository of `task/` with one commit; the `independent`
    side task's hook then drops an untracked `requirements.txt` into `task/`.
+6. The model cache at `hf_cache` (upstream's overlay over the cluster's cache, `:337-341`):
+   empty, and for `inference_optimization` holding the task config's model at a pinned
+   revision (`environment.model_cache`, D-130). The port fills it after writing the files of
+   steps 1, 2 and 4 and before `timer.sh` (step 3) records its start, since upstream's cache
+   was full before the run began.
 
 Steps 1, 2 and 4 are pure file copies, computed here on the host from the pinned checkout
 (`home_entries`) with the modes `cp` gives under umask 022. Steps 3 and 5 run upstream's own
@@ -37,7 +42,7 @@ import shlex
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Any, Literal
 
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import ExecResult
@@ -50,6 +55,7 @@ from researcharena_inspect.environment.layout import (
     HF_HOME,
     TASK_DIR,
 )
+from researcharena_inspect.environment.model_cache import ModelCacheMode, provision_models
 from researcharena_inspect.prompts import (
     BASELINE,
     agent_instruction_file,
@@ -310,6 +316,8 @@ class StagingResult:
     timer_hours: str
     hook_outputs: list[tuple[str, int, str]]
     """(hook path relative to upstream, exit status, stdout + stderr)."""
+    model_cache: list[dict[str, Any]] = field(default_factory=list)
+    """One record per model put into `hf_cache` (`model_cache.provision_models`)."""
 
 
 async def _exec(
@@ -326,6 +334,7 @@ async def stage_workspace(
     agent: AgentFamily | None = "claude",
     task_config: str | None = None,
     write_prompt: bool = True,
+    model_cache: ModelCacheMode = "auto",
     upstream: Path | None = None,
 ) -> StagingResult:
     """Stage the agent's home in the current sample's sandbox, as upstream does.
@@ -333,7 +342,8 @@ async def stage_workspace(
     Run as the first step of a sample, in a fresh sandbox from the eval's image; the sandbox's
     default user must be root. Creates `AGENT_USER`, writes the files of `home_entries`,
     makes `task/timer.sh` with upstream's `create_timer.sh`, runs the `pre_agent.sh` hooks
-    as the agent's user, and creates the empty model cache folder.
+    as the agent's user, creates the model cache folder and, for a setting whose servers load
+    a model offline, puts that model in it (`model_cache.provision_models`).
 
     Args:
         setting: setting name.
@@ -342,11 +352,15 @@ async def stage_workspace(
         agent: whose `solve.sh` the agent finds in its home; None for no launch helpers.
         task_config: task config name; None for the setting's first, as upstream.
         write_prompt: write `prompt.txt` (upstream always does).
+        model_cache: where the setting's model comes from (`auto`: the mounted host cache if
+            it has it, else a download; `seed`, `download`; `none` leaves the cache empty).
+            Ignored for settings that need none (`cuda_kernel`).
         upstream: upstream tree to read; defaults to the pinned checkout.
 
     Raises:
         NotImplementedError: the setting or side task needs a `pipeline_pre_agent.sh` hook.
         StagingError: a step failed where upstream's pipeline would have stopped.
+        ModelCacheError: the model could not be put in the cache or does not match its pin.
     """
     hours = format_hours(redruntime)
     _check_side_task(setting, side_task, upstream)
@@ -400,6 +414,16 @@ async def stage_workspace(
     if not result.success:
         raise StagingError(f"writing the agent's home failed: {result.stderr}")
 
+    # The model cache's mount point, then the model upstream's cluster cache already held
+    # (D-130). Before `timer.sh` records its start: upstream's cache was filled before Phase 0,
+    # so no copy or download fell between the timer's creation and the agent's start.
+    result = await _exec(
+        f"set -eu; install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {HF_HOME}", user="root"
+    )
+    if not result.success:
+        raise StagingError(f"creating the model cache folder failed: {result.stderr}")
+    models = await provision_models(setting, config, model_cache, upstream)
+
     upstream_copy = f"{STAGING_DIR}/upstream"
     base_env = {"HOME": AGENT_HOME, "USER": AGENT_USER, "LOGNAME": AGENT_USER}
     timer = (
@@ -423,14 +447,11 @@ async def stage_workspace(
         if not result.success:
             raise StagingError(f"{rel} failed ({result.returncode}): {result.stderr}")
 
-    # The model cache's mount point, and the end of the scratch folder.
-    result = await _exec(
-        f"set -eu; install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {HF_HOME}; rm -rf {STAGING_DIR}",
-        user="root",
-    )
+    # The end of the scratch folder.
+    result = await _exec(f"rm -rf {STAGING_DIR}", user="root")
     if not result.success:
         raise StagingError(f"finishing staging failed: {result.stderr}")
-    return StagingResult(timer_hours=hours, hook_outputs=outputs)
+    return StagingResult(timer_hours=hours, hook_outputs=outputs, model_cache=models)
 
 
 STAGING_METADATA_KEY = "environment_staging"
@@ -443,12 +464,13 @@ def stage_agent_workspace(
     redruntime: str | int | float | None = None,
     agent: AgentFamily | None = "claude",
     task_config: str | None = None,
+    model_cache: ModelCacheMode = "auto",
 ) -> Solver:
     """Setup solver: stage the agent's workspace for this sample (see `stage_workspace`).
 
     Arguments left as None are read from the sample's metadata keys `setting`, `side_task`,
-    `redruntime` and `task_config`. What the hooks printed goes to the sample's metadata
-    under `environment_staging`.
+    `redruntime` and `task_config`. What the hooks printed and how the model cache was
+    filled go to the sample's metadata under `environment_staging`.
     """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -463,6 +485,7 @@ def stage_agent_workspace(
             redruntime=hours,
             agent=agent,
             task_config=config,
+            model_cache=model_cache,
         )
         state.metadata[STAGING_METADATA_KEY] = {
             "timer_hours": staged.timer_hours,
@@ -471,6 +494,8 @@ def stage_agent_workspace(
                 for hook, code, output in staged.hook_outputs
             ],
         }
+        if staged.model_cache:
+            state.metadata[STAGING_METADATA_KEY]["model_cache"] = staged.model_cache
         return state
 
     return solve

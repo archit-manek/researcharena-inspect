@@ -20,6 +20,18 @@ and `bench.py` reuses `workspace/baseline_tps.txt` as the baseline if it exists
   the agent's kernels on this GPU, in one session, as it would have for an agent that never ran
   `bench.py`. The side-task evaluators read none of the four files, so their verdicts are the
   same in both modes.
+
+The left-out files are per setting (`SCORER_CACHE_FILES_BY_SETTING`). `inference_optimization`'s
+evaluator reads back no earlier result (it starts the submission's server and measures every
+time), so its two modes put the same files in place. Compile caches a `launch.sh` points into
+the workspace (`.vllm_cache/`, `compile_cache/`, `triton_cache/`) are kept in both. In a
+published snapshot such a cache need not be the agent's alone: upstream's evaluator starts the
+submission with the workspace as its working folder, so the published evaluation may have
+written to it too (D-110: the snapshot is taken after Phase 4). A replay therefore starts its
+servers with whatever cache the published evaluation left. One built by another vLLM version
+should not be reused by this image's vLLM, since such caches are keyed by version (not
+checked). 2 of the 105 published inference snapshots have such folders (`...c17312128`,
+`...c17360448`).
 """
 
 import io
@@ -44,7 +56,14 @@ SCORER_CACHE_FILES = (
     "workspace/last_bench.json",
     "workspace/baseline_tps.txt",
 )
-"""Files `evaluate.py` (`:33-37`) and `bench.py` (`:190-194`) read as earlier results."""
+"""Files `cuda_kernel`'s `evaluate.py` (`:33-37`) and `bench.py` (`:190-194`) read as earlier
+results."""
+
+SCORER_CACHE_FILES_BY_SETTING: dict[str, tuple[str, ...]] = {
+    "cuda_kernel": SCORER_CACHE_FILES,
+    "inference_optimization": (),
+}
+"""The files `fresh` leaves out, by setting; a setting not listed keeps CUDA's list."""
 
 SNAPSHOT = "red_team/task_snapshot"
 
@@ -57,7 +76,8 @@ class ReplaySource:
     """A published run id (`cuda_kernel/<run>`) or a local run folder."""
     setting: str
     side_task: str
-    """Upstream's side task (`none` for a baseline)."""
+    """Upstream's side task folder (`none` for a baseline; `embedded3` for a published
+    inference run's `independent2`)."""
     task_config: str | None
     redruntime: str
     published: bool
@@ -65,13 +85,15 @@ class ReplaySource:
 
 def replay_source(source: str) -> ReplaySource:
     """Describe a replay source: a local run folder (with `metadata.json`) or a published run."""
+    from researcharena_inspect.scoring.metrics_json import upstream_side_task
+
     path = Path(source)
     if path.is_dir():
         meta = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
         return ReplaySource(
             source=str(path),
             setting=meta["setting"],
-            side_task=meta["side_task"],
+            side_task=upstream_side_task(meta["setting"], meta["side_task"]),
             task_config=meta.get("task_config"),
             redruntime=str(meta.get("redruntime_hours", "1")),
             published=False,
@@ -85,7 +107,8 @@ def replay_source(source: str) -> ReplaySource:
     return ReplaySource(
         source=source,
         setting=run["setting"],
-        side_task="none" if run["side_task"] == "baseline" else run["side_task"],
+        # D-050: the published runs' `independent2` is upstream's `embedded3`.
+        side_task=upstream_side_task(run["setting"], run["side_task"]),
         task_config=run.get("task_config"),
         redruntime=str(run.get("hours", 1)),
         published=True,
@@ -122,13 +145,16 @@ def snapshot_files(source: ReplaySource) -> dict[str, bytes]:
     return local_snapshot_files(Path(source.source))
 
 
-def select_files(files: Mapping[str, bytes], mode: ReplayMode) -> dict[str, bytes]:
-    """The files to put in place: all of them, or without the scorer's caches (`fresh`)."""
+def select_files(
+    files: Mapping[str, bytes], mode: ReplayMode, setting: str = "cuda_kernel"
+) -> dict[str, bytes]:
+    """The files to put in place: all of them, or without the setting's scorer caches (`fresh`)."""
     if mode not in REPLAY_MODES:
         raise ValueError(f"replay mode must be one of {REPLAY_MODES}, got {mode!r}")
     if mode == "as_published":
         return dict(files)
-    return {k: v for k, v in files.items() if k not in SCORER_CACHE_FILES}
+    left_out = SCORER_CACHE_FILES_BY_SETTING.get(setting, SCORER_CACHE_FILES)
+    return {k: v for k, v in files.items() if k not in left_out}
 
 
 def snapshot_tar(files: Mapping[str, bytes]) -> bytes:
@@ -163,13 +189,15 @@ def snapshot_tar(files: Mapping[str, bytes]) -> bytes:
 SCRATCH = "/var/tmp/researcharena-replay.tar"
 
 
-async def replay_workspace(files: Mapping[str, bytes], mode: ReplayMode) -> dict[str, Any]:
+async def replay_workspace(
+    files: Mapping[str, bytes], mode: ReplayMode, setting: str = "cuda_kernel"
+) -> dict[str, Any]:
     """Replace the staged `task/` with `files` as the agent's user.
 
     Returns:
         What was put in place: the mode, the files written and the cache files left out.
     """
-    chosen = select_files(files, mode)
+    chosen = select_files(files, mode, setting)
     box = sandbox()
     await box.write_file(SCRATCH, snapshot_tar(chosen))
     clear = await box.exec(
@@ -195,6 +223,7 @@ async def replay_workspace(files: Mapping[str, bytes], mode: ReplayMode) -> dict
 __all__ = [
     "REPLAY_MODES",
     "SCORER_CACHE_FILES",
+    "SCORER_CACHE_FILES_BY_SETTING",
     "ReplayMode",
     "ReplaySource",
     "local_snapshot_files",

@@ -56,3 +56,21 @@ def test_original_is_the_cuda_baseline_and_four_side_tasks() -> None:
         "cuda_kernel__independent",
     ]
     assert all(s.metadata and s.metadata["redruntime"] == "1" for s in task.dataset)
+
+
+@pytest.mark.dataset_download  # clones the pinned upstream checkout on first use
+def test_original_inference_is_the_inference_baseline_and_four_side_tasks() -> None:
+    config = load("original_inference.yaml")
+    args = config["task"]["args"]
+    task = researcharena(**args, hf_seed="/srv/hf_seed")
+    assert [s.id for s in task.dataset] == [
+        "inference_optimization__baseline",
+        "inference_optimization__embedded",
+        "inference_optimization__embedded2",
+        "inference_optimization__embedded3",
+        "inference_optimization__independent",
+    ]
+    assert all(s.metadata and s.metadata["redruntime"] == "1" for s in task.dataset)
+    assert all(s.metadata and s.metadata["resume_agent"] is True for s in task.dataset)
+    assert args["task_config"] == "qwen2_5_3b_gpu"
+    assert config["model"] == "anthropic/claude-sonnet-4-6"

@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.researcharena_inspect.published_metrics import KNOWN_DIFFERENCES, compare_all
+from tests.researcharena_inspect.published_metrics import (
+    KNOWN_DIFFERENCES,
+    KNOWN_DIFFERENCES_INFERENCE,
+    compare_all,
+)
 from tests.researcharena_inspect.published_side_tasks import attack_runs, compare, replay_runs
 from tests.researcharena_inspect.upstream_redteam_pipeline import docker_available
 
@@ -26,6 +30,23 @@ def test_reading_published_metrics_matches_the_analysis() -> None:
     differing = {c.run_id: c.differences for c in comparisons if c.differences}
     assert set(differing) == set(KNOWN_DIFFERENCES)
     # Only the side score differs in those two; main scores and side metrics all agree.
+    for run_id, differences in differing.items():
+        assert [d.split()[0] for d in differences] == ["side_score"], run_id
+    for c in comparisons:
+        assert c.ours.side_task == c.theirs.side_task
+        assert c.ours.side_task_class == c.theirs.side_task_class
+        assert c.ours.agent == c.theirs.agent
+
+
+@pytest.mark.slow
+@pytest.mark.huggingface
+@pytest.mark.dataset_download
+def test_reading_published_inference_metrics_matches_the_analysis() -> None:
+    # The same for the 105 inference runs: only the side score differs, in the runs listed.
+    comparisons = compare_all("inference_optimization")
+    assert len(comparisons) == 105
+    differing = {c.run_id: c.differences for c in comparisons if c.differences}
+    assert set(differing) == set(KNOWN_DIFFERENCES_INFERENCE)
     for run_id, differences in differing.items():
         assert [d.split()[0] for d in differences] == ["side_score"], run_id
     for c in comparisons:

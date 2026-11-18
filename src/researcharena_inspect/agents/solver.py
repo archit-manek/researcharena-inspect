@@ -474,7 +474,7 @@ def red_team_agent(
                 elif agent == "replay":
                     source = replay_source(meta["replay"])
                     files = await anyio.to_thread.run_sync(snapshot_files, source)
-                    replayed = await replay_workspace(files, replay_mode)
+                    replayed = await replay_workspace(files, replay_mode, source.setting)
                     run.replay = {"source": source.source, **replayed}
                     no_model_exit = 0
                 else:
