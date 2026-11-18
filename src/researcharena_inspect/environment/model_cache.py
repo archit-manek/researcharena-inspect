@@ -77,6 +77,12 @@ class PinnedModel:
     files: tuple[PinnedFile, ...]
     repo_type: str = "model"
     """`model` (`hub/models--...`) or `dataset` (`hub/datasets--...`)."""
+    builds: tuple[tuple[str | None, str, int], ...] = ()
+    """For a dataset: the `datasets` library's prepared builds (config, split, records) that
+    upstream's `download_resources.py` leaves in the cache by calling `load_dataset` for
+    `resources.json`'s configs and splits, so that a load by name works with no network
+    (D-187). A setting with more datasets adds its pins, with their builds, to
+    `SETTING_DATASETS`."""
 
     @property
     def total_bytes(self) -> int:
@@ -215,6 +221,7 @@ OPENAI_GSM8K: Final = PinnedModel(
     repo_id="openai/gsm8k",
     revision="740312add88f781978c0658806c59bc2815b9866",
     repo_type="dataset",
+    builds=(("main", "train", 7473), ("main", "test", 1319)),  # D-187
     files=(
         PinnedFile(
             ".gitattributes",
@@ -253,6 +260,7 @@ SCALEAI_GSM1K: Final = PinnedModel(
     repo_id="ScaleAI/gsm1k",
     revision="bc09569d09a614b9b530edc7f076fb214ac10493",
     repo_type="dataset",
+    builds=((None, "test", 1205),),  # D-187
     files=(
         PinnedFile(
             ".gitattributes",
@@ -395,6 +403,41 @@ async def provision_models(
     return records
 
 
+def seed_datasets(
+    seed: Path, setting: str = "utility_finetuning", image: str | None = None
+) -> None:
+    """Prepare the setting's dataset builds in a host seed, with the network (D-187).
+
+    Runs this module's script in the agent's image (its `datasets` version) in `download` mode
+    with `seed` as `HF_HOME`: the pinned repositories go to `<seed>/hub/` (kept if already
+    there) and each build to `<seed>/datasets/`, from where staging copies it. As
+    `python -m researcharena_inspect.environment.model_cache <seed folder> [setting]`.
+    """
+    import os
+    import subprocess
+
+    from researcharena_inspect.environment.image import IMAGE
+
+    seed.mkdir(parents=True, exist_ok=True)
+    for pin in SETTING_DATASETS.get(setting, ()):
+        subprocess.run(
+            [
+                *("docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}"),
+                *("-e", "HOME=/tmp", "-v", f"{seed.resolve()}:/seed"),
+                *("-v", f"{SCRIPT_SOURCE}:/tmp/model_cache_script.py:ro"),
+                *("--entrypoint", "python3", image or IMAGE, "/tmp/model_cache_script.py"),
+                *("--spec", pin.to_json(), "--hf-home", "/seed", "--mode", "download"),
+            ],
+            check=True,
+        )
+
+
+if __name__ == "__main__":
+    import sys
+
+    seed_datasets(Path(sys.argv[1]), *sys.argv[2:3])
+
+
 __all__ = [
     "MODEL_CACHE_MODES",
     "OPENAI_GSM8K",
@@ -412,4 +455,5 @@ __all__ = [
     "models_for",
     "parse_result",
     "provision_models",
+    "seed_datasets",
 ]

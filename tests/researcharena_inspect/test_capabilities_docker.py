@@ -30,6 +30,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, cast
 
@@ -50,6 +51,7 @@ from researcharena_inspect.environment import (
     prepare_evaluation,
     stage_agent_workspace,
 )
+from researcharena_inspect.environment.model_cache import parse_result
 from researcharena_inspect.environment.services import SERVICE_NAME
 from researcharena_inspect.environment.staging import agent_extra_env
 from researcharena_inspect.scoring import red_team_scorer, transfer
@@ -826,93 +828,70 @@ ARENA_IMAGE = (
 
 
 def _arena_image_present() -> bool:
-    import subprocess
-
     found = subprocess.run(
         ["docker", "image", "inspect", ARENA_IMAGE], capture_output=True, check=False
     )
     return found.returncode == 0
 
 
-@pytest.mark.huggingface
-@pytest.mark.skipif(not _arena_image_present(), reason="needs the arena image locally (13.8 GB)")
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "D-187: the port's cache holds the dataset repositories' files only; upstream's also "
-        "held the datasets library's Arrow copies, which an offline load_dataset reads"
-    ),
-)
-def test_the_provisioned_datasets_load_offline_as_upstreams_cache_would(tmp_path: Path) -> None:
-    # The cache as staging fills it (the port's script, from a seed of the pinned files), used
-    # as the agent would use it, in the agent's own image (datasets 4.6.1) with no network.
-    import subprocess
-    import sys
-
-    from huggingface_hub import snapshot_download
-
-    from researcharena_inspect.environment.model_cache import (
-        OPENAI_GSM8K,
-        SCALEAI_GSM1K,
-        SCRIPT_SOURCE,
-    )
-
-    for pin in (OPENAI_GSM8K, SCALEAI_GSM1K):
-        snapshot_download(
-            pin.repo_id,
-            repo_type="dataset",
-            revision=pin.revision,
-            cache_dir=str(tmp_path / "seed" / "hub"),
-        )
-        made = subprocess.run(
-            [
-                sys.executable,
-                str(SCRIPT_SOURCE),
-                *("--spec", pin.to_json(), "--hf-home", str(tmp_path / "cache")),
-                *("--seed", str(tmp_path / "seed"), "--mode", "seed"),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert made.returncode == 0, made.stdout + made.stderr
-    subprocess.run(["chmod", "-R", "a+rwX", str(tmp_path / "cache")], check=True)
-    load = (
-        "import datasets\n"
-        "datasets.load_dataset('openai/gsm8k', 'main', split='train')\n"
-        "datasets.load_dataset('openai/gsm8k', 'main', split='test')\n"
-        "datasets.load_dataset('ScaleAI/gsm1k', split='test')\n"
-    )
-    run = subprocess.run(
+def _arena(docker: list[str], python: list[str]) -> subprocess.CompletedProcess[str]:
+    """`python3 <python>` in the agent's image, as uid 1000, with `docker run` options."""
+    return subprocess.run(
         [
-            "docker",
-            "run",
-            "--rm",
-            "--platform",
-            "linux/amd64",
-            "--network",
-            "none",
-            "--user",
-            "1000:1000",
-            "-e",
-            "HF_HOME=/cache",
-            "-e",
-            "HF_HUB_OFFLINE=1",
-            "-e",
-            "HF_DATASETS_OFFLINE=1",
-            "-e",
-            "HOME=/tmp",
-            "-v",
-            f"{tmp_path / 'cache'}:/cache",
-            "--entrypoint",
-            "python3",
-            ARENA_IMAGE,
-            "-c",
-            load,
+            *("docker", "run", "--rm", "--platform", "linux/amd64", "--user", "1000:1000"),
+            *("-e", "HOME=/tmp", *docker, "--entrypoint", "python3", ARENA_IMAGE, *python),
         ],
         capture_output=True,
         text=True,
         check=False,
         timeout=900,
     )
+
+
+@pytest.mark.huggingface
+@pytest.mark.skipif(not _arena_image_present(), reason="needs the arena image locally (13.8 GB)")
+def test_the_provisioned_datasets_load_offline_as_upstreams_cache_would(tmp_path: Path) -> None:
+    # D-187: the seed is prepared as the stage step prepares it (the agent's image, with the
+    # network); staging's script copies it with no network; the agent then loads each split by
+    # name with no network, as from a cache upstream's `download_resources.py` filled.
+    from researcharena_inspect.environment.model_cache import (
+        SCRIPT_SOURCE,
+        SETTING_DATASETS,
+        seed_datasets,
+    )
+
+    seed, cache = tmp_path / "seed", tmp_path / "cache"
+    seed_datasets(seed, image=ARENA_IMAGE)
+    cache.mkdir()
+    cache.chmod(0o777)
+    for pin in SETTING_DATASETS["utility_finetuning"]:
+        staged = _arena(
+            [
+                *("--network", "none", "-v", f"{seed}:/opt/hf_seed:ro", "-v", f"{cache}:/cache"),
+                *("-v", f"{SCRIPT_SOURCE}:/tmp/model_cache_script.py:ro"),
+            ],
+            [
+                *("/tmp/model_cache_script.py", "--spec", pin.to_json(), "--hf-home", "/cache"),
+                *("--seed", "/opt/hf_seed", "--mode", "seed"),
+            ],
+        )
+        assert staged.returncode == 0, staged.stdout[-2000:] + staged.stderr[-2000:]
+        result = parse_result(staged.stdout)
+        assert result is not None
+        assert result["source"] == "seed"
+        assert result["problems"] == []
+    load = (
+        "import datasets\n"
+        "for args in [('openai/gsm8k', 'main', 'train'), ('openai/gsm8k', 'main', 'test'),\n"
+        "             ('ScaleAI/gsm1k', None, 'test')]:\n"
+        "    print(len(datasets.load_dataset(args[0], args[1], split=args[2])))\n"
+    )
+    run = _arena(
+        [
+            *("--network", "none", "-e", "HF_HOME=/cache", "-e", "HF_HUB_OFFLINE=1"),
+            *("-e", "HF_DATASETS_OFFLINE=1", "-v", f"{cache}:/cache"),
+        ],
+        ["-c", load],
+    )
     assert run.returncode == 0, run.stderr[-2000:]
+    assert run.stdout.split() == ["7473", "1319", "1205"]
