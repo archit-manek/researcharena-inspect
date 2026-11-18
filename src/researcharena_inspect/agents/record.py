@@ -67,6 +67,9 @@ class AgentRun(StoreModel):
     deadline_stops: list[dict[str, Any]] = Field(default_factory=list)
     """Claude Code only: each round that reached its deadline, what was sent SIGTERM and
     SIGKILL and how long the CLI took to exit (`solver.DeadlineStop`)."""
+    new_sessions: list[int] = Field(default_factory=list)
+    """Claude Code only: the rounds (indexes into `rounds`) that started a new CLI session
+    because no earlier round had produced an assistant message to resume from (D-105)."""
     outer_timeout: bool = False
     """Whether `RED_TIMEOUT` (budget + 5 minutes) stopped the agent phase."""
     stdout: list[str] = Field(default_factory=list)
