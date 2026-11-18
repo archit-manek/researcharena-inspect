@@ -27,10 +27,12 @@ No GPU and no model: what this cannot show is how vLLM loads a real model and ho
 """
 
 import hashlib
+import io
 import json
 import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -210,20 +212,33 @@ async def _install(box: SandboxEnvironment, answers: bool) -> None:
     site = await box.exec(["python3", "-c", "import site; print(site.getsitepackages()[0])"])
     assert site.success, site.stderr
     target = site.stdout.strip()
-    for path in sorted((FAKE_SERVE / "python").rglob("*.py")):
-        rel = path.relative_to(FAKE_SERVE / "python").as_posix()
-        await box.write_file(f"{target}/{rel}", path.read_text())
-    root = _site_packages()
-    for name in PYDEPS:
-        for path in sorted((root / name).rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".so":
-                await box.write_file(
-                    f"{target}/{path.relative_to(root).as_posix()}", path.read_bytes()
-                )
-    chmod = await box.exec(
-        ["bash", "-c", f"chmod -R a+rX /opt/test {target} && chmod a+rx /usr/local/bin/*"]
+    # One archive per container: hundreds of single-file writes, twice over, can hang Docker.
+    await box.write_file("/opt/test/packages.tar", _packages_tar())
+    unpack = await box.exec(
+        [
+            "bash",
+            "-c",
+            (
+                f"tar -xf /opt/test/packages.tar -C {target} && rm /opt/test/packages.tar && "
+                f"chmod -R a+rX /opt/test {target} && chmod a+rx /usr/local/bin/*"
+            ),
+        ]
     )
-    assert chmod.success, chmod.stderr
+    assert unpack.success, unpack.stderr
+
+
+def _packages_tar() -> bytes:
+    """The stand-in packages and `PYDEPS`, laid out as in site-packages."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for path in sorted((FAKE_SERVE / "python").rglob("*.py")):
+            tar.add(path, arcname=path.relative_to(FAKE_SERVE / "python").as_posix())
+        root = _site_packages()
+        for name in PYDEPS:
+            for path in sorted((root / name).rglob("*")):
+                if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".so":
+                    tar.add(path, arcname=path.relative_to(root).as_posix())
+    return buffer.getvalue()
 
 
 @solver

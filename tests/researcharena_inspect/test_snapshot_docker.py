@@ -20,11 +20,10 @@ from inspect_ai.dataset import MemoryDataset
 from inspect_ai.log import EvalLog
 from inspect_ai.scorer import Score, Scorer, Target, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import sandbox
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.agents import write_run_dirs
-from researcharena_inspect.environment import AGENT_USER, SNAPSHOT_DIR
+from researcharena_inspect.environment import AGENT_USER, SNAPSHOT_DIR, evaluator_sandbox
 from researcharena_inspect.monitor import (
     SANDBOX_TASK_DIR,
     bundle_to_sample,
@@ -57,8 +56,11 @@ COMPOSE = f"""services:
 
 
 async def _manifest(root: str, user: str) -> dict[str, Any]:
-    """Described as the files' owner: git refuses a repository another user owns."""
-    box = sandbox()
+    """Described as the files' owner: git refuses a repository another user owns.
+
+    In the evaluator's container where there is one: the agent's is stopped by scoring (D-093).
+    """
+    box = evaluator_sandbox()
     await box.write_file("/opt/test/tree_manifest.py", MANIFEST_SOURCE.read_text())
     assert (await box.exec(["chmod", "-R", "a+rX", "/opt/test"], user="root")).success
     result = await box.exec(["python3", "/opt/test/tree_manifest.py", root], user=user)
@@ -68,7 +70,7 @@ async def _manifest(root: str, user: str) -> dict[str, Any]:
 
 @scorer(metrics=[])
 def describe_snapshot() -> Scorer:
-    """After `red_team_scorer`: the snapshot as the run left it in the sandbox."""
+    """After `red_team_scorer`: the snapshot as the run left it, in the evaluator's container."""
 
     async def score(state: TaskState, target: Target) -> Score:
         return Score(value=0, metadata={"manifest": await _manifest(SNAPSHOT_DIR, AGENT_USER)})

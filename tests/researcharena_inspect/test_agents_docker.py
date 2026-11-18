@@ -328,6 +328,7 @@ def test_no_resume_when_the_setting_says_so(tmp_path: Path) -> None:
         redruntime=BUDGET_HOURS,
         sandbox="docker",
         scorer=workspace_probe(),
+        model_cache="none",  # the CPU image cannot download the setting's models
     )
     model = get_model(
         "mockllm/model", custom_outputs=[ModelOutput.from_content("mockllm/model", "Done.")]
