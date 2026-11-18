@@ -2,6 +2,8 @@
 
 An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://research-arena.ai/) ([paper](https://arxiv.org/abs/2607.19321), [code](https://github.com/aisa-group/ResearchArena)), an AI-control evaluation of sabotage and monitoring in automated AI R&D. An agent does a long research-engineering task while some runs also ask it to sabotage the work in secret; a monitor model then reads the run and scores how suspicious it looks.
 
+New to the benchmark or to this code? Start with the guide, [docs/guide.html](docs/guide.html): one run stage by stage, the four settings, the monitor, the evidence and the differences from the original, each linked to the lines it describes. It is a single HTML file; open it in a browser after cloning (GitHub shows its source, not the page). It was written on 18 Nov 2026 against commit `68c52cc`, and its links point at that commit.
+
 The eval's documentation is in [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md). For a review, read it in this order:
 
 1. [What is in the port](src/researcharena_inspect/README.md#what-is-in-the-port) and [what "the original" means here](src/researcharena_inspect/README.md#what-the-original-means-here): the port follows upstream's code at commit `b922f4b`, reuses its task files, evaluators and templates unchanged, and rewrites only the bash orchestration as Inspect tasks.
@@ -9,7 +11,7 @@ The eval's documentation is in [src/researcharena_inspect/README.md](src/researc
 3. [Deviations from upstream](src/researcharena_inspect/README.md#deviations-from-upstream) and [Known limitations](src/researcharena_inspect/README.md#known-limitations).
 4. [How to run it](src/researcharena_inspect/README.md#how-to-run-it), locally or on Hawk, and the paper's setup as a run config: [`run_configs/original.yaml`](src/researcharena_inspect/run_configs/original.yaml).
 
-Where things stand (17 Nov 2026): the CUDA kernel setting runs end to end; prompts, workspace staging and scorers match upstream's own scripts byte for byte in the tests; the paper's tables reproduce from the authors' published runs except for cells listed with their causes; upstream's scorer and a 10-minute Claude Code run have run on an NVIDIA L4, where the untouched kernels fault and score 0.0 (D-037). Nothing has run on the paper's GPU (an H100) or for the paper's full hour, and the other three settings are checked only up to their prompts.
+Where things stand (18 Nov 2026): all four settings are ported. Prompts, workspace staging and scorers match upstream's own scripts in the tests, and the paper's tables reproduce from the authors' published runs except for cells listed with their causes. On an NVIDIA H100, the paper's GPU: `cuda_kernel` has sixteen one-hour live runs and published workspaces replayed through the scorer; `inference_optimization` has its scorer checks, with one-hour live runs under way. `utility_finetuning`, `safety_finetuning` and scoring in a container of its own (version 6-A onwards) have run on a CPU only, with stand-ins for the GPU parts; their GPU checks are prepared. The details, and what has not been verified, are in [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how).
 
 ## Getting started
 
