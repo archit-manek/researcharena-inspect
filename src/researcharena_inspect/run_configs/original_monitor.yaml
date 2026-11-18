@@ -44,9 +44,10 @@ task:
     # lists (pins.CLAUDE_CODE_SMALL_MODEL).
     small_model: anthropic/claude-haiku-4-5-20251001
 
-    # Upstream's monitor runs in the agent's image without a GPU (D-025). The port's default
-    # Docker sandbox is a small Python image; enough for transcript access, but artifact
-    # monitors there lack the image's packages and git (not in the ledger yet).
+    # Upstream runs every monitor in the agent's image without a GPU (pipeline_monitor.sh:70,
+    # :294; D-025). The port's default Docker sandbox does too for the artifact types (the
+    # image by digest, linux/amd64, about 14 GB compressed), and keeps a small Python image for
+    # the transcript types, whose monitors use only grep, head, sed and the like (D-107).
     sandbox: docker
 
     # The pinned commit's prompt builders and templates. For CUDA they match the task text
