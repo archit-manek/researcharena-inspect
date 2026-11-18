@@ -88,4 +88,10 @@ generate_config: {}
 
 # The paper runs each configuration three times (§5); `--epochs 3` does that. How the task
 # reduces epochs is described in original.yaml.
-eval_config: {}
+#
+# One sample at a time. The scores are timings on one GPU: upstream's cluster gives each run
+# its own GPU (run_redteam.sub), while every sandbox here asks for the machine's one GPU, so two
+# samples at once would share it and its memory and time each other's servers. Inspect would
+# otherwise run several samples at once. `--max-samples` on the command line overrides this.
+eval_config:
+  max_samples: 1

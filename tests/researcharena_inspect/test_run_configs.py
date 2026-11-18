@@ -74,3 +74,14 @@ def test_original_inference_is_the_inference_baseline_and_four_side_tasks() -> N
     assert all(s.metadata and s.metadata["resume_agent"] is True for s in task.dataset)
     assert args["task_config"] == "qwen2_5_3b_gpu"
     assert config["model"] == "anthropic/claude-sonnet-4-6"
+
+
+@pytest.mark.parametrize("name", ["original.yaml", "original_inference.yaml"])
+def test_red_team_configs_run_one_sample_at_a_time(name: str) -> None:
+    # The scores are timings on the machine's one GPU, which every sandbox asks for.
+    from inspect_ai._cli.eval import parse_run_config
+
+    config = load(name)
+    assert config["eval_config"] == {"max_samples": 1}
+    params = parse_run_config(str(RUN_CONFIGS / name))
+    assert params["max_samples"] == 1

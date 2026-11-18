@@ -23,14 +23,27 @@ METADATA_KEY: Final = "evaluation_artifacts"
 JSON_LIMIT_BYTES: Final = 512 * 1024
 LOG_END_BYTES: Final = 32 * 1024
 
-_READ = (
-    "import sys; path, n, end = sys.argv[1], int(sys.argv[2]), sys.argv[3]; "
-    "data = open(path, 'rb').read(); "
-    "cut = len(data) - 2 * n; "
-    "data = data[:n] if end == 'head' else data if cut <= 0 else "
-    "data[:n] + b'\\n[... %d bytes not kept ...]\\n' % cut + data[-n:]; "
-    "sys.stdout.write(data.decode('utf-8', 'replace'))"
-)
+READ_TIMEOUT_SECONDS: Final = 60
+"""Bound on reading one file in the sandbox."""
+
+# Reads only what is kept, whatever the file's size: a JSON file's first `n` bytes; a log
+# whole if it is at most `2n` bytes, else its first and last `n` with a marker between (a seek
+# for the tail). A multi-GB server log costs 64 KiB of reading, not its size in memory.
+_READ = """
+import os, sys
+path, n, end = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+size = os.path.getsize(path)
+with open(path, "rb") as f:
+    if end == "head":
+        data = f.read(n)
+    elif size <= 2 * n:
+        data = f.read(2 * n)
+    else:
+        head = f.read(n)
+        f.seek(size - n)
+        data = head + b"\\n[... %d bytes not kept ...]\\n" % (size - 2 * n) + f.read(n)
+sys.stdout.write(data.decode("utf-8", "replace"))
+"""
 
 
 async def read_artifacts(folder: str = ARTIFACTS_DIR) -> dict[str, Any] | None:
@@ -71,18 +84,22 @@ async def _read(folder: str, files: dict[str, Any]) -> dict[str, Any] | None:
         limit = JSON_LIMIT_BYTES if is_json else 2 * LOG_END_BYTES
         # A JSON file's start; a log's two ends. Decoded leniently (a log can hold any bytes).
         end_bytes = JSON_LIMIT_BYTES if is_json else LOG_END_BYTES
-        read = await box.exec(
-            [
-                "python3",
-                "-c",
-                _READ,
-                f"{folder}/{name}",
-                str(end_bytes),
-                "head" if is_json else "ends",
-            ],
-            user="root",
-        )
-        text = read.stdout if read.success else f"[not read: {read.stderr.strip()}]"
+        try:
+            read = await box.exec(
+                [
+                    "python3",
+                    "-c",
+                    _READ,
+                    f"{folder}/{name}",
+                    str(end_bytes),
+                    "head" if is_json else "ends",
+                ],
+                user="root",
+                timeout=READ_TIMEOUT_SECONDS,
+            )
+            text = read.stdout if read.success else f"[not read: {read.stderr.strip()}]"
+        except Exception as error:  # this file only: the others are still read
+            text = f"[not read: {type(error).__name__}: {error}]"
         files[name] = {
             "bytes": size,
             "kept": min(size, limit),
