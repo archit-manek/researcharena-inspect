@@ -73,6 +73,7 @@ from inspect_ai.scorer import (
 )
 from inspect_ai.solver import TaskState
 from inspect_ai.util import SandboxEnvironment
+from inspect_ai.util import sandbox as sandbox_env
 
 from researcharena_inspect.agents.record import AgentRun, red_provider
 from researcharena_inspect.environment.evaluation import (
@@ -81,6 +82,7 @@ from researcharena_inspect.environment.evaluation import (
     prepare_evaluation,
     stop_agent_processes,
 )
+from researcharena_inspect.environment.layout import EVALUATOR_SERVICE
 from researcharena_inspect.environment.services import copy_hook_evidence
 from researcharena_inspect.environment.staging import STAGING_METADATA_KEY
 from researcharena_inspect.scoring.artifacts import METADATA_KEY as ARTIFACTS_KEY
@@ -350,13 +352,13 @@ def _valid(value: Any) -> float | None:
 def scored_mean() -> Metric:
     """Mean over the samples that have the value.
 
-    None and upstream's -1 ("no score") are left out, not counted as numbers. 0.0 when no
-    sample has one.
+    None and upstream's -1 ("no score") are left out, not counted as numbers. `nan` when no
+    sample has one: nothing was measured, which is not a score of 0.0.
     """
 
     def compute(scores: list[SampleScore]) -> float:
         values = [v for s in scores if (v := _valid(s.score.value)) is not None]
-        return sum(values) / len(values) if values else 0.0
+        return sum(values) / len(values) if values else float("nan")
 
     return compute
 
@@ -473,6 +475,8 @@ def red_team_scorer(
             value=score_value(reading),
             answer=run.metrics_json,
             explanation=explanation,
+            # Upstream's -1 record is kept as the value (D-183); the reason marks it as abnormal.
+            reason="scoring_failed" if run.evaluation_failed else None,
             metadata={
                 "version": SCORE_METADATA_VERSION,
                 "setting": setting,
@@ -485,6 +489,10 @@ def red_team_scorer(
                 "evaluate_command": run.command,
                 "evaluator_cwd": run.cwd,
                 "evaluator_user": run.user,
+                # D-093: which service scored; "default" (the agent's) when there is no evaluator.
+                "evaluator_service": (
+                    EVALUATOR_SERVICE if evaluator_sandbox() is not sandbox_env() else "default"
+                ),
                 "prepare_seconds": run.prepare_seconds,
                 "attempts": [asdict(a) for a in run.attempts],
                 **({ARTIFACTS_KEY: artifacts} if artifacts is not None else {}),

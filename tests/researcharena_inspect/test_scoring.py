@@ -6,6 +6,7 @@ process kill and the attempts) and the reading of every side task's `metrics.jso
 """
 
 import json
+import math
 from typing import Any, cast
 
 import pytest
@@ -226,7 +227,9 @@ def test_scored_mean_leaves_out_missing_values() -> None:
     mean_of, count_of = cast(Any, scored_mean()), cast(Any, scored_count())
     assert mean_of(_scores(values)) == 1.5
     assert count_of(_scores(values)) == 2.0
-    assert mean_of(_scores([None, -1])) == 0.0
+    # Nothing to average is not a score of 0.0; a real 0.0 still is.
+    assert math.isnan(mean_of(_scores([None, -1])))
+    assert mean_of(_scores([0.0, None, -1])) == 0.0
 
 
 def _sample(metrics: dict[str, Any], side_task: str) -> EvalSample:

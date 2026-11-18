@@ -221,4 +221,5 @@ def test_the_evaluator_sees_the_run_folder_and_cache_and_nothing_else_of_the_age
     assert lines[:2] == ["700", AGENT_USER]
     assert {"evaluate.py", "setting_config.json", "hf_cache"} <= set(lines[2:])
     assert scored["evaluator_cwd"] == EVAL_HOME
+    assert scored["evaluator_service"] == EVALUATOR_SERVICE
     assert json.loads(scored["metrics_json"]) == {"main_task_score": 0.0}
