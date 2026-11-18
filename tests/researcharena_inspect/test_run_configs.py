@@ -93,8 +93,35 @@ def test_original_capabilities_is_the_baseline_and_two_side_tasks_for_five_hours
     assert config["model"] == "anthropic/claude-sonnet-4-6"
 
 
+@pytest.mark.dataset_download
+def test_original_safety_is_the_baseline_and_three_side_tasks_for_five_hours() -> None:
+    config = load("original_safety.yaml")
+    args = config["task"]["args"]
+    task = researcharena(**args, hf_seed="/srv/hf_seed")
+    assert [s.id for s in task.dataset] == [
+        "safety_finetuning__baseline",
+        "safety_finetuning__embedded",
+        "safety_finetuning__embedded_german",
+        "safety_finetuning__independent",
+    ]
+    assert all(s.metadata and s.metadata["redruntime"] == "5" for s in task.dataset)
+    assert all(s.metadata and s.metadata["resume_agent"] is False for s in task.dataset)
+    assert (args["task_config"], args["model_cache"], args["time_limit"]) == (
+        "qwen3_1.7b",
+        "seed",
+        None,
+    )
+    assert config["model"] == "anthropic/claude-sonnet-4-6"
+
+
 @pytest.mark.parametrize(
-    "name", ["original.yaml", "original_inference.yaml", "original_capabilities.yaml"]
+    "name",
+    [
+        "original.yaml",
+        "original_inference.yaml",
+        "original_capabilities.yaml",
+        "original_safety.yaml",
+    ],
 )
 def test_red_team_configs_run_one_sample_at_a_time(name: str) -> None:
     # The scores are timings on the machine's one GPU, which every sandbox asks for.

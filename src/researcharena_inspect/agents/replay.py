@@ -82,6 +82,7 @@ SCORER_CACHE_FILES_BY_SETTING: dict[str, tuple[str, ...]] = {
     "cuda_kernel": SCORER_CACHE_FILES,
     "inference_optimization": (),
     "utility_finetuning": (),
+    "safety_finetuning": (),
 }
 """The files `fresh` leaves out, by setting; a setting not listed keeps CUDA's list."""
 
@@ -198,29 +199,25 @@ class ReplayInput:
     """A stored run's `side_task_evidence/` folder, for the hook service (`services`)."""
 
 
-LISTED_SETTINGS: tuple[str, ...] = ("utility_finetuning",)
-"""Settings whose published models `pins.OUTPUT_MODELS_LISTING` lists; a setting added later
-(`safety_finetuning`) adds its own listing, and until then its models cannot be replayed."""
+LISTED_SETTINGS: tuple[str, ...] = ("utility_finetuning", "safety_finetuning")
+"""Settings whose published models a pinned listing lists (`pins.OUTPUT_MODELS_LISTINGS`)."""
 
 
 @cache
-def model_listing() -> dict[str, Any]:
-    """The pinned listing of the published capabilities models (`pins.OUTPUT_MODELS_LISTING`).
+def model_listing(setting: str = "utility_finetuning") -> dict[str, Any]:
+    """The pinned listing of a setting's published models (`pins.OUTPUT_MODELS_LISTINGS`).
 
     One entry per file of every run's `final_model/`, with its size and its SHA-256 (LFS files)
     or git blob id (small files), as the Hub listed the dataset at `pins.OUTPUT_MODELS_REVISION`;
     checked against its own pinned SHA-256 when loaded. Lets a replay verify a published model
     without calling the Hub.
     """
-    from researcharena_inspect.pins import (
-        OUTPUT_MODELS_LISTING,
-        OUTPUT_MODELS_LISTING_SHA256,
-        OUTPUT_MODELS_REVISION,
-    )
+    from researcharena_inspect.pins import OUTPUT_MODELS_LISTINGS, OUTPUT_MODELS_REVISION
 
-    raw = gzip.decompress(OUTPUT_MODELS_LISTING.read_bytes())
-    if hashlib.sha256(raw).hexdigest() != OUTPUT_MODELS_LISTING_SHA256:
-        raise ReplayError(f"{OUTPUT_MODELS_LISTING} does not match its pinned SHA-256")
+    path, sha256 = OUTPUT_MODELS_LISTINGS[setting]
+    raw = gzip.decompress(path.read_bytes())
+    if hashlib.sha256(raw).hexdigest() != sha256:
+        raise ReplayError(f"{path} does not match its pinned SHA-256")
     data = json.loads(raw)
     if data["revision"] != OUTPUT_MODELS_REVISION:
         raise ReplayError("the model listing is not for the pinned revision")
@@ -268,13 +265,14 @@ def published_model_files(run_id: str) -> tuple[dict[str, Path], dict[str, Any]]
     setting = run_id.split("/", 1)[0]
     if setting not in LISTED_SETTINGS:
         raise ReplayError(f"{run_id!r}: no pinned listing of published models for {setting!r}")
-    runs = model_listing()["runs"]  # keyed by the published run id, `<setting>/<run>`
+    runs = model_listing(setting)["runs"]  # keyed by the published run id, `<setting>/<run>`
     if run_id not in runs:
         from researcharena_inspect.published import load_index
 
         if run_id not in {run["id"] for run in load_index()["runs"]}:
             raise ReplayError(f"{run_id!r} is not a published run")
-    # A published run of a listed setting with no entry saved no `final_model/` (one baseline).
+    # A published run of a listed setting with no entry saved no `final_model/` (one capabilities
+    # baseline, two safety `independent` runs: D-212).
     listed = {e["path"]: e for e in runs.get(run_id, [])}
     provenance: dict[str, Any] = {
         "dataset": OUTPUT_MODELS_DATASET,

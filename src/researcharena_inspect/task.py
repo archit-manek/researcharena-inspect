@@ -10,8 +10,9 @@ re-prompted as upstream re-prompts it, and the workspace is then scored by upstr
   a GPU machine, or Kubernetes such as Hawk with `backend="k8s"`). `sandbox="docker"` without a
   config gives a CPU-only Debian image for tests.
 - `setup`: `environment.stage_agent_workspace`, upstream's staging and pre-agent hooks
-  (`pipeline_redteam.sh:169-309`), for `inference_optimization` and `utility_finetuning` the
-  model (and the latter's datasets) in the agent's Hugging Face cache
+  (`pipeline_redteam.sh:169-309`), for `inference_optimization` and the two post-training
+  settings the model (and their datasets, and `safety_finetuning`'s judges) in the agent's
+  Hugging Face cache
   (`environment.model_cache`), and the `pipeline_pre_agent.sh` hooks, such as the post-training
   `independent` side task's upload capture, in a service beside the agent
   (`environment.services`). `setup=[]` stages nothing.
@@ -330,12 +331,14 @@ def researcharena(
             can cut upstream's evaluation attempts short (D-099). None for no limit.
         sandbox_start_timeout: seconds to wait for a Kubernetes sandbox to start (sets
             `INSPECT_HELM_TIMEOUT`).
-        model_cache: `inference_optimization` and `utility_finetuning`: how the model (and for
-            `utility_finetuning` the GSM8K and GSM1K datasets) reaches the agent's Hugging Face
-            cache before the agent starts (upstream's cluster cache already held them; D-130,
-            D-170). `auto` copies each from `hf_seed` if that holds it, else downloads it in the
-            sandbox; `seed` and `download` force one; `none` leaves the cache empty.
-        hf_seed: with Docker, for those two settings: absolute path on the Docker host of a
+        model_cache: `inference_optimization`, `utility_finetuning` and `safety_finetuning`:
+            how the model (and the post-training settings' datasets, and `safety_finetuning`'s
+            two judges) reaches the agent's Hugging Face cache before the agent starts
+            (upstream's cluster cache already held them; D-130, D-170, D-210). `auto` copies each
+            from `hf_seed` if that holds it, else downloads it in the sandbox; `seed` and
+            `download` force one; `none` leaves the cache empty. `safety_finetuning`'s judges
+            include two gated repositories, which only a seed filled with a token can hold.
+        hf_seed: with Docker, for those settings: absolute path on the Docker host of a
             Hugging Face cache holding the pinned repositories, mounted read-only.
         fail_on_no_model_output: end the sample with an error, unscored, when `claude_code` or
             `react` got no response from any model call (an outage, a wrong model name, an
@@ -355,7 +358,7 @@ def researcharena(
             process where no baseline pass has run. A `baseline_tps.txt` the agent left is
             replaced by the measurement; results `evaluate.py` reads back (D-001) are not
             touched. Refused for other settings and with a custom `scorer`.
-        model_store: post-training settings (`utility_finetuning`): where the submitted
+        model_store: post-training settings (`utility_finetuning`, `safety_finetuning`): where the submitted
             workspace, `final_model/` first, is copied after scoring so that it can be re-scored
             (`agent=replay`) and monitored (D-172). `auto`: a folder beside the log
             (`<log>.submissions/<sample>__e<epoch>__<uuid8>/`); `none`: not kept; or a folder. The log

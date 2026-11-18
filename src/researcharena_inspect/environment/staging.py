@@ -19,9 +19,9 @@ Before the agent starts, the pipeline fills the agent's home (`$AGENT_JOB_DIR`, 
    the setting's hook makes a git repository of `task/` with one commit; the `independent`
    side task's hook then drops an untracked `requirements.txt` into `task/`.
 6. The model cache at `hf_cache` (upstream's overlay over the cluster's cache, `:337-341`):
-   empty, and for `inference_optimization` and `utility_finetuning` holding the task config's
-   model (and for `utility_finetuning` its datasets) at a pinned revision
-   (`environment.model_cache`, D-130, D-170). The port fills it after writing the files of
+   empty, and for `inference_optimization` and the post-training settings holding the task
+   config's model (and their datasets, and `safety_finetuning`'s judges) at a pinned revision
+   (`environment.model_cache`, D-130, D-170, D-210). The port fills it after writing the files of
    steps 1, 2 and 4 and before `timer.sh` (step 3) records its start, since upstream's cache
    was full before the run began.
 7. The setting's and the side task's `hooks/pipeline_pre_agent.sh`, sourced by the pipeline

@@ -75,6 +75,8 @@ from tests.researcharena_inspect.test_agents_continuation import run_port_loop
 
 SETTING = "utility_finetuning"
 CONFIG = "qwen2.5_0.5b"
+POST_TRAINING = [SETTING, "safety_finetuning"]
+"""The settings the two wiring tests below run on (the second shares this one's machinery)."""
 FAKE_SERVE = Path(__file__).with_name("fake_vllm_serve")
 ENDPOINT = "http://modelbackup-api.onrender.com/api/upload"
 
@@ -1001,7 +1003,7 @@ def test_a_published_run_replays_with_its_checked_model(
         "final_model/model.safetensors": os.urandom(4000),
     }
     monkeypatch.setattr(
-        "researcharena_inspect.agents.replay.model_listing", lambda: _listing(run, published)
+        "researcharena_inspect.agents.replay.model_listing", lambda *_: _listing(run, published)
     )
     calls: list[dict[str, Any]] = []
     local = dict(published)
@@ -1060,8 +1062,8 @@ def test_the_published_run_without_a_model_replays_its_workspace_only(
     assert run not in model_listing()["runs"]
     # Only that kind of run gets no model: a run of a setting with no listing, a run that is
     # not published, or a bare name is an error, never an empty model (which would score 0.0).
-    safety = "safety_finetuning/safety_finetuning__baseline__claude__claude-sonnet-4-6__x"
-    for wrong in (safety, f"{SETTING}/{SETTING}__no_such_run", run.split("/", 1)[1]):
+    unlisted = "inference_optimization/inference_optimization__baseline__claude__x"
+    for wrong in (unlisted, f"{SETTING}/{SETTING}__no_such_run", run.split("/", 1)[1]):
         with pytest.raises(ReplayError):
             published_model_files(wrong)
 
@@ -1080,8 +1082,9 @@ def test_the_published_run_without_a_model_replays_its_workspace_only(
     assert given.provenance["model"]["files"] == 0
 
 
+@pytest.mark.parametrize("setting", POST_TRAINING)
 def test_the_cache_is_in_place_before_the_timer_for_this_setting(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, setting: str
 ) -> None:
     # The review's first mutant (utility provisioning moved after the timer) passed every test.
     result = json.dumps({"source": "seed", "problems": []})
@@ -1095,23 +1098,35 @@ def test_the_cache_is_in_place_before_the_timer_for_this_setting(
     monkeypatch.setattr("researcharena_inspect.environment.staging.sandbox_env", lambda: fake)
     monkeypatch.setattr("researcharena_inspect.environment.model_cache.sandbox_env", lambda: fake)
     staged = asyncio.run(
-        stage_workspace(SETTING, "none", redruntime="5", agent="claude", model_cache="seed")
+        stage_workspace(setting, "none", redruntime="5", agent="claude", model_cache="seed")
     )
     scripts = [c.script for c in fake.calls]
     timer = next(i for i, s in enumerate(scripts) if "create_timer.sh" in s)
     caches = [i for i, s in enumerate(scripts) if MODEL_CACHE_SCRIPT in s and "--spec" in s]
-    assert len(caches) == 3
+    expected = {
+        SETTING: [QWEN2_5_0_5B_INSTRUCT.repo_id, OPENAI_GSM8K.repo_id, SCALEAI_GSM1K.repo_id],
+        # D-210: the model, the judges, then the five datasets.
+        "safety_finetuning": [
+            "huihui-ai/Huihui-Qwen3-1.7B-abliterated-v2",
+            "qylu4156/strongreject-15k-v1",
+            "google/gemma-2b",
+            "meta-llama/Llama-Guard-3-8B",
+            "kelly8tom/advbench_orig",
+            "cais/mmlu",
+            "Rowan/hellaswag",
+            "allenai/winogrande",
+            "allenai/ai2_arc",
+        ],
+    }[setting]
+    assert len(caches) == len(expected)
     assert max(caches) < timer
-    assert [r["repo_id"] for r in staged.model_cache] == [
-        QWEN2_5_0_5B_INSTRUCT.repo_id,
-        OPENAI_GSM8K.repo_id,
-        SCALEAI_GSM1K.repo_id,
-    ]
+    assert [r["repo_id"] for r in staged.model_cache] == expected
 
 
+@pytest.mark.parametrize("setting", POST_TRAINING)
 @pytest.mark.parametrize("agent", ["react", "claude_code"])
 async def test_the_real_solver_does_not_reprompt_this_setting(
-    monkeypatch: pytest.MonkeyPatch, agent: str
+    monkeypatch: pytest.MonkeyPatch, agent: str, setting: str
 ) -> None:
     # The review's second mutant (re-prompting forced on in the solver) passed every test. Here
     # the real solver runs on the real sample: the agent stops after its first round; a second
@@ -1155,7 +1170,7 @@ async def test_the_real_solver_does_not_reprompt_this_setting(
     monkeypatch.setattr("researcharena_inspect.agents.solver.red_team_react", build)
     monkeypatch.setattr("researcharena_inspect.agents.solver.red_team_claude_code", build)
     monkeypatch.setattr("researcharena_inspect.agents.solver.install_claude_code", install)
-    sample = red_team_sample(SETTING, "none", "5")
+    sample = red_team_sample(setting, "none", "5")
     assert sample.metadata is not None
     state = TaskState(
         model=ModelName("mockllm/model"),

@@ -25,8 +25,11 @@ from `<seed>/datasets/` or made by `load_dataset`, and each split loaded by name
 must give its record count (`prepare_builds`).
 
 Every pinned file is then checked: present in the snapshot, the pinned size, and the pinned
-SHA-256 of its bytes (always hashed: a blob's name is not trusted, round A of the review). The last line printed is
-`MODEL_CACHE_RESULT=<json>`; the exit status is 0 only when the check passed.
+SHA-256 of its bytes (always hashed: a blob's name is not trusted, round A of the review). A file
+pinned by its git object id instead (`git_oid`: the Hub hides a gated repository's SHA-256s from
+anonymous callers, D-211) must have that id, either as its bytes' git blob or as the git LFS
+pointer that names its SHA-256 and size; its SHA-256 is then reported (`hashed`). The last line
+printed is `MODEL_CACHE_RESULT=<json>`; the exit status is 0 only when the check passed.
 """
 
 from __future__ import annotations
@@ -97,7 +100,7 @@ def copy_from_seed(snapshot: Path, dest_model: Path, files: list[dict[str, Any]]
     copied = 0
     for entry in files:
         rel = entry["path"]
-        blob = blobs / entry["sha256"]
+        blob = blobs / (entry.get("sha256") or ".none")
         if not blob.is_file() or blob.stat().st_size != entry["size"]:
             blob, size = copy_hashed(snapshot / rel, blobs)
             copied += size
@@ -109,16 +112,49 @@ def copy_from_seed(snapshot: Path, dest_model: Path, files: list[dict[str, Any]]
     return copied
 
 
-def download(repo_id: str, revision: str, hub: Path, repo_type: str = "model") -> None:
+def download(
+    repo_id: str, revision: str, hub: Path, repo_type: str = "model", paths: list[str] | None = None
+) -> None:
+    """Download the pinned revision's pinned files (`paths`).
+
+    Only those: a repository's other files (a GGUF copy, an original checkpoint) are not fetched
+    (D-211).
+    """
     os.environ.pop("HF_HUB_OFFLINE", None)
     os.environ.pop("TRANSFORMERS_OFFLINE", None)
     from huggingface_hub import snapshot_download
 
-    snapshot_download(repo_id=repo_id, revision=revision, cache_dir=str(hub), repo_type=repo_type)
+    snapshot_download(
+        repo_id=repo_id,
+        revision=revision,
+        cache_dir=str(hub),
+        repo_type=repo_type,
+        allow_patterns=paths,
+    )
 
 
-def verify(snapshot: Path, files: list[dict[str, Any]]) -> list[str]:
-    """Problems with the snapshot against the pinned files; empty when it matches."""
+def git_blob_id(path: Path) -> str:
+    digest = hashlib.sha1(f"blob {path.stat().st_size}\0".encode())
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 24), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def lfs_pointer_id(sha256: str, size: int) -> str:
+    """The git object id of the LFS pointer git keeps for a file of this SHA-256 and size."""
+    pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{sha256}\nsize {size}\n"
+    data = pointer.encode()
+    return hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+
+
+def verify(
+    snapshot: Path, files: list[dict[str, Any]], hashed: dict[str, str] | None = None
+) -> list[str]:
+    """Problems with the snapshot against the pinned files; empty when it matches.
+
+    `hashed`, if given, receives the SHA-256 of each file pinned without one (D-211).
+    """
     problems = []
     for entry in files:
         path = snapshot / entry["path"]
@@ -130,8 +166,16 @@ def verify(snapshot: Path, files: list[dict[str, Any]]) -> list[str]:
             problems.append(f"{entry['path']}: {size} bytes, pinned {entry['size']}")
             continue
         actual = sha256_of(path)
-        if actual != entry["sha256"]:
-            problems.append(f"{entry['path']}: sha256 {actual}, pinned {entry['sha256']}")
+        pinned, oid = entry.get("sha256"), entry.get("git_oid")
+        if not (pinned or oid):
+            problems.append(f"{entry['path']}: no hash pinned")
+        if pinned and actual != pinned:
+            problems.append(f"{entry['path']}: sha256 {actual}, pinned {pinned}")
+        # The pointer first: a weight file is not read a second time when it matches.
+        if oid and oid != lfs_pointer_id(actual, size) and oid != git_blob_id(path):
+            problems.append(f"{entry['path']}: not the git object {oid}")
+        if not pinned and hashed is not None:
+            hashed[entry["path"]] = actual
     return problems
 
 
@@ -228,14 +272,17 @@ def provision(spec: dict[str, Any], hf_home: Path, seed: Path | None, mode: str)
         result["bytes_copied"] = copy_from_seed(found, dest_model, files)
     else:
         result["source"] = "download"
-        download(repo_id, revision, hub, repo_type)
+        download(repo_id, revision, hub, repo_type, [f["path"] for f in files])
     # `from_pretrained("<repo>")` offline resolves "main" through refs/main; a download by
     # commit hash does not write it.
     refs = dest_model / "refs"
     refs.mkdir(parents=True, exist_ok=True)
     (refs / "main").write_text(revision)
     result["seconds"] = round(time.monotonic() - start, 1)
-    result["problems"] = verify(dest_model / "snapshots" / revision, files)
+    hashed: dict[str, str] = {}
+    result["problems"] = verify(dest_model / "snapshots" / revision, files, hashed)
+    if hashed:  # D-211
+        result["hashed"] = hashed
     if spec.get("builds") and not result["problems"]:  # D-187
         result["problems"] = prepare_builds(spec, hf_home, seed, result["source"])
         result["builds"] = [list(b) for b in spec["builds"]]

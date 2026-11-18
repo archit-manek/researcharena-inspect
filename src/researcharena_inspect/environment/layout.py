@@ -138,7 +138,8 @@ def evaluator_env(*, seed: int | None = None) -> dict[str, str]:
     the job's own variables (`USER`, `ARENA_ROOT`, tokens, and for the post-training
     `independent` side task the `http_proxy` its hook exported, D-174); the port passes only
     what `evaluate.py` can use. `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` are not passed
-    (D-092): the `cuda_kernel` scorers call no model.
+    (D-092): no setting's scorer calls a paid model (`safety_finetuning`'s judges are local
+    models in the cache, D-215).
     """
     env = {
         "HOME": EVAL_HOME,
