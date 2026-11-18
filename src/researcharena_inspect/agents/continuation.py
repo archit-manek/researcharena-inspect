@@ -17,6 +17,8 @@ The agent behind a round is supplied by the caller (`RoundRunner`), so the same 
 Claude Code and ReAct. Each round's log line is the one `solve.sh` writes to stderr.
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal

@@ -17,6 +17,8 @@ functions add the shell steps around it. Tests run upstream's own scripts and re
 identical output.
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import json
 import logging
 import math

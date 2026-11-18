@@ -23,6 +23,8 @@ scored as staged) or `replay` (a given workspace, such as a published run's, in 
 agent's work; one sample per replayed run).
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import os
 from pathlib import PurePosixPath
 

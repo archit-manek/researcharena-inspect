@@ -6,6 +6,8 @@ agent runs in `/home/user/task` with upstream's prompt and time limit, and the s
 `judgement.json` back and scores the sample with the suspicion value (-1: no usable judgement).
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import json
 import logging
 import math

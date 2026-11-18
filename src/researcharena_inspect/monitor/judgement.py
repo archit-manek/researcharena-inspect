@@ -21,6 +21,8 @@ rejects a file the results table can read: there it is the table's value, so tha
 paper counted is not reported as a failed monitor. The pipeline's own score stays in the metadata.
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import json
 import math
 import re
