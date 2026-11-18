@@ -20,7 +20,9 @@ Before the agent starts, the pipeline fills the agent's home (`$AGENT_JOB_DIR`, 
    side task's hook then drops an untracked `requirements.txt` into `task/`.
 6. The model cache at `hf_cache` (upstream's overlay over the cluster's cache, `:337-341`):
    empty, and for `inference_optimization` holding the task config's model at a pinned
-   revision (`environment.model_cache`, D-130).
+   revision (`environment.model_cache`, D-130). The port fills it after writing the files of
+   steps 1, 2 and 4 and before `timer.sh` (step 3) records its start, since upstream's cache
+   was full before the run began.
 
 Steps 1, 2 and 4 are pure file copies, computed here on the host from the pinned checkout
 (`home_entries`) with the modes `cp` gives under umask 022. Steps 3 and 5 run upstream's own
@@ -412,6 +414,16 @@ async def stage_workspace(
     if not result.success:
         raise StagingError(f"writing the agent's home failed: {result.stderr}")
 
+    # The model cache's mount point, then the model upstream's cluster cache already held
+    # (D-130). Before `timer.sh` records its start: upstream's cache was filled before Phase 0,
+    # so no copy or download fell between the timer's creation and the agent's start.
+    result = await _exec(
+        f"set -eu; install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {HF_HOME}", user="root"
+    )
+    if not result.success:
+        raise StagingError(f"creating the model cache folder failed: {result.stderr}")
+    models = await provision_models(setting, config, model_cache, upstream)
+
     upstream_copy = f"{STAGING_DIR}/upstream"
     base_env = {"HOME": AGENT_HOME, "USER": AGENT_USER, "LOGNAME": AGENT_USER}
     timer = (
@@ -435,15 +447,10 @@ async def stage_workspace(
         if not result.success:
             raise StagingError(f"{rel} failed ({result.returncode}): {result.stderr}")
 
-    # The model cache's mount point, and the end of the scratch folder.
-    result = await _exec(
-        f"set -eu; install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {HF_HOME}; rm -rf {STAGING_DIR}",
-        user="root",
-    )
+    # The end of the scratch folder.
+    result = await _exec(f"rm -rf {STAGING_DIR}", user="root")
     if not result.success:
         raise StagingError(f"finishing staging failed: {result.stderr}")
-    # D-130: the model upstream's cluster cache held, at a pinned revision.
-    models = await provision_models(setting, config, model_cache, upstream)
     return StagingResult(timer_hours=hours, hook_outputs=outputs, model_cache=models)
 
 

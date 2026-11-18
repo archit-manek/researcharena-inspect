@@ -6,7 +6,8 @@ side-task probe (`startup_check.json`, `speed_results.json`, ...) and every serv
 stderr (`<name>_stdout.log`, `<name>_stderr.log`). `metrics.json` keeps only part of it: the
 baseline's and the submission's timings, the quality examples and why a server did not start
 are only here. Upstream's run folder keeps the folder; the port keeps it in the score (JSON
-files whole up to `JSON_LIMIT_BYTES`, logs' last `LOG_TAIL_BYTES`). CUDA's evaluator writes no
+files whole up to `JSON_LIMIT_BYTES`; a longer log keeps its first and last `LOG_END_BYTES`,
+so that both a server's start-up lines and its last words survive). CUDA's evaluator writes no
 such folder, and then nothing is added.
 """
 
@@ -20,11 +21,14 @@ from researcharena_inspect.environment.layout import EVAL_DIR
 ARTIFACTS_DIR: Final = f"{EVAL_DIR}/artifacts"
 METADATA_KEY: Final = "evaluation_artifacts"
 JSON_LIMIT_BYTES: Final = 512 * 1024
-LOG_TAIL_BYTES: Final = 16 * 1024
+LOG_END_BYTES: Final = 32 * 1024
 
 _READ = (
     "import sys; path, n, end = sys.argv[1], int(sys.argv[2]), sys.argv[3]; "
-    "data = open(path, 'rb').read(); data = data[:n] if end == 'head' else data[-n:]; "
+    "data = open(path, 'rb').read(); "
+    "cut = len(data) - 2 * n; "
+    "data = data[:n] if end == 'head' else data if cut <= 0 else "
+    "data[:n] + b'\\n[... %d bytes not kept ...]\\n' % cut + data[-n:]; "
     "sys.stdout.write(data.decode('utf-8', 'replace'))"
 )
 
@@ -32,9 +36,22 @@ _READ = (
 async def read_artifacts(folder: str = ARTIFACTS_DIR) -> dict[str, Any] | None:
     """Every file directly in `folder`, as kept text; None if there is no such folder.
 
+    Never raises: it runs after the score is decided, so a failure to read is recorded in the
+    returned record (`error`), with the files read so far, as `snapshot.keep_task_snapshot`
+    records its own.
+
     Returns:
-        `{"folder": ..., "files": {name: {"bytes", "kept", "truncated", "text"}}}`.
+        `{"folder": ..., "files": {name: {"bytes", "kept", "truncated", "text"}}}`, plus
+        `error` if listing or reading failed.
     """
+    files: dict[str, Any] = {}
+    try:
+        return await _read(folder, files)
+    except Exception as error:  # an exec or sandbox failure must not lose the score
+        return {"folder": folder, "error": f"{type(error).__name__}: {error}", "files": files}
+
+
+async def _read(folder: str, files: dict[str, Any]) -> dict[str, Any] | None:
     box = sandbox()
     q = shlex.quote(folder)
     listing = await box.exec(
@@ -44,18 +61,25 @@ async def read_artifacts(folder: str = ARTIFACTS_DIR) -> dict[str, Any] | None:
     if listing.returncode == 3:
         return None
     if not listing.success:
-        return {"folder": folder, "error": listing.stderr, "files": {}}
-    files: dict[str, Any] = {}
+        return {"folder": folder, "error": listing.stderr, "files": files}
     for line in sorted(listing.stdout.splitlines()):
         size_text, _, name = line.partition(" ")
         if not name or not size_text.isdigit():
             continue
         size = int(size_text)
         is_json = name.endswith(".json")
-        limit = JSON_LIMIT_BYTES if is_json else LOG_TAIL_BYTES
-        # A JSON file's start, a log's end; decoded leniently (a log can hold any bytes).
+        limit = JSON_LIMIT_BYTES if is_json else 2 * LOG_END_BYTES
+        # A JSON file's start; a log's two ends. Decoded leniently (a log can hold any bytes).
+        end_bytes = JSON_LIMIT_BYTES if is_json else LOG_END_BYTES
         read = await box.exec(
-            ["python3", "-c", _READ, f"{folder}/{name}", str(limit), "head" if is_json else "tail"],
+            [
+                "python3",
+                "-c",
+                _READ,
+                f"{folder}/{name}",
+                str(end_bytes),
+                "head" if is_json else "ends",
+            ],
             user="root",
         )
         text = read.stdout if read.success else f"[not read: {read.stderr.strip()}]"

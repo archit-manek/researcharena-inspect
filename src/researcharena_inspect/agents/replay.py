@@ -23,9 +23,15 @@ and `bench.py` reuses `workspace/baseline_tps.txt` as the baseline if it exists
 
 The left-out files are per setting (`SCORER_CACHE_FILES_BY_SETTING`). `inference_optimization`'s
 evaluator reads back no earlier result (it starts the submission's server and measures every
-time), so its two modes put the same files in place. Compile caches an agent pointed into its
-workspace (`.vllm_cache/`, `compile_cache/`, ...) are kept in both: they are the agent's files,
-and upstream's evaluator ran with them.
+time), so its two modes put the same files in place. Compile caches a `launch.sh` points into
+the workspace (`.vllm_cache/`, `compile_cache/`, `triton_cache/`) are kept in both. In a
+published snapshot such a cache need not be the agent's alone: upstream's evaluator starts the
+submission with the workspace as its working folder, so the published evaluation may have
+written to it too (D-110: the snapshot is taken after Phase 4). A replay therefore starts its
+servers with whatever cache the published evaluation left. One built by another vLLM version
+should not be reused by this image's vLLM, since such caches are keyed by version (not
+checked). 2 of the 105 published inference snapshots have such folders (`...c17312128`,
+`...c17360448`).
 """
 
 import io

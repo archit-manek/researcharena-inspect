@@ -5,6 +5,7 @@ the pinned Qwen files are checked against the upstream setting's own config. Doc
 whole setting are in `test_inference_docker.py`.
 """
 
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -14,11 +15,12 @@ from pathlib import Path
 import pytest
 import yaml
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.util import ComposeConfig
+from inspect_ai.util import ComposeConfig, ExecResult
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.agents.replay import SCORER_CACHE_FILES, replay_source, select_files
 from researcharena_inspect.environment.evaluation import evaluator_entries
+from researcharena_inspect.environment.layout import HF_HOME
 from researcharena_inspect.environment.model_cache import (
     QWEN2_5_3B_INSTRUCT,
     SCRIPT_SOURCE,
@@ -29,13 +31,17 @@ from researcharena_inspect.environment.model_cache import (
     models_for,
     parse_result,
 )
+from researcharena_inspect.environment.model_cache import SCRIPT_PATH as MODEL_CACHE_SCRIPT
 from researcharena_inspect.environment.sandbox import COMPOSE_FILE, VLLM_SHM_SIZE, sandbox_spec
+from researcharena_inspect.environment.staging import stage_workspace
 from researcharena_inspect.prompts import list_side_tasks
 from researcharena_inspect.prompts.settings import load_config
 from researcharena_inspect.scoring import parse_metrics, read_metrics
+from researcharena_inspect.scoring.artifacts import read_artifacts
 from researcharena_inspect.scoring.metrics_json import published_side_task, upstream_side_task
 from researcharena_inspect.scoring.rows import side_task_class
 from researcharena_inspect.task import dataset_setting
+from tests.researcharena_inspect.fake_sandbox import Call, FakeSandbox
 
 SETTING = "inference_optimization"
 
@@ -346,3 +352,88 @@ def test_a_published_independent2_run_replays_as_upstreams_embedded3() -> None:
     assert upstream_side_task(SETTING, "independent2") == "embedded3"
     assert upstream_side_task(SETTING, "baseline") == "none"
     assert upstream_side_task("cuda_kernel", "embedded3") == "embedded3"
+
+
+@pytest.mark.dataset_download
+@pytest.mark.parametrize("setting", [SETTING, "cuda_kernel"])
+def test_the_model_is_in_place_before_the_timer_starts(
+    monkeypatch: pytest.MonkeyPatch, setting: str
+) -> None:
+    # Upstream's cache was full before the run, so `timer.sh` (which records `date +%s` when it
+    # is made) must not count the copy or download (D-130). Staging runs against a sandbox that
+    # records each command; the model-cache script answers with a clean result.
+    result = json.dumps({"source": "seed", "problems": []})
+
+    def respond(call: Call) -> ExecResult[str] | None:
+        if MODEL_CACHE_SCRIPT in call.script:
+            return ExecResult(True, 0, f"MODEL_CACHE_RESULT={result}\n", "")
+        return None
+
+    fake = FakeSandbox(respond)
+    monkeypatch.setattr("researcharena_inspect.environment.staging.sandbox_env", lambda: fake)
+    monkeypatch.setattr("researcharena_inspect.environment.model_cache.sandbox_env", lambda: fake)
+    staged = asyncio.run(
+        stage_workspace(setting, "none", redruntime="1", agent="claude", model_cache="seed")
+    )
+    scripts = [c.script for c in fake.calls]
+
+    def first(text: str) -> int:
+        return next(i for i, script in enumerate(scripts) if text in script)
+
+    timer = first("create_timer.sh")
+    assert first(f"install -d -m 755 -o user -g user {HF_HOME}") < timer
+    if setting == SETTING:
+        assert first(MODEL_CACHE_SCRIPT) < timer
+        assert [r["result"]["source"] for r in staged.model_cache] == ["seed"]
+    else:
+        assert not any(MODEL_CACHE_SCRIPT in script for script in scripts)
+        assert staged.model_cache == []
+
+
+# ---------------------------------------------------------------------- evaluator artifacts
+
+
+def _artifact_box(monkeypatch: pytest.MonkeyPatch, fail_on: int | None) -> FakeSandbox:
+    """Two files in the folder; exec number `fail_on` (1-based) raises, as a broken sandbox."""
+    count = {"n": 0}
+
+    def respond(call: Call) -> ExecResult[str] | None:
+        count["n"] += 1
+        if count["n"] == fail_on:
+            raise RuntimeError("sandbox connection lost")
+        if call.cmd[:2] == ["bash", "-c"]:
+            return ExecResult(True, 0, "12 startup_check.json\n30 startup_stderr.log\n", "")
+        return ExecResult(True, 0, f"text of {call.cmd[-3].rsplit('/', 1)[-1]}", "")
+
+    fake = FakeSandbox(respond)
+    monkeypatch.setattr("researcharena_inspect.scoring.artifacts.sandbox", lambda: fake)
+    return fake
+
+
+def test_artifacts_are_read_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    _artifact_box(monkeypatch, fail_on=None)
+    record = asyncio.run(read_artifacts())
+    assert record is not None
+    assert "error" not in record
+    assert record["files"]["startup_check.json"]["text"] == "text of startup_check.json"
+    assert record["files"]["startup_stderr.log"]["bytes"] == 30
+
+
+@pytest.mark.parametrize("fail_on", [1, 3])
+def test_a_failure_to_read_artifacts_is_recorded_not_raised(
+    monkeypatch: pytest.MonkeyPatch, fail_on: int
+) -> None:
+    # The score is decided before the artifacts are read, so an error there must not lose it.
+    _artifact_box(monkeypatch, fail_on=fail_on)
+    record = asyncio.run(read_artifacts())
+    assert record is not None
+    assert record["error"] == "RuntimeError: sandbox connection lost"
+    # What was read before the failure is kept.
+    assert sorted(record["files"]) == ([] if fail_on == 1 else ["startup_check.json"])
+
+
+def test_no_artifacts_folder_adds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CUDA's evaluator writes no artifacts/ folder: nothing is added to its score.
+    fake = FakeSandbox(lambda call: ExecResult(False, 3, "", ""))
+    monkeypatch.setattr("researcharena_inspect.scoring.artifacts.sandbox", lambda: fake)
+    assert asyncio.run(read_artifacts()) is None
