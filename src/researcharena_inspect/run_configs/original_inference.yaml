@@ -86,6 +86,6 @@ model: anthropic/claude-sonnet-4-6
 # every published inference run has `seed: null` (D-010). Nothing is set here.
 generate_config: {}
 
-# The paper runs each configuration three times (§5); `--epochs 3` does that. Read each epoch's
-# sample, not the summary (see original.yaml).
+# The paper runs each configuration three times (§5); `--epochs 3` does that. How the task
+# reduces epochs is described in original.yaml.
 eval_config: {}
