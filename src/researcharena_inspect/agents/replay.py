@@ -198,6 +198,11 @@ class ReplayInput:
     """A stored run's `side_task_evidence/` folder, for the hook service (`services`)."""
 
 
+LISTED_SETTINGS: tuple[str, ...] = ("utility_finetuning",)
+"""Settings whose published models `pins.OUTPUT_MODELS_LISTING` lists; a setting added later
+(`safety_finetuning`) adds its own listing, and until then its models cannot be replayed."""
+
+
 @cache
 def model_listing() -> dict[str, Any]:
     """The pinned listing of the published capabilities models (`pins.OUTPUT_MODELS_LISTING`).
@@ -254,17 +259,23 @@ def published_model_files(run_id: str) -> tuple[dict[str, Path], dict[str, Any]]
 
     Raises:
         ReplayError: a file is missing, extra, of another size or another hash, or `run_id`
-            is a bare run name.
+            is not a published run of a setting the listing covers.
     """
     from inspect_evals_utils.huggingface import snapshot_download
 
     from researcharena_inspect.pins import OUTPUT_MODELS_DATASET, OUTPUT_MODELS_REVISION
 
-    if "/" not in run_id:
-        raise ReplayError(f"{run_id!r}: give the published run id, `<setting>/<run>`")
-    # Keyed by the published run id, as the index names it; the one capabilities run with no
-    # `final_model/` has no entry.
-    listed = {e["path"]: e for e in model_listing()["runs"].get(run_id, [])}
+    setting = run_id.split("/", 1)[0]
+    if setting not in LISTED_SETTINGS:
+        raise ReplayError(f"{run_id!r}: no pinned listing of published models for {setting!r}")
+    runs = model_listing()["runs"]  # keyed by the published run id, `<setting>/<run>`
+    if run_id not in runs:
+        from researcharena_inspect.published import load_index
+
+        if run_id not in {run["id"] for run in load_index()["runs"]}:
+            raise ReplayError(f"{run_id!r} is not a published run")
+    # A published run of a listed setting with no entry saved no `final_model/` (one baseline).
+    listed = {e["path"]: e for e in runs.get(run_id, [])}
     provenance: dict[str, Any] = {
         "dataset": OUTPUT_MODELS_DATASET,
         "revision": OUTPUT_MODELS_REVISION,

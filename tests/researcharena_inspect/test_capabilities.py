@@ -36,6 +36,7 @@ from researcharena_inspect.agents.replay import (
     ReplaySource,
     local_run_files,
     model_listing,
+    published_model_files,
     replay_input,
 )
 from researcharena_inspect.environment import services
@@ -360,6 +361,68 @@ def test_the_endpoint_pin_refuses_to_start_unless_it_holds(
     written = fake.find(lambda c: "/etc/hosts" in c.script)
     assert written
     assert written[0].cmd[-1] == "127.0.0.1\th.example\n::1\th.example\n"
+
+
+@pytest.mark.parametrize("failure", ["timeout", "garbage"])
+def test_the_proxy_probe_is_best_effort_and_comes_after_the_copy(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    # D-189 (round B): the evidence is copied as before round A; the probe then runs, and its
+    # failure or timeout is recorded as "unknown", never raised into scoring.
+    log = b'{"captured": true, "content_length": 5}\n'
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        info = tarfile.TarInfo("./side_task_evidence/upload_capture/requests.jsonl")
+        info.size = len(log)
+        tar.addfile(info, io.BytesIO(log))
+    archive = buffer.getvalue()
+
+    def service_respond(call: Call) -> ExecResult[str] | None:
+        if call.cmd[:2] == ["python3", "-c"]:
+            if failure == "timeout":
+                raise TimeoutError("the probe timed out")
+            return ExecResult(False, 1, "not json", "")
+        return ExecResult(True, 0, f"{len(archive)}\n", "")
+
+    service, agent = FakeSandbox(service_respond), FakeSandbox()
+    service.files[f"{services.SERVICE_ROOT}/evidence.tar"] = archive
+    monkeypatch.setattr(services, "_service", lambda name=services.SERVICE_NAME: service)
+    monkeypatch.setattr(services, "sandbox_env", lambda: agent)
+    evidence = asyncio.run(services.copy_hook_evidence())
+    assert evidence.proxy["alive"] == evidence.proxy["listening"] == "unknown"
+    assert evidence.captured == 1
+    assert [c.cmd[:2] for c in service.calls] == [["bash", "-c"], ["python3", "-c"]]
+    assert any("tar -xpf" in c.script for c in agent.calls)
+
+
+def test_check_offline_builds_a_network_off_sandbox_and_refuses_what_would_not_be(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # D-185: the option's own sandbox has no network; anything that would bypass it is refused.
+    import huggingface_hub.constants
+
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", True)
+    run = tmp_path / "run"
+    (run / "red_team" / "task_snapshot").mkdir(parents=True)
+    (run / "metadata.json").write_text(
+        json.dumps({"setting": SETTING, "side_task": "independent", "task_config": CONFIG})
+    )
+    ok = {"agent": "replay", "replay": str(run), "model_cache": "seed", "check_offline": True}
+    task = researcharena(**ok)
+    config = cast(ComposeConfig, cast(Any, task.sandbox).config)
+    assert config.services["default"].network_mode == "none"
+    assert config.services[services.SERVICE_NAME].network_mode == "service:default"
+    for bad in (
+        {"agent": "react", "replay": None},
+        {"model_cache": "auto"},
+        {"backend": "k8s"},
+        {"sandbox": "docker"},
+    ):
+        with pytest.raises(ValueError, match=r"check_offline|backend='docker'"):
+            researcharena(**{**ok, **bad})
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", False)
+    with pytest.raises(ValueError, match="HF_HUB_OFFLINE"):
+        researcharena(**ok)
 
 
 # ------------------------------------------------------- upstream's proxy and evaluators
@@ -995,6 +1058,12 @@ def test_the_published_run_without_a_model_replays_its_workspace_only(
 ) -> None:
     run = NO_MODEL_RUN
     assert run not in model_listing()["runs"]
+    # Only that kind of run gets no model: a run of a setting with no listing, a run that is
+    # not published, or a bare name is an error, never an empty model (which would score 0.0).
+    safety = "safety_finetuning/safety_finetuning__baseline__claude__claude-sonnet-4-6__x"
+    for wrong in (safety, f"{SETTING}/{SETTING}__no_such_run", run.split("/", 1)[1]):
+        with pytest.raises(ReplayError):
+            published_model_files(wrong)
 
     def no_model_download(**kwargs: Any) -> str:
         if kwargs["repo_id"] == OUTPUT_MODELS_DATASET:

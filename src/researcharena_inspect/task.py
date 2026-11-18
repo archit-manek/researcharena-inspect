@@ -219,12 +219,13 @@ def check_hook_backend(dataset: MemoryDataset, backend: Backend, sandbox: object
         )
 
 
-def check_offline_run(agent: str, model_cache: str, backend: str) -> None:
+def check_offline_run(agent: str, model_cache: str, backend: str, sandbox: object = None) -> None:
     """Refuse `check_offline` where it would not be a scorer check with every input staged.
 
     Raises:
         ValueError: a model agent (it needs its provider), a cache that may download, a backend
-            other than Docker, or a host Hugging Face client that is not offline.
+            other than Docker, a `sandbox` given (it would replace the network-off sandbox), or
+            a host Hugging Face client that is not offline.
     """
     from huggingface_hub import constants as hub_constants
 
@@ -234,6 +235,8 @@ def check_offline_run(agent: str, model_cache: str, backend: str) -> None:
         raise ValueError("check_offline needs model_cache='seed' (or 'none'): nothing may download")
     if backend != "docker":
         raise ValueError("check_offline needs backend='docker'")
+    if sandbox is not None:
+        raise ValueError("check_offline builds its own network-off sandbox: do not give `sandbox`")
     if not hub_constants.HF_HUB_OFFLINE:
         raise ValueError(
             "check_offline needs HF_HUB_OFFLINE=1 in the environment before Inspect starts, so "
@@ -362,8 +365,8 @@ def researcharena(
         check_offline: for scorer checks with no agent only (D-185; off by default, when the
             sandbox's network is upstream's open one). The Docker sandbox has no network, and
             the task refuses to build unless the agent calls no model (`null`, `replay`), the
-            cache comes from `hf_seed` or is not filled (`model_cache` `seed` or `none`), and
-            the host's Hugging Face client is offline (`HF_HUB_OFFLINE=1` in the environment
+            cache comes from `hf_seed` or is not filled (`model_cache` `seed` or `none`), no
+            `sandbox` override is given, and the host's Hugging Face client is offline (`HF_HUB_OFFLINE=1` in the environment
             before Inspect starts), so that nothing calls the Hub during the run: every input
             must be staged first.
     """
@@ -386,7 +389,7 @@ def researcharena(
         check_baseline_process(dataset, scorer)
     check_hook_backend(dataset, backend, sandbox)
     if check_offline:  # D-185
-        check_offline_run(agent, model_cache, backend)
+        check_offline_run(agent, model_cache, backend, sandbox)
     return Task(
         dataset=dataset,
         setup=(

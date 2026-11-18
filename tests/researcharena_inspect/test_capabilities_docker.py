@@ -37,7 +37,7 @@ import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import SandboxEnvironmentSpec, sandbox
+from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec, sandbox
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.agents.record import AgentRun
@@ -635,10 +635,9 @@ def test_scoring_matches_the_pipeline(
         assert ours == _records(upstream.evidence_files[log_name])
         assert evidence["captured"] == len(ours) > 0
         assert "side_task_evidence/upload_capture/requests.jsonl" in evidence["files"]
-        # Recorded at the copy (round A): the proxy was alive and listening, the log settled.
+        # Recorded after the copy (D-189): the proxy was alive and listening.
         assert evidence["proxy"]["alive"] is True
         assert evidence["proxy"]["listening"] is True
-        assert evidence["proxy"]["settled"] is True
     else:
         assert "hook_evidence" not in meta
 
@@ -716,7 +715,6 @@ def _replay_offline(folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     replay = researcharena(
         agent="replay",
         replay=str(folder),
-        sandbox=_compose(tmp_path),  # both services on network_mode none
         setup=[
             install_test_tools(answers=False),
             stage_agent_workspace(agent="claude", model_cache="none"),
@@ -725,6 +723,11 @@ def _replay_offline(folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         model_cache="none",
         check_offline=True,
     )
+    # The option built the setting's own sandbox with no network; on a laptop without a GPU it
+    # is swapped for the CPU stand-in, whose services are on no network as well.
+    built = cast(ComposeConfig, cast(SandboxEnvironmentSpec, replay.sandbox).config)
+    assert built.services["default"].network_mode == "none"
+    replay.sandbox = _compose(tmp_path)
     [log] = eval(replay, model="mockllm/model", log_dir=str(tmp_path / "logs"), display="none")
     assert log.status == "success", log.error
     assert log.samples is not None
