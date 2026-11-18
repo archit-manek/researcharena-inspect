@@ -286,11 +286,6 @@ def stand_in_agent_work(scripts: dict[str, str]) -> Solver:
     return solve
 
 
-def _compose(folder: Path) -> SandboxEnvironmentSpec:
-    """The port's sandbox: the agent's and the evaluator's containers, and the hook service."""
-    return port_sandbox(hook_service=True)
-
-
 def _without_owner(manifest: dict[str, Any]) -> dict[str, Any]:
     return {path: entry[:-1] for path, entry in manifest["entries"].items()}
 
@@ -443,7 +438,7 @@ def staging_port(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str
             stage_agent_workspace(agent=STAGED_FAMILY, model_cache="none"),
             capture_view_and_prepare_evaluation(),
         ],
-        sandbox=_compose(folder),
+        sandbox=port_sandbox(hook_service=True),
     )
     [log] = eval(task, model="mockllm/model", log_dir=str(folder / "logs"), display="none")
     assert log.status == "success", log.error
@@ -562,7 +557,7 @@ def scoring_port(
 ) -> tuple[dict[tuple[str, str], dict[str, Any]], Path]:
     folder = tmp_path_factory.mktemp("port_scoring")
     store = folder / "store"
-    spec = _compose(folder)
+    spec = port_sandbox(hook_service=True)
     scripts = work_scripts(PORT_ANSWERS)
     out: dict[tuple[str, str], dict[str, Any]] = {}
     for case in dict.fromkeys(c for c, _ in CASES):
@@ -750,7 +745,7 @@ def _replay_offline(folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     # is swapped for the CPU stand-in, whose services are on no network as well.
     built = cast(ComposeConfig, cast(SandboxEnvironmentSpec, replay.sandbox).config)
     assert built.services["default"].network_mode == "none"
-    replay.sandbox = _compose(tmp_path)
+    replay.sandbox = port_sandbox(hook_service=True)
     [log] = eval(replay, model="mockllm/model", log_dir=str(tmp_path / "logs"), display="none")
     assert log.status == "success", log.error
     assert log.samples is not None
@@ -816,7 +811,7 @@ def test_a_dead_proxy_is_recorded_and_the_score_left_to_upstream(tmp_path: Path)
         setting=SETTING,
         side_tasks="independent",
         agent="null",
-        sandbox=_compose(tmp_path),
+        sandbox=port_sandbox(hook_service=True),
         setup=[
             install_test_tools(),
             stage_agent_workspace(agent="claude", model_cache="none"),

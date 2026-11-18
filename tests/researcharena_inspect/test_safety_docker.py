@@ -53,7 +53,6 @@ from tests.researcharena_inspect.test_capabilities_docker import (
     SCAN,
     STAGING_WORK,
     _agent_env,
-    _compose,
     _manifest,
     _normal,
     _pipeline_work,
@@ -68,6 +67,7 @@ from tests.researcharena_inspect.upstream_redteam_pipeline import (
     PipelineRun,
     docker_available,
     port_boxes,
+    port_sandbox,
     run_pipeline,
 )
 
@@ -222,7 +222,7 @@ def staging_port(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str
             stage_agent_workspace(agent=STAGED_FAMILY, model_cache="none"),
             capture_view_and_prepare_evaluation(),
         ],
-        sandbox=_compose(folder),
+        sandbox=port_sandbox(hook_service=True),
     )
     [log] = eval(task, model="mockllm/model", log_dir=str(folder / "logs"), display="none")
     assert log.status == "success", log.error
@@ -323,7 +323,7 @@ def scoring_oracle(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, 
 @pytest.fixture(scope="module")
 def scoring_port(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, str], dict[str, Any]]:
     folder = tmp_path_factory.mktemp("port_scoring")
-    spec = _compose(folder)
+    spec = port_sandbox(hook_service=True)
     scripts = work_scripts(PORT_ANSWERS)
     out: dict[tuple[str, str], dict[str, Any]] = {}
     for case in dict.fromkeys(c for c, _ in CASES):

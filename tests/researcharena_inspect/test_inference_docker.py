@@ -31,7 +31,7 @@ import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import SandboxEnvironmentSpec, sandbox
+from inspect_ai.util import sandbox
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.environment import (
@@ -263,11 +263,6 @@ def stand_in_agent_work() -> Solver:
     return solve
 
 
-def _compose(folder: Path) -> SandboxEnvironmentSpec:
-    """The port's sandbox: the agent's and the evaluator's containers."""
-    return port_sandbox()
-
-
 # ---------------------------------------------------------------------------------- staging
 
 
@@ -307,7 +302,7 @@ def staging_port(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str
             stage_agent_workspace(agent="claude", model_cache="none"),
             capture_and_prepare_evaluation(),
         ],
-        sandbox=_compose(folder),
+        sandbox=port_sandbox(),
     )
     [log] = eval(task, model="mockllm/model", log_dir=str(folder / "logs"), display="none")
     assert log.status == "success", log.error
@@ -388,7 +383,7 @@ def scoring_oracle(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, 
 @pytest.fixture(scope="module")
 def scoring_port(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, str], dict[str, Any]]:
     folder = tmp_path_factory.mktemp("port_scoring")
-    spec = _compose(folder)
+    spec = port_sandbox()
     out: dict[tuple[str, str], dict[str, Any]] = {}
     for case in WORK:
         side_tasks = [s for c, s in CASES if c == case]
