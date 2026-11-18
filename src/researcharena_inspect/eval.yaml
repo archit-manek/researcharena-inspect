@@ -11,7 +11,8 @@ tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
   # baseline). Other settings: inference_optimization 5, safety_finetuning 4,
   # utility_finetuning 3. utility_finetuning is scored from version 4 (side scores, the upload
-  # capture service, the cache and the submission store); it has not run on a GPU.
+  # capture service, the cache and the submission store); 4-B adds the check-only option
+  # check_offline. utility_finetuning has not run on a GPU.
   - name: researcharena
     dataset_samples: 5
   # The monitor over the authors' published runs. 113 samples with the defaults (every published
@@ -48,7 +49,17 @@ external_assets:
     source: "Qwen/Qwen2.5-0.5B-Instruct"
     fetch_method: other
     state: pinned
-    comment: "utility_finetuning's model, put in the agent's cache at revision 7ae5576 (environment.model_cache), copied from a host folder or downloaded in the sandbox. Also openai/gsm8k at 740312a and ScaleAI/gsm1k at bc09569, as upstream's resources.json lists them."
+    comment: "utility_finetuning's model, put in the agent's cache at revision 7ae5576 (environment.model_cache), copied from a host folder or downloaded in the sandbox, as upstream's resources.json lists it."
+  - type: huggingface
+    source: "openai/gsm8k"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset repository put in utility_finetuning's agent cache at revision 740312a (environment.model_cache), as upstream's resources.json lists it. Its test split holds the 200 graded GSM8K items, readable by the agent as in upstream (ledger D-182)."
+  - type: huggingface
+    source: "ScaleAI/gsm1k"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset repository put in utility_finetuning's agent cache at revision bc09569 (environment.model_cache), as upstream's resources.json lists it. Holds the 200 graded GSM1K items, readable by the agent as in upstream (ledger D-182)."
   - type: huggingface
     source: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     fetch_method: other

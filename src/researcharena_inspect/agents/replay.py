@@ -253,14 +253,18 @@ def published_model_files(run_id: str) -> tuple[dict[str, Path], dict[str, Any]]
         revision, file count and bytes) for the replay's record.
 
     Raises:
-        ReplayError: a file is missing, extra, of another size or another hash.
+        ReplayError: a file is missing, extra, of another size or another hash, or `run_id`
+            is a bare run name.
     """
     from inspect_evals_utils.huggingface import snapshot_download
 
     from researcharena_inspect.pins import OUTPUT_MODELS_DATASET, OUTPUT_MODELS_REVISION
 
-    run_name = run_id.split("/", 1)[-1]
-    listed = {e["path"]: e for e in model_listing()["runs"].get(run_name, [])}
+    if "/" not in run_id:
+        raise ReplayError(f"{run_id!r}: give the published run id, `<setting>/<run>`")
+    # Keyed by the published run id, as the index names it; the one capabilities run with no
+    # `final_model/` has no entry.
+    listed = {e["path"]: e for e in model_listing()["runs"].get(run_id, [])}
     provenance: dict[str, Any] = {
         "dataset": OUTPUT_MODELS_DATASET,
         "revision": OUTPUT_MODELS_REVISION,

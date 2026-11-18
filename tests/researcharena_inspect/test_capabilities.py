@@ -64,6 +64,7 @@ from researcharena_inspect.environment.staging import (
 from researcharena_inspect.pins import OUTPUT_MODELS_DATASET, OUTPUT_MODELS_REVISION
 from researcharena_inspect.prompts import list_side_tasks, resume_agent
 from researcharena_inspect.prompts.settings import load_config
+from researcharena_inspect.published import load_index
 from researcharena_inspect.scoring import read_metrics, transfer
 from researcharena_inspect.scoring import submission_store as store
 from researcharena_inspect.upstream import upstream_dir
@@ -889,6 +890,9 @@ def test_replay_refuses_a_missing_snapshot_and_links_out_of_the_run_folder(
     }
 
 
+NO_MODEL_RUN = "utility_finetuning/utility_finetuning__baseline__opencode_norepeat__opencode_glm-5.1__20260506_104012_c17166763"
+
+
 def _listing(run: str, files: dict[str, bytes]) -> dict[str, Any]:
     entries = []
     for rel, data in files.items():
@@ -899,7 +903,8 @@ def _listing(run: str, files: dict[str, bytes]) -> dict[str, Any]:
         else:
             blob = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
             entries.append({"path": rel, "size": len(data), "git_blob": blob})
-    return {"revision": OUTPUT_MODELS_REVISION, "runs": {run.split("/", 1)[1]: entries}}
+    # Keyed as the real listing is: by the published run id, `<setting>/<run>`.
+    return {"revision": OUTPUT_MODELS_REVISION, "runs": {run: entries}}
 
 
 def test_the_pinned_model_listing_matches_the_reader_and_the_hub() -> None:
@@ -918,6 +923,10 @@ def test_the_pinned_model_listing_matches_the_reader_and_the_hub() -> None:
         "20260505_183225",
     ]
     assert all(e["size"] > 0 for entries in runs.values() for e in entries)
+    # Keyed by the published index's run ids: every capabilities run but the one that saved no
+    # model. (A bare run name would find nothing, and every model would replay as "no model".)
+    ids = {r["id"] for r in load_index()["runs"] if r["setting"] == SETTING}
+    assert set(runs) == ids - {NO_MODEL_RUN}
 
 
 def test_a_published_run_replays_with_its_checked_model(
@@ -984,8 +993,8 @@ def test_a_published_run_replays_with_its_checked_model(
 def test_the_published_run_without_a_model_replays_its_workspace_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    run = "utility_finetuning/utility_finetuning__baseline__opencode_norepeat__opencode_glm-5.1__20260506_104012_c17166763"
-    assert run.split("/", 1)[1] not in model_listing()["runs"]
+    run = NO_MODEL_RUN
+    assert run not in model_listing()["runs"]
 
     def no_model_download(**kwargs: Any) -> str:
         if kwargs["repo_id"] == OUTPUT_MODELS_DATASET:

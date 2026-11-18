@@ -355,7 +355,7 @@ def researcharena(
         model_store: post-training settings (`utility_finetuning`): where the submitted
             workspace, `final_model/` first, is copied after scoring so that it can be re-scored
             (`agent=replay`) and monitored (D-172). `auto`: a folder beside the log
-            (`<log>.submissions/<sample>__e<epoch>/`); `none`: not kept; or a folder. The log
+            (`<log>.submissions/<sample>__e<epoch>__<uuid8>/`); `none`: not kept; or a folder. The log
             keeps the workspace without `final_model/` and the store's manifest. The default
             scorer only.
         model_store_max_gb: cap on one stored run folder, in GiB (`final_model/` goes first).
