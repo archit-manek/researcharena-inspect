@@ -177,16 +177,21 @@ async def stop_agent_container(box: SandboxEnvironment) -> None:
     the container then stops and later calls to it raise `SandboxUnavailableError`.
 
     Raises:
-        StagingError: it was still running after `STOP_SECONDS`.
+        StagingError: it was still running, or a call to it had not returned, after
+            `STOP_SECONDS` (one limit for the signal and the checks).
     """
     try:
-        await box.exec(["bash", "-c", "kill -TERM 1"], user="root")
-        for _ in range(STOP_SECONDS):
-            await anyio.sleep(1)
-            await box.exec(["true"], user="root")
+        with anyio.fail_after(STOP_SECONDS):
+            await box.exec(["bash", "-c", "kill -TERM 1"], user="root")
+            while True:
+                await anyio.sleep(1)
+                await box.exec(["true"], user="root")
     except SandboxUnavailableError:
         return
-    raise StagingError(f"the agent's container was still running after {STOP_SECONDS} s")
+    except TimeoutError:
+        raise StagingError(
+            f"the agent's container was still running after {STOP_SECONDS} s"
+        ) from None
 
 
 async def prepare_evaluation(
@@ -247,7 +252,8 @@ async def prepare_evaluation(
     umask = f"umask {UMASK:03o}"
     result = await _exec(
         agent,
-        f"{umask}; python3 {_SCRATCH}/clean_hf_models.py {TASK_DIR} --exclude final_model",
+        # `-s`: not the agent's Python user site, which `HOME=/home/user` would load (D-251).
+        f"{umask}; python3 -s {_SCRATCH}/clean_hf_models.py {TASK_DIR} --exclude final_model",
         user=AGENT_USER,
         env=env,
     )

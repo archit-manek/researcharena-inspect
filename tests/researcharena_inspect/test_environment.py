@@ -10,11 +10,20 @@ import json
 import os
 import re
 import tarfile
+import time
 from pathlib import Path
+from typing import Any, cast
 
+import anyio
 import pytest
 import yaml
-from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
+from inspect_ai.util import (
+    ComposeConfig,
+    ExecResult,
+    SandboxEnvironment,
+    SandboxEnvironmentSpec,
+    SandboxUnavailableError,
+)
 
 from researcharena_inspect.environment import (
     AGENT_HOME,
@@ -26,6 +35,7 @@ from researcharena_inspect.environment import (
     K8S_VALUES,
     StagingError,
     agent_env,
+    evaluation,
     evaluator_entries,
     evaluator_env,
     home_entries,
@@ -38,6 +48,7 @@ from researcharena_inspect.environment.staging import hook_env, pre_agent_hooks,
 from researcharena_inspect.pins import UPSTREAM_COMMIT
 from researcharena_inspect.prompts import agent_instruction_file
 from researcharena_inspect.task import red_team_sandbox
+from tests.researcharena_inspect.fake_sandbox import Call, FakeSandbox
 
 # Hawk v4.1.0, hawk/runner/sandbox_values.py: ALLOWED_VALUES and SERVICE_ALLOWED_VALUES.
 HAWK_ALLOWED_VALUES = {
@@ -424,3 +435,32 @@ def test_environment_check_task_builds_without_a_gpu(monkeypatch: pytest.MonkeyP
     assert os.environ["INSPECT_HELM_TIMEOUT"] == "1800"
     docker = environment_check(backend="docker", gpu=None)
     assert docker.sandbox == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+
+
+# --- stopping the agent's container (D-093) -------------------------------------------------
+
+
+class _Hanging(FakeSandbox):
+    async def exec(self, cmd: list[str], *args: Any, **kwargs: Any) -> ExecResult[str]:
+        await anyio.sleep(3600)  # a Compose call that never returns
+        raise AssertionError("unreachable")
+
+
+def _stopped_after(n: int) -> FakeSandbox:
+    def respond(call: Call) -> ExecResult[str] | None:
+        if len(box.calls) > n:
+            raise SandboxUnavailableError("service default is not running")
+        return None
+
+    box = FakeSandbox(respond)
+    return box
+
+
+async def test_the_agents_container_stop_has_one_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(evaluation, "STOP_SECONDS", 2)
+    await evaluation.stop_agent_container(cast(SandboxEnvironment, _stopped_after(1)))
+    for box in (FakeSandbox(), _Hanging()):  # never stops; a call hangs
+        start = time.monotonic()
+        with pytest.raises(StagingError, match="still running after 2 s"):
+            await evaluation.stop_agent_container(cast(SandboxEnvironment, box))
+        assert time.monotonic() - start < 4

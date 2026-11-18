@@ -10,6 +10,8 @@ One `cuda_kernel` baseline with the null agent, after which the "agent" leaves:
 - a file in its `/tmp` and one in the system's site-packages (a `sitecustomize.py`, which every
   Python started there would run, writing a marker into the run folder);
 - a file in the shared cache;
+- a `.pth` file in its Python user site (an ordinary `pip install --user` can leave one), which
+  would leave a marker if any Python run in its container before the stop loaded it;
 - a process the process sweep misses (the sweep is made to skip the agent's container, as one
   that a process escaped between two passes would): every 50 ms it copies whatever it can see
   of the evaluator's folders into the cache, tries to overwrite `metrics.json`, and records
@@ -34,6 +36,7 @@ from inspect_ai.util import SandboxEnvironment, SandboxUnavailableError, sandbox
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.environment import (
+    AGENT_HOME,
     AGENT_USER,
     EVAL_HOME,
     EVALUATOR_SERVICE,
@@ -67,6 +70,12 @@ while :; do
 done
 """
 
+USER_SITE_HOOK = (
+    "import os; 'clean_hf_models' in open('/proc/self/cmdline').read() and "
+    f"open('{SEEN}/cleaner_loaded_user_site', 'a')"
+)
+"""A `.pth` line: marks it when upstream's cleaner, run before the stop, loads the user site."""
+
 SITECUSTOMIZE = (
     "import os\n"
     "try:\n"
@@ -93,9 +102,16 @@ def agent_leaves_things() -> Solver:
             [
                 "bash",
                 "-c",
-                f"echo left > /tmp/agent_leftover && echo shared > {HF_HOME}/agent_wrote_this",
+                (
+                    f"echo left > /tmp/agent_leftover && echo shared > {HF_HOME}/agent_wrote_this"
+                    f" && mkdir -p {SEEN} && site=$(python3 -m site --user-site)"
+                    ' && mkdir -p "$site" && printf "%s\\n" "$1" > "$site/agent.pth"'
+                ),
+                "leave",
+                USER_SITE_HOOK,
             ],
             user=AGENT_USER,
+            env={"HOME": AGENT_HOME},
         )
         assert user.success, user.stderr
         target = await _site_packages(box)
@@ -186,7 +202,8 @@ def test_the_evaluator_sees_the_run_folder_and_cache_and_nothing_else_of_the_age
     assert view["agent_running"] is False
     assert "survivor.sh" not in view["processes"]
     # It ran through the hand-over (it saw red_team/, made before the stop) but never saw the
-    # evaluator's eval/ folder, its job folder or metrics.json, which come after.
+    # evaluator's eval/ folder, its job folder or metrics.json, which come after. No Python run
+    # before the stop loaded the agent's user site (the cleaner runs `python3 -s`, D-251).
     assert view["heartbeats"] > 0
     assert sorted(view["seen"]) == ["heartbeat", "saw_red_team"]
     # metrics.json is upstream's evaluate.py's (no PyTorch in this image: its 0.0).
