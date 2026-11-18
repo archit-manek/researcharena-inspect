@@ -58,8 +58,46 @@ SIDE_SCORE_FIELDS: dict[tuple[str, str], str] = {
     # side_task_score and the KL in side_task_numeric_value. kl_bf16 is the same in both.
     ("cuda_kernel", "embedded3"): "kl_bf16",
     ("cuda_kernel", "independent"): "side_task_score",
+    # A baseline's evaluate.py writes side_task_score 0.0 (evaluate.py:70-76, side task "none")
+    # and the index carries it; CUDA's evaluator writes none for a baseline.
+    ("inference_optimization", "baseline"): "side_task_score",
+    # D-033: side_task_score is 0/1; the index carries the gaming ratio (Set A/B speed ratio
+    # over the baseline's), which detect_benchmark_gaming.py:235-240,247 writes here.
+    ("inference_optimization", "embedded"): "side_task_numeric_value",
+    # The pinned evaluator's own continuous value, trigger minus control wrong rate
+    # (embedded2/evaluate.py:226-235,242). The index's side_score for these runs is none of the
+    # stored fields (D-039).
+    ("inference_optimization", "embedded2"): "side_task_numeric_value",
+    ("inference_optimization", "independent2"): "side_task_score",
+    ("inference_optimization", "independent"): "side_task_score",
 }
-"""Where the side task's headline value (the index's `side_score`) is in `metrics.json`."""
+"""Where the side task's headline value (the index's `side_score`) is in `metrics.json`, by the
+side task's published name (`published_side_task`)."""
+
+PUBLISHED_SIDE_TASK_NAMES: dict[tuple[str, str], str] = {
+    # D-050: upstream's folder is `embedded3`; every published run, the website index and the
+    # evaluator's own docstring call it `independent2`.
+    ("inference_optimization", "embedded3"): "independent2",
+}
+"""Side tasks whose name in the published runs is not upstream's folder name."""
+
+
+def published_side_task(setting: str, side_task: str) -> str:
+    """The side task's name as the published index has it (`baseline` for `none`)."""
+    if side_task in (BASELINE, "baseline"):
+        return "baseline"
+    return PUBLISHED_SIDE_TASK_NAMES.get((setting, side_task), side_task)
+
+
+def upstream_side_task(setting: str, side_task: str) -> str:
+    """The side task's folder name upstream (`none` for a baseline), from either name."""
+    if side_task in (BASELINE, "baseline"):
+        return BASELINE
+    folders = {
+        (s, published): folder for (s, folder), published in PUBLISHED_SIDE_TASK_NAMES.items()
+    }
+    return folders.get((setting, side_task), side_task)
+
 
 Source = Literal["live", "published"]
 
@@ -105,7 +143,8 @@ class MetricsReading:
     side_task_score: Any
     """`metrics.get("side_task_score", -1)`: results.json's `side_task_score`."""
     side_score: float | None
-    """The side task's headline value (`Row.side_score`); None for a baseline or when absent."""
+    """The side task's headline value (`Row.side_score`); None when absent (for a CUDA
+    baseline, always)."""
     side_metrics: dict[str, Any] = field(default_factory=dict)
     """The fields the success rules read, keyed as in `Row.side_metrics`."""
     evaluation_failed: bool = False
@@ -113,8 +152,8 @@ class MetricsReading:
 
     @property
     def side_task_id(self) -> str:
-        """The side task as the published index names it (`baseline` for `none`)."""
-        return "baseline" if self.side_task == BASELINE else self.side_task
+        """The side task as the published index names it (`baseline` for `none`, D-050)."""
+        return published_side_task(self.setting, self.side_task)
 
 
 def read_metrics(metrics: Mapping[str, Any], setting: str, side_task: str) -> MetricsReading:
@@ -126,9 +165,9 @@ def read_metrics(metrics: Mapping[str, Any], setting: str, side_task: str) -> Me
         side_task: upstream's side task, `none` (or the index's `baseline`) for a baseline.
     """
     side_task = BASELINE if side_task == "baseline" else side_task
-    index_side_task = "baseline" if side_task == BASELINE else side_task
+    index_side_task = published_side_task(setting, side_task)
     side_score: float | None = None
-    path = SIDE_SCORE_FIELDS.get((setting, side_task))
+    path = SIDE_SCORE_FIELDS.get((setting, index_side_task))
     if path is not None:
         value = dotted(metrics, path)
         side_score = (
@@ -177,10 +216,13 @@ __all__ = [
     "FAILED_ERROR",
     "FAILED_METRICS_RECORD",
     "MISSING",
+    "PUBLISHED_SIDE_TASK_NAMES",
     "SIDE_SCORE_FIELDS",
     "MetricsReading",
     "analysis_main_score",
     "dotted",
     "parse_metrics",
+    "published_side_task",
     "read_metrics",
+    "upstream_side_task",
 ]

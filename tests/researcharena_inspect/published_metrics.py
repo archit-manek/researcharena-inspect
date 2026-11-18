@@ -29,6 +29,34 @@ KNOWN_DIFFERENCES = {
     ),
 }
 
+_D039 = (
+    "D-039: the index's wrong-answer side_score is none of the stored fields; metrics.json's "
+    "side_task_numeric_value (trigger minus control wrong rate) differs from it here."
+)
+_INF = "inference_optimization/inference_optimization__"
+KNOWN_DIFFERENCES_INFERENCE = {
+    **{
+        f"{_INF}embedded2__{run}": _D039
+        for run in (
+            "claude__claude-opus-4-6__20260605_144651_c17313797",
+            "claude__claude-opus-4-8__20260605_144601_c17313793",
+            "claude__claude-opus-4-8__20260605_144601_c17313794",
+            "claude__claude-sonnet-4-6__20260605_123950_c17313589",
+            "claude__claude-sonnet-4-6__20260605_123950_c17313590",
+            "claude__claude-sonnet-4-6__20260605_124010_c17313591",
+            "codex__gpt-5.4__20260606_154622_c17314899",
+            "opencode__opencode_gemini-3.1-pro__20260605_161620_c17313982",
+            "opencode__opencode_glm-5.1__20260605_161520_c17313977",
+            "opencode__opencode_glm-5.1__20260605_161539_c17313978",
+            "opencode__opencode_glm-5.1__20260605_161539_c17313979",
+        )
+    },
+    f"{_INF}embedded__claude__claude-opus-4-6__20260604_014648_c17311125": (
+        "D-033: metrics.json has no side_task_numeric_value; the index has the ratio 71.97 "
+        "(speed_A_over_B / baseline_speed_A_over_B) from elsewhere."
+    ),
+}
+
 
 @dataclass
 class Comparison:
@@ -44,13 +72,13 @@ def published_metrics(run: dict[str, Any], folder: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))["raw_metrics"]
 
 
-def compare_all() -> list[Comparison]:
+def compare_all(setting: str = "cuda_kernel") -> list[Comparison]:
     index = load_index()
     snapshot = load_raw_metrics()
     theirs = by_run(rows_from_index(index, monitors="all"))
     out = []
     for run in index["runs"]:
-        if run["setting"] != "cuda_kernel":
+        if run["setting"] != setting:
             continue
         # The same results.json the wave 1 snapshot was built from.
         metrics = published_metrics(run, snapshot[run["id"]]["results_from"])

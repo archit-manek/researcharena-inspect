@@ -153,6 +153,8 @@ class PipelineRun:
     final_snapshot: dict | None = None
     """With `real_evaluate`: `red_team/task_snapshot` after Phase 4 (tree_manifest output),
     the folder the run keeps and an artifact monitor is given."""
+    artifact_files: dict[str, bytes] | None = None
+    """With `real_evaluate`: the run's `artifacts/` folder (the inference evaluator's), by name."""
 
 
 def run_pipeline(
@@ -165,13 +167,17 @@ def run_pipeline(
     agent_work: str | None = None,
     real_evaluate: bool = False,
     name: str | None = None,
+    setting: str = "cuda_kernel",
+    extra_env: dict[str, str] | None = None,
 ) -> PipelineRun:
-    """`pipeline_redteam.sh cuda_kernel <side_task> <redruntime> <agent> test-model 1 test`.
+    """`pipeline_redteam.sh <setting> <side_task> <redruntime> <agent> test-model 1 test`.
 
     Args:
         agent_work: the stand-in agent's work (a sh script run in `task/`); `AGENT_WORK` if None.
         real_evaluate: run upstream's `evaluate.py` and keep the `eval/` folder.
         name: the run folder's name under `work` (default `run_<side_task>_<agent>`).
+        setting: the setting (`cuda_kernel` by default).
+        extra_env: more variables for the pipeline's environment (inherited by `evaluate.py`).
     """
     run_dir = work / (name or f"run_{side_task}_{agent}")
     if run_dir.exists():
@@ -202,18 +208,20 @@ def run_pipeline(
     }
     if agent_work is not None:
         env["AGENT_WORK_SCRIPT"] = inside(run_dir / "agent_work.sh")
+    env.update(extra_env or {})
     cmd = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}"]
     cmd += ["-v", f"{work}:/work", "-v", f"{capture}:/capture"]
     for key, value in env.items():
         cmd += ["-e", f"{key}={value}"]
     pipeline = [f"{inside(arena)}/src/pipeline_redteam.sh"]
-    pipeline += ["cuda_kernel", side_task, redruntime, agent, "test-model", "1", "test"]
+    pipeline += [setting, side_task, redruntime, agent, "test-model", "1", "test"]
     if real_evaluate:
         # The pipeline unchanged, then its eval/ folder copied out (the results stay in the
         # container's /tmp, as in the staging test).
         keep_eval = (
             'bash "$@"; rc=$?; '
             'for d in /tmp/results/*/*/eval; do cp -r "$d" /capture/eval_out; done; '
+            'for d in /tmp/results/*/*/artifacts; do cp -r "$d" /capture/artifacts_out; done; '
             "for d in /tmp/results/*/*/red_team/task_snapshot; do "
             'python3 /work/tree_manifest.py "$d" > /capture/final_snapshot.json; done; '
             "exit $rc"
@@ -229,6 +237,7 @@ def run_pipeline(
 
     cwd = capture / "agent_cwd.txt"
     eval_out = capture / "eval_out"
+    artifacts_out = capture / "artifacts_out"
     return PipelineRun(
         home=load("home.json") or {},
         agent_cwd=cwd.read_text().strip() if cwd.is_file() else "",
@@ -243,4 +252,9 @@ def run_pipeline(
             else None
         ),
         final_snapshot=load("final_snapshot.json"),
+        artifact_files=(
+            {p.name: p.read_bytes() for p in sorted(artifacts_out.iterdir()) if p.is_file()}
+            if artifacts_out.is_dir()
+            else None
+        ),
     )

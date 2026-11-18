@@ -66,6 +66,8 @@ preset = "multi-eval"
 [tool.inspect-evals-lint.per-file-ignores]
 # kernel_bench.py runs in the sandbox image (PyTorch, transformers, upstream's bench.py).
 "src/researcharena_inspect/scoring/kernel_bench.py" = ["external_dependencies"]
+# model_cache_script.py runs in the sandbox image, whose huggingface_hub downloads the model.
+"src/researcharena_inspect/environment/model_cache_script.py" = ["external_dependencies"]
 # The GPU sandbox check is `environment_check` (kind: maintenance), which builds the kernels and
 # runs upstream's evaluate.py in the pinned image. It predates the `<eval>_sandbox_check` name
 # the rule looks for, and a fixture workspace with a known verdict is not settled while the

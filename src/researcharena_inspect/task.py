@@ -10,7 +10,8 @@ re-prompted as upstream re-prompts it, and the workspace is then scored by upstr
   a GPU machine, or Kubernetes such as Hawk with `backend="k8s"`). `sandbox="docker"` without a
   config gives a CPU-only Debian image for tests.
 - `setup`: `environment.stage_agent_workspace`, upstream's staging and pre-agent hooks
-  (`pipeline_redteam.sh:169-309`). `setup=[]` stages nothing.
+  (`pipeline_redteam.sh:169-309`), and for `inference_optimization` the model in the agent's
+  Hugging Face cache (`environment.model_cache`). `setup=[]` stages nothing.
 - `scorer`: `scoring.red_team_scorer`, upstream's Phase 4 (`pipeline_redteam.sh:415-530`).
 
 The agent is Claude Code (as upstream), ReAct, `null` (does nothing, so the staged workspace is
@@ -31,6 +32,11 @@ from inspect_evals_utils.metadata import load_eval_version
 from researcharena_inspect.agents.replay import REPLAY_MODES, ReplayMode, replay_source
 from researcharena_inspect.agents.solver import AGENTS, red_team_agent
 from researcharena_inspect.environment.layout import CONTAINER_ENV
+from researcharena_inspect.environment.model_cache import (
+    MODEL_CACHE_MODES,
+    PROVISIONED_SETTINGS,
+    ModelCacheMode,
+)
 from researcharena_inspect.environment.sandbox import Backend, GpuName, sandbox_spec
 from researcharena_inspect.environment.staging import stage_agent_workspace
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
@@ -168,6 +174,21 @@ def red_team_sandbox(
     return SandboxEnvironmentSpec("docker", compose)
 
 
+def dataset_setting(dataset: MemoryDataset) -> str | None:
+    """The one setting of the dataset's samples; None for samples of several settings.
+
+    Raises:
+        ValueError: samples of several settings, one of which runs a model server (its
+            sandbox differs, `environment.sandbox_spec`).
+    """
+    settings = sorted({str((s.metadata or {}).get("setting")) for s in dataset})
+    if len(settings) == 1:
+        return settings[0]
+    if PROVISIONED_SETTINGS & set(settings):
+        raise ValueError(f"run {sorted(PROVISIONED_SETTINGS)} on their own, not with {settings}")
+    return None
+
+
 @task
 def researcharena(
     setting: str = "cuda_kernel",
@@ -189,6 +210,8 @@ def researcharena(
     replay_mode: ReplayMode = "fresh",
     time_limit: int | None = None,
     sandbox_start_timeout: int | None = None,
+    model_cache: ModelCacheMode = "auto",
+    hf_seed: str | None = None,
     fail_on_no_model_output: bool = True,
     keep_snapshot: bool = True,
     snapshot_max_mb: float = 20,
@@ -229,6 +252,12 @@ def researcharena(
             can cut upstream's evaluation attempts short (D-099). None for no limit.
         sandbox_start_timeout: seconds to wait for a Kubernetes sandbox to start (sets
             `INSPECT_HELM_TIMEOUT`).
+        model_cache: `inference_optimization` only: how the model reaches the agent's
+            Hugging Face cache before the agent starts (upstream's cluster cache already held
+            it; D-130). `auto` copies it from `hf_seed` if that holds it, else downloads it in
+            the sandbox; `seed` and `download` force one; `none` leaves the cache empty.
+        hf_seed: `inference_optimization` with Docker: absolute path on the Docker host of a
+            Hugging Face cache holding the pinned model, mounted read-only into the sandbox.
         fail_on_no_model_output: end the sample with an error, unscored, when `claude_code` or
             `react` got no response from any model call (an outage, a wrong model name, an
             exhausted key), so that it is not counted as a score and Inspect's retries can rerun
@@ -247,6 +276,8 @@ def researcharena(
         raise ValueError("`replay` is given with agent='replay', and only then")
     if replay_mode not in REPLAY_MODES:
         raise ValueError(f"replay_mode must be one of {REPLAY_MODES}, got {replay_mode!r}")
+    if model_cache not in MODEL_CACHE_MODES:
+        raise ValueError(f"model_cache must be one of {MODEL_CACHE_MODES}, got {model_cache!r}")
     if sandbox_start_timeout is not None:
         os.environ["INSPECT_HELM_TIMEOUT"] = str(sandbox_start_timeout)
     dataset = (
@@ -256,7 +287,11 @@ def researcharena(
     )
     return Task(
         dataset=dataset,
-        setup=setup if setup is not None else stage_agent_workspace(agent=STAGED_FAMILY),
+        setup=(
+            setup
+            if setup is not None
+            else stage_agent_workspace(agent=STAGED_FAMILY, model_cache=model_cache)
+        ),
         solver=red_team_agent(
             agent=agent,
             effort=effort,
@@ -275,7 +310,7 @@ def researcharena(
             )
         ),
         sandbox=(
-            sandbox_spec(backend, gpu)
+            sandbox_spec(backend, gpu, setting=dataset_setting(dataset), hf_seed=hf_seed)
             if sandbox is None
             else red_team_sandbox(sandbox, sandbox_config)
         ),
