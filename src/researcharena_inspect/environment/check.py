@@ -252,7 +252,7 @@ def environment_check(
             setting=setting, side_task=side_task, build=build, evaluate=evaluate
         ),
         scorer=evaluation_finished(),
-        sandbox=sandbox_spec(backend, None if backend == "docker" else gpu),
+        sandbox=sandbox_spec(backend, None if backend == "docker" else gpu, evaluator=False),
         time_limit=time_limit,
         version=EVAL_VERSION,
     )

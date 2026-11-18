@@ -260,7 +260,7 @@ def test_local_workspace_links_leaving_it_are_not_followed(tmp_path: Path) -> No
 
 
 def _box(monkeypatch: pytest.MonkeyPatch, fake: FakeSandbox) -> None:
-    monkeypatch.setattr("researcharena_inspect.scoring.snapshot.sandbox_env", lambda: fake)
+    monkeypatch.setattr("researcharena_inspect.scoring.snapshot.evaluator_sandbox", lambda: fake)
     monkeypatch.setattr("researcharena_inspect.environment.staging.sandbox_env", lambda: fake)
 
 

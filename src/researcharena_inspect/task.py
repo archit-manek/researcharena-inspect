@@ -41,7 +41,12 @@ from researcharena_inspect.environment.model_cache import (
     PROVISIONED_SETTINGS,
     ModelCacheMode,
 )
-from researcharena_inspect.environment.sandbox import Backend, GpuName, sandbox_spec
+from researcharena_inspect.environment.sandbox import (
+    Backend,
+    GpuName,
+    sandbox_spec,
+    with_evaluator,
+)
 from researcharena_inspect.environment.services import pipeline_hooks
 from researcharena_inspect.environment.staging import stage_agent_workspace
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
@@ -162,7 +167,11 @@ def replay_dataset(sources: str | list[str]) -> MemoryDataset:
 def red_team_sandbox(
     sandbox: str | SandboxEnvironmentSpec, sandbox_config: str | None
 ) -> SandboxEnvironmentSpec:
-    """A sandbox given by spec, or by type and config; `docker` alone is the CPU-only image."""
+    """A sandbox given by spec, or by type and config.
+
+    `docker` alone is the CPU-only image, with the evaluator's service as every Docker sandbox
+    of the task has (D-093).
+    """
     if isinstance(sandbox, SandboxEnvironmentSpec):
         return sandbox
     if sandbox_config is not None or sandbox != "docker":
@@ -179,7 +188,7 @@ def red_team_sandbox(
             )
         }
     )
-    return SandboxEnvironmentSpec("docker", compose)
+    return SandboxEnvironmentSpec("docker", with_evaluator(compose))
 
 
 def dataset_setting(dataset: MemoryDataset) -> str | None:
@@ -318,7 +327,10 @@ def researcharena(
         gpu: the GPU model to ask Kubernetes for (`l4` or `h100`; `l4` if omitted); must be
             omitted with Docker.
         sandbox: overrides `backend` and `gpu`: a sandbox type (with `sandbox_config`) or a
-            full spec. `docker` without a config is a CPU-only image for tests.
+            full spec. `docker` without a config is a CPU-only image for tests. A Docker
+            sandbox given here needs the evaluator's service (`sandbox.with_evaluator`, D-093)
+            for scoring in a container of its own; without it, scoring runs in the agent's
+            container, as on Kubernetes.
         sandbox_config: sandbox config file for `sandbox`.
         setup: solver(s) run before the agent; the environment's staging if omitted, `[]` for
             none.

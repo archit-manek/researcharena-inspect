@@ -54,9 +54,12 @@ from pathlib import Path
 from typing import Any, Final
 
 import anyio
-from inspect_ai.util import sandbox as sandbox_env
 
-from researcharena_inspect.environment.evaluation import SNAPSHOT_DIR, stop_agent_processes
+from researcharena_inspect.environment.evaluation import (
+    SNAPSHOT_DIR,
+    evaluator_sandbox,
+    stop_agent_processes,
+)
 from researcharena_inspect.environment.layout import EVAL_DIR
 from researcharena_inspect.scoring.transfer import copy_out, list_tree
 
@@ -213,7 +216,7 @@ async def _copy_tree(
     record: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Copy listed entries under `dest_root`; return (copied, left out with reasons)."""
-    box = sandbox_env()
+    box = evaluator_sandbox()
     copied: list[dict[str, Any]] = []
     left_out: list[dict[str, Any]] = []
     for entry in entries:
@@ -263,8 +266,8 @@ async def _keep(
     if await anyio.Path(final).exists() or await anyio.Path(work).exists():
         raise StoreError(f"{final} (or its .incomplete folder) exists; it is never overwritten")
     # Whatever the evaluator left running could still write into the folder.
-    await stop_agent_processes()
-    box = sandbox_env()
+    await stop_agent_processes(evaluator_sandbox())
+    box = evaluator_sandbox()
     entries, truncated = await list_tree(
         box, SNAPSHOT_DIR, max_entries=max_files, max_hash_bytes=max_bytes, first=(MODEL_FOLDER,)
     )

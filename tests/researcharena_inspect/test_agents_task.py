@@ -21,7 +21,7 @@ from researcharena_inspect.agents.claude_code import (
 )
 from researcharena_inspect.agents.react import red_team_react
 from researcharena_inspect.environment.layout import CONTAINER_ENV, TASK_DIR
-from researcharena_inspect.environment.sandbox import COMPOSE_FILE
+from researcharena_inspect.environment.sandbox import sandbox_spec
 from researcharena_inspect.prompts import (
     agent_instruction_file,
     agent_prompt,
@@ -118,7 +118,7 @@ def test_task_builds_for_each_agent(agent: str) -> None:
     assert task.setup is not None
     assert task.scorer is not None
     assert len(task.scorer) == 1
-    assert task.sandbox == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+    assert task.sandbox == sandbox_spec("docker", setting="cuda_kernel")  # with the evaluator
 
 
 def test_task_rejects_unknown_agents() -> None:

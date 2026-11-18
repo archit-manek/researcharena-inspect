@@ -54,7 +54,7 @@ from researcharena_inspect.environment.model_cache import (
     parse_result,
 )
 from researcharena_inspect.environment.model_cache import SCRIPT_PATH as MODEL_CACHE_SCRIPT
-from researcharena_inspect.environment.sandbox import COMPOSE_FILE, VLLM_SHM_SIZE, sandbox_spec
+from researcharena_inspect.environment.sandbox import VLLM_SHM_SIZE, sandbox_spec
 from researcharena_inspect.environment.staging import (
     AGENT_EXTRA_ENV_KEY,
     STAGING_METADATA_KEY,
@@ -226,11 +226,11 @@ def test_the_sandbox_adds_the_hook_service_beside_the_agent() -> None:
     assert aux.image == default.image
     assert aux.deploy is None  # no GPU
     assert aux.volumes is None
-    # The other settings are unchanged: CUDA keeps its file, inference gets no service.
-    assert sandbox_spec("docker", None, setting="cuda_kernel").config == str(COMPOSE_FILE)
-    inference = sandbox_spec("docker", None, setting="inference_optimization").config
-    assert isinstance(inference, ComposeConfig)
-    assert list(inference.services) == ["default"]
+    # The other settings get no hook service, only the evaluator's (D-093).
+    for other in ("cuda_kernel", "inference_optimization"):
+        config = sandbox_spec("docker", None, setting=other).config
+        assert isinstance(config, ComposeConfig)
+        assert list(config.services) == ["default", "evaluator"]
 
 
 def test_kubernetes_is_refused_only_where_the_hook_runs() -> None:
@@ -389,8 +389,7 @@ def test_the_proxy_probe_is_best_effort_and_comes_after_the_copy(
     service, agent = FakeSandbox(service_respond), FakeSandbox()
     service.files[f"{services.SERVICE_ROOT}/evidence.tar"] = archive
     monkeypatch.setattr(services, "_service", lambda name=services.SERVICE_NAME: service)
-    monkeypatch.setattr(services, "sandbox_env", lambda: agent)
-    evidence = asyncio.run(services.copy_hook_evidence())
+    evidence = asyncio.run(services.copy_hook_evidence(cast(SandboxEnvironment, agent)))
     assert evidence.proxy["alive"] == evidence.proxy["listening"] == "unknown"
     assert evidence.captured == 1
     assert [c.cmd[:2] for c in service.calls] == [["bash", "-c"], ["python3", "-c"]]
@@ -824,14 +823,14 @@ def _store(
         '{"captured": true}\n'
     )
 
-    async def no_processes() -> None:
+    async def no_processes(box: object = None) -> None:
         return None
 
     monkeypatch.setattr(transfer, "CHUNK_BYTES", 4096)  # the local box reads 4 KiB at most
     monkeypatch.setattr(store, "SNAPSHOT_DIR", str(tree))
     monkeypatch.setattr(store, "_SCRATCH", str(tmp_path / "piece"))
     monkeypatch.setattr(store, "stop_agent_processes", no_processes)
-    monkeypatch.setattr(store, "sandbox_env", _box)
+    monkeypatch.setattr(store, "evaluator_sandbox", _box)
     monkeypatch.setattr(
         store,
         "RECORD_FOLDERS",

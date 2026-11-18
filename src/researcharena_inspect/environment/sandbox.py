@@ -23,6 +23,14 @@ Docker sandbox is `compose.yaml` with two additions (`vllm_compose`): a larger `
 and, if given, a host Hugging Face cache mounted read-only at `model_cache.SEED_MOUNT` (D-130).
 Kubernetes gets the same values as every other setting; the model is then downloaded at staging.
 
+Every Docker sandbox of the red-team task also gets the evaluator service (`with_evaluator`,
+D-093): a second container of the same image with the same GPU, CPUs, memory and `/dev/shm`,
+which shares two named volumes with the agent's container and nothing else: the Hugging Face
+cache at `HF_HOME` (upstream's per-run overlay) and the run folder at `EVAL_DIR`. Upstream's
+evaluator runs there after the agent's container has been stopped (`environment.evaluation`).
+On Kubernetes each service would be a pod of its own, which cannot share the one GPU and these
+folders, so the evaluator stays in the agent's container there.
+
 A setting with a `pipeline_pre_agent.sh` hook (`utility_finetuning`, `safety_finetuning`) also
 gets the hook service (`with_hook_service`, `environment.services`): a second container of the
 same image that joins the agent container's network namespace and nothing else. Kubernetes
@@ -33,8 +41,14 @@ from pathlib import Path
 from typing import Final, Literal
 
 import yaml
-from inspect_ai.util import ComposeConfig, ComposeService, SandboxEnvironmentSpec
+from inspect_ai.util import (
+    ComposeConfig,
+    ComposeService,
+    ComposeVolumeMount,
+    SandboxEnvironmentSpec,
+)
 
+from researcharena_inspect.environment.layout import EVAL_DIR, EVALUATOR_SERVICE, HF_HOME
 from researcharena_inspect.environment.model_cache import PROVISIONED_SETTINGS, SEED_MOUNT
 from researcharena_inspect.environment.services import SERVICE_NAME, setting_has_hooks
 
@@ -81,6 +95,41 @@ def vllm_compose(hf_seed: str | None = None) -> ComposeConfig:
     return config
 
 
+SHARED_VOLUMES: Final = {"hf_cache": HF_HOME, "eval_dir": EVAL_DIR}
+"""Named volume -> mount point, in the agent's and the evaluator's containers: what upstream's
+two containers share (`pipeline_redteam.sh:373`, `:486-487`). Compose removes them with the
+sample (`down --volumes`), as upstream's overlay and run folder are per run."""
+
+
+def with_evaluator(config: ComposeConfig) -> ComposeConfig:
+    """`config` plus the evaluator's service, sharing `SHARED_VOLUMES` with the default one.
+
+    The service is the default one's image, platform, GPU request, CPUs, memory, `/dev/shm` and
+    network, idle until scoring; it has none of the default one's other mounts (the host seed of
+    D-130 is for staging only). The default service needs `init: true`: scoring stops it with
+    SIGTERM to its init (`evaluation.stop_agent_container`).
+    """
+    default = config.services["default"]
+    # D-250: the run folder is mounted in the agent's container too (empty and root's until
+    # scoring), so that the workspace reaches the evaluator's without a copy through the host.
+    mounts: list[str | ComposeVolumeMount] = [f"{n}:{p}" for n, p in SHARED_VOLUMES.items()]
+    default.volumes = [*(default.volumes or []), *mounts]
+    config.services[EVALUATOR_SERVICE] = ComposeService(
+        image=default.image,
+        platform=default.platform,
+        command=["tail", "-f", "/dev/null"],
+        init=True,
+        cpus=default.cpus,
+        mem_limit=default.mem_limit,
+        shm_size=default.shm_size,
+        deploy=default.deploy,
+        network_mode=default.network_mode,
+        volumes=list(mounts),
+    )
+    config.volumes = {**(config.volumes or {}), **{name: {} for name in SHARED_VOLUMES}}
+    return config
+
+
 def with_hook_service(config: ComposeConfig) -> ComposeConfig:
     """`config` plus the hook service: the default service's image, sharing its network.
 
@@ -101,15 +150,16 @@ def with_hook_service(config: ComposeConfig) -> ComposeConfig:
 
 
 def without_network(config: ComposeConfig) -> ComposeConfig:
-    """`config` with the agent's service on no network (`network_mode: none`), D-185.
+    """`config` with the agent's and the evaluator's services on no network, D-185.
 
     For a scorer check with no agent (`check_offline`): the hook service, if there is one,
-    shares that namespace and has none either. The setting's default stays upstream's open
-    network (D-029).
+    shares the agent's namespace and has none either. The setting's default stays upstream's
+    open network (D-029).
     """
-    default = config.services["default"]
-    default.network_mode = "none"
-    default.networks = None
+    for name in ("default", EVALUATOR_SERVICE):
+        if name in config.services:
+            config.services[name].network_mode = "none"
+            config.services[name].networks = None
     return config
 
 
@@ -119,6 +169,7 @@ def sandbox_spec(
     setting: str | None = None,
     hf_seed: str | None = None,
     offline: bool = False,
+    evaluator: bool = True,
 ) -> SandboxEnvironmentSpec:
     """The Inspect sandbox for the agent.
 
@@ -128,10 +179,13 @@ def sandbox_spec(
             is used, so a model cannot be chosen and must be None.
         setting: the setting the sandbox is for; with Docker, a setting whose servers run vLLM
             gets `vllm_compose`, plus the hook service if the setting has
-            `pipeline_pre_agent.sh` hooks; every other one gets `compose.yaml` unchanged.
+            `pipeline_pre_agent.sh` hooks; every other one gets `compose.yaml`.
         hf_seed: Docker only: a host Hugging Face cache to mount read-only (see `vllm_compose`).
         offline: Docker only, for scorer checks with no agent: the sandbox has no network
             (`without_network`, D-185). Off by default.
+        evaluator: Docker only: add the evaluator's service (`with_evaluator`, D-093), where
+            the red-team scorer runs upstream's evaluator. The diagnostic tasks, which run
+            `evaluate.py` on a staged workspace with no agent, keep one container (False).
 
     Raises:
         ValueError: an unknown backend or GPU, a GPU model with Docker, or `hf_seed` or
@@ -143,10 +197,12 @@ def sandbox_spec(
         hooks = setting is not None and setting_has_hooks(setting)
         if setting in PROVISIONED_SETTINGS or hf_seed is not None:
             config = vllm_compose(hf_seed)
-        elif hooks or offline:
+        elif hooks or offline or evaluator:
             config = _load_compose()
         else:
             return SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+        if evaluator:
+            config = with_evaluator(config)  # D-093
         if hooks:
             config = with_hook_service(config)
         return SandboxEnvironmentSpec("docker", without_network(config) if offline else config)

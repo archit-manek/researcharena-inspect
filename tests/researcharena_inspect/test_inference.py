@@ -32,7 +32,12 @@ from researcharena_inspect.environment.model_cache import (
     parse_result,
 )
 from researcharena_inspect.environment.model_cache import SCRIPT_PATH as MODEL_CACHE_SCRIPT
-from researcharena_inspect.environment.sandbox import COMPOSE_FILE, VLLM_SHM_SIZE, sandbox_spec
+from researcharena_inspect.environment.sandbox import (
+    COMPOSE_FILE,
+    VLLM_SHM_SIZE,
+    sandbox_spec,
+    with_evaluator,
+)
 from researcharena_inspect.environment.staging import stage_workspace
 from researcharena_inspect.prompts import list_side_tasks
 from researcharena_inspect.prompts.settings import load_config
@@ -190,10 +195,12 @@ def test_an_unpinned_model_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------------- sandbox
 
 
-def test_cuda_keeps_the_plain_compose_file() -> None:
+def test_cuda_keeps_the_plain_compose_file_and_the_evaluator() -> None:
     spec = sandbox_spec("docker", setting="cuda_kernel")
-    assert spec.config == str(COMPOSE_FILE)
-    assert sandbox_spec("docker").config == str(COMPOSE_FILE)
+    assert isinstance(spec.config, ComposeConfig)
+    plain = ComposeConfig.model_validate(yaml.safe_load(COMPOSE_FILE.read_text()))
+    assert spec.config.services["default"].shm_size is None
+    assert spec.config == with_evaluator(plain)
 
 
 def test_inference_gets_shared_memory_and_the_seed_mount() -> None:
@@ -201,12 +208,17 @@ def test_inference_gets_shared_memory_and_the_seed_mount() -> None:
     assert isinstance(spec.config, ComposeConfig)
     service = spec.config.services["default"]
     assert service.shm_size == VLLM_SHM_SIZE
-    assert service.volumes == [f"/srv/hf_seed:{SEED_MOUNT}:ro"]
+    shared = ["hf_cache:/home/user/hf_cache", "eval_dir:/mnt/eval"]  # D-093
+    assert service.volumes == [f"/srv/hf_seed:{SEED_MOUNT}:ro", *shared]
     plain = ComposeConfig.model_validate(yaml.safe_load(COMPOSE_FILE.read_text()))
     # Everything else as in compose.yaml: image, GPU, CPUs, memory.
     for field in ("image", "deploy", "cpus", "mem_limit", "platform", "command", "init"):
         assert getattr(service, field) == getattr(plain.services["default"], field), field
-    assert sandbox_spec("docker", setting=SETTING).config.services["default"].volumes is None
+    # The evaluator runs vLLM too: the same /dev/shm, without the seed (staging's only).
+    evaluator = spec.config.services["evaluator"]
+    assert evaluator.shm_size == VLLM_SHM_SIZE
+    assert evaluator.volumes == shared
+    assert sandbox_spec("docker", setting=SETTING).config.services["default"].volumes == shared
 
 
 def test_hf_seed_needs_docker_and_an_absolute_path() -> None:
@@ -226,7 +238,7 @@ def test_the_task_picks_the_sandbox_from_its_setting() -> None:
     ]
     cuda = researcharena(agent="null")
     assert cuda.sandbox is not None
-    assert cuda.sandbox.config == str(COMPOSE_FILE)
+    assert cuda.sandbox == sandbox_spec("docker", setting="cuda_kernel")
     with pytest.raises(ValueError, match="model_cache"):
         researcharena(setting=SETTING, agent="null", model_cache="never")  # type: ignore[arg-type]
 
@@ -409,7 +421,7 @@ def _artifact_box(monkeypatch: pytest.MonkeyPatch, fail_on: int | None) -> FakeS
         return ExecResult(True, 0, f"text of {call.cmd[-3].rsplit('/', 1)[-1]}", "")
 
     fake = FakeSandbox(respond)
-    monkeypatch.setattr("researcharena_inspect.scoring.artifacts.sandbox", lambda: fake)
+    monkeypatch.setattr("researcharena_inspect.scoring.artifacts.evaluator_sandbox", lambda: fake)
     return fake
 
 
@@ -479,5 +491,5 @@ def test_a_huge_log_is_read_only_at_its_ends(tmp_path: Path) -> None:
 def test_no_artifacts_folder_adds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     # CUDA's evaluator writes no artifacts/ folder: nothing is added to its score.
     fake = FakeSandbox(lambda call: ExecResult(False, 3, "", ""))
-    monkeypatch.setattr("researcharena_inspect.scoring.artifacts.sandbox", lambda: fake)
+    monkeypatch.setattr("researcharena_inspect.scoring.artifacts.evaluator_sandbox", lambda: fake)
     assert asyncio.run(read_artifacts()) is None

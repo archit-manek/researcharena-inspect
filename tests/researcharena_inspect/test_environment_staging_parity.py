@@ -7,8 +7,10 @@ objects). After a stand-in for the agent's work, the evaluator's job folder and 
 `task_snapshot` it is given must be equal too.
 
 Same image on both sides (`python:3.12-bookworm`), same fixed `date +%s`, same git identity.
-Differences by design: the port also creates the empty model-cache folder `hf_cache`
-(upstream's is a bind mount), and the port's files belong to uid 1000.
+Differences by design: the port also has the empty model-cache folder `hf_cache` in the agent's
+home and in the evaluator's (upstream's is a bind mount in both containers; the harness's host
+branch has none), and the port's files belong to uid 1000. The port's evaluator's job folder
+and snapshot are read in the evaluator's own container (D-093).
 """
 
 import json
@@ -25,6 +27,7 @@ from researcharena_inspect.environment import (
     AGENT_UID,
     AGENT_USER,
     EVAL_HOME,
+    EVALUATOR_SERVICE,
     SNAPSHOT_DIR,
     TASK_DIR,
     prepare_evaluation,
@@ -35,11 +38,12 @@ from researcharena_inspect.prompts import list_side_tasks
 from tests.researcharena_inspect.upstream_redteam_pipeline import (
     AGENT_WORK,
     DATE_SHIM,
-    IMAGE,
     MANIFEST_SOURCE,
     PipelineRun,
     docker_available,
     export_arena,
+    port_boxes,
+    port_sandbox,
     prepare_work,
     run_pipeline,
 )
@@ -61,14 +65,6 @@ CASES: list[tuple[str, AgentFamily]] = [
 ]
 PORT_ONLY = {"hf_cache"}
 
-COMPOSE = f"""services:
-  default:
-    image: {IMAGE}
-    command: ["tail", "-f", "/dev/null"]
-    init: true
-    network_mode: none
-"""
-
 
 @pytest.fixture(scope="module")
 def oracle(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, str], PipelineRun]:
@@ -81,8 +77,8 @@ def oracle(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, str], Pi
     }
 
 
-async def _manifest(root: str) -> dict[str, Any]:
-    result = await sandbox().exec(
+async def _manifest(root: str, service: str = "default") -> dict[str, Any]:
+    result = await sandbox(service).exec(
         ["python3", "/opt/test/tree_manifest.py", root, "--owner"], user=AGENT_USER
     )
     assert result.success, result.stderr
@@ -94,11 +90,12 @@ def install_test_tools() -> Solver:
     """The fixed `date` and the manifest program, as in upstream's container."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        box = sandbox()
-        await box.write_file("/usr/local/bin/date", DATE_SHIM)
-        await box.write_file("/opt/test/tree_manifest.py", MANIFEST_SOURCE.read_text())
-        await box.write_file("/opt/test/agent_work.sh", AGENT_WORK)
-        assert (await box.exec(["chmod", "-R", "a+rx", "/usr/local/bin/date", "/opt/test"])).success
+        for box in port_boxes():
+            await box.write_file("/usr/local/bin/date", DATE_SHIM)
+            await box.write_file("/opt/test/tree_manifest.py", MANIFEST_SOURCE.read_text())
+            await box.write_file("/opt/test/agent_work.sh", AGENT_WORK)
+            chmod = await box.exec(["chmod", "-R", "a+rx", "/usr/local/bin/date", "/opt/test"])
+            assert chmod.success
         return state
 
     return solve
@@ -115,8 +112,8 @@ def capture_and_prepare_evaluation() -> Solver:
         )
         assert work.success, work.stderr
         command = await prepare_evaluation(SETTING, state.metadata["side_task"])
-        state.metadata["eval_home"] = await _manifest(EVAL_HOME)
-        state.metadata["snapshot"] = await _manifest(SNAPSHOT_DIR)
+        state.metadata["eval_home"] = await _manifest(EVAL_HOME, EVALUATOR_SERVICE)
+        state.metadata["snapshot"] = await _manifest(SNAPSHOT_DIR, EVALUATOR_SERVICE)
         state.metadata["eval_argv"] = command.argv
         state.metadata["eval_user"] = command.user
         state.metadata["eval_cwd"] = command.cwd
@@ -128,8 +125,6 @@ def capture_and_prepare_evaluation() -> Solver:
 @pytest.fixture(scope="module")
 def port(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, str], dict[str, Any]]:
     folder = tmp_path_factory.mktemp("port")
-    compose = folder / "compose.yaml"
-    compose.write_text(COMPOSE)
     # One task per agent family: the setup solver stages that family's launch helpers.
     tasks = [
         Task(
@@ -155,7 +150,7 @@ def port(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, str], dict
                 stage_agent_workspace(agent=family),
                 capture_and_prepare_evaluation(),
             ],
-            sandbox=("docker", str(compose)),
+            sandbox=port_sandbox(),
         )
         for family in FAMILIES
     ]
@@ -234,7 +229,11 @@ def test_evaluator_view_matches_pipeline(
     assert upstream.snapshot is not None, upstream.log
     mine = port[(side_task, agent)]
 
-    assert _without_owner(mine["eval_home"]) == upstream.eval_home["entries"]
+    eval_home = _without_owner(mine["eval_home"])
+    assert set(eval_home) - set(upstream.eval_home["entries"]) == PORT_ONLY
+    for path in PORT_ONLY:
+        del eval_home[path]
+    assert eval_home == upstream.eval_home["entries"]
     assert _without_owner(mine["snapshot"]) == upstream.snapshot["entries"]
     _assert_same_git(mine["snapshot"]["git"], upstream.snapshot["git"])
     for view in ("eval_home", "snapshot"):
@@ -260,7 +259,7 @@ def test_evaluator_view_matches_pipeline(
         else:
             assert a == b
     assert mine["eval_user"] == AGENT_USER
-    assert mine["eval_cwd"] == EVAL_HOME
+    assert mine["eval_cwd"] == EVAL_HOME == "/home/user"  # upstream's --pwd (D-093)
 
 
 def test_cases_cover_every_side_task() -> None:

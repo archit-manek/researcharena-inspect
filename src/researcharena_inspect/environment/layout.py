@@ -10,7 +10,9 @@ Upstream starts the agent with (`src/pipeline_redteam.sh:357-378`, pinned commit
 Apptainer runs the container as the user who started it (a non-root cluster account) with
 that account's passwd entry; `-C` cleans the host environment, so the agent sees only the
 image's environment and the `--env` values. The port runs one container per sample as root
-and the agent as a non-root user `user` (uid 1000) whose home is the staged job folder.
+and the agent as a non-root user `user` (uid 1000) whose home is the staged job folder. On
+Docker, upstream's evaluator gets a second container (`EVALUATOR_SERVICE`) in which the same
+account's home is the evaluator's job folder, as upstream's `--home $EVAL_JOB_DIR:/home/user`.
 """
 
 from typing import Final
@@ -42,9 +44,17 @@ PRE_AGENT_SETUP: Final = f"{AGENT_HOME}/pre_agent_setup.sh"
 EVAL_DIR: Final = "/mnt/eval"
 """The run folder as upstream's evaluator sees it (`--bind $EVAL_DIR:/mnt/eval`, `:487`)."""
 
-EVAL_HOME: Final = "/home/evaluator"
-"""The evaluator's job folder, holding `evaluate.py` (upstream mounts it at `/home/user`
-in a second container, `:488`; here it is a separate folder in the same container)."""
+EVALUATOR_SERVICE: Final = "evaluator"
+"""The Docker sandbox's second service, where upstream's evaluator runs (D-093): the same image
+and GPU, sharing only `HF_HOME` and `EVAL_DIR` with the agent's (`sandbox.with_evaluator`)."""
+
+EVAL_HOME: Final = "/home/user"
+"""The evaluator's job folder, holding `evaluate.py`, and its home, in its own container
+(`--home $EVAL_JOB_DIR:/home/user --pwd /home/user`, `:488-489`); `HF_HOME` is mounted
+inside it, as upstream's overlay is."""
+
+SHARED_EVAL_HOME: Final = "/home/evaluator"
+"""The evaluator's job folder where it shares the agent's container (Kubernetes, D-093)."""
 
 CUDA_VISIBLE_DEVICES: Final = "0"
 
@@ -131,7 +141,7 @@ def agent_env(
     return env
 
 
-def evaluator_env(*, seed: int | None = None) -> dict[str, str]:
+def evaluator_env(*, seed: int | None = None, home: str = EVAL_HOME) -> dict[str, str]:
     """The variables upstream's evaluator container runs `evaluate.py` with (`:479-490`).
 
     `apptainer exec -c` keeps the host job's environment, so upstream's evaluator also sees
@@ -139,10 +149,11 @@ def evaluator_env(*, seed: int | None = None) -> dict[str, str]:
     `independent` side task the `http_proxy` its hook exported, D-174); the port passes only
     what `evaluate.py` can use. `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` are not passed
     (D-092): no setting's scorer calls a paid model (`safety_finetuning`'s judges are local
-    models in the cache, D-215).
+    models in the cache, D-215). `home` is the job folder: `EVAL_HOME` in the evaluator's own
+    container, `SHARED_EVAL_HOME` in the agent's (Kubernetes).
     """
     env = {
-        "HOME": EVAL_HOME,
+        "HOME": home,
         "USER": AGENT_USER,
         "LOGNAME": AGENT_USER,
         "HF_HOME": HF_HOME,

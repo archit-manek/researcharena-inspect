@@ -15,30 +15,44 @@
    and working directory, each under `timeout 3600s`, its output in
    `eval/eval_attempt_<n>.log`; success means `metrics.json` exists (`:469-530`).
 
-`prepare_evaluation` does 1-3 in the sample's sandbox and returns step 4 as an
-`EvaluationCommand` for the scorer to run. Before step 1 it ends every process the agent left
-running (D-093): upstream's agent container, with its own process namespace, is gone by then.
+`prepare_evaluation` does 1-3 and returns step 4 as an `EvaluationCommand` for the scorer to
+run. Before step 1 it ends every process the agent left running: upstream's agent container,
+with its own process namespace, is gone by then.
+
+Where (D-093). On Docker the sandbox has a second service, `EVALUATOR_SERVICE`, of the same
+image with the GPU, which shares only `HF_HOME` and `EVAL_DIR` with the agent's
+(`sandbox.with_evaluator`), as upstream's evaluator shares only the cache overlay and the run
+folder. Steps 1 and 2 run in the agent's container (upstream runs them on the host, which sees
+the agent's `task/`), the snapshot landing on the shared `EVAL_DIR`; then the agent's container
+is stopped, with every process in it, and step 3, step 4 and everything after it run in the
+evaluator's (`evaluator_sandbox`), with the job folder at upstream's `/home/user`. On
+Kubernetes, where a second pod cannot share the GPU and these folders, there is no such
+service: everything runs in the agent's container, the job folder at `SHARED_EVAL_HOME`.
 """
 
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
+import anyio
+from inspect_ai.util import ExecResult, SandboxEnvironment, SandboxUnavailableError
 from inspect_ai.util import sandbox as sandbox_env
 
 from researcharena_inspect.environment.layout import (
     AGENT_USER,
     EVAL_DIR,
     EVAL_HOME,
+    EVALUATOR_SERVICE,
+    SHARED_EVAL_HOME,
     TASK_DIR,
     evaluator_env,
 )
 from researcharena_inspect.environment.staging import (
+    ACCOUNT_SETUP,
     UMASK,
     Entry,
     StagingError,
     _check_side_task,
-    _exec,
     _Tree,
     tar_entries,
 )
@@ -55,8 +69,12 @@ METRICS_PATH = f"{EVAL_DIR}/eval/metrics.json"
 SUBMISSION_DIR = f"{EVAL_DIR}/red_team"
 SNAPSHOT_DIR = f"{SUBMISSION_DIR}/task_snapshot"
 
-# Root-owned scratch folder for upstream's cleaning script; removed afterwards.
+# Root-owned scratch folder for upstream's cleaning script and the evaluator's files; removed
+# afterwards.
 _SCRATCH = "/var/tmp/researcharena-evaluation"
+
+STOP_SECONDS = 60
+"""How long `stop_agent_container` waits for the agent's container to exit."""
 
 # The pipeline's failure record when every attempt fails (`:526-530`).
 FAILED_METRICS = '{"main_task_score": -1, "side_task_score": -1, "error": "evaluation_failed"}'
@@ -118,10 +136,25 @@ def evaluator_entries(setting: str, side_task: str, upstream: Path | None = None
     return [tree.entries[k] for k in sorted(tree.entries)]
 
 
-async def stop_agent_processes() -> None:
+def evaluator_sandbox() -> SandboxEnvironment:
+    """Where upstream's evaluator runs: its own container on Docker, the agent's on Kubernetes."""
+    try:
+        return sandbox_env(EVALUATOR_SERVICE)
+    except ValueError:  # no such service: Kubernetes (D-093)
+        return sandbox_env()
+
+
+async def _exec(
+    box: SandboxEnvironment, cmd: str, *, user: str, env: dict[str, str] | None = None
+) -> ExecResult[str]:
+    return await box.exec(["bash", "-c", cmd], user=user, env=env or {})
+
+
+async def stop_agent_processes(box: SandboxEnvironment | None = None) -> None:
     """End every process of the agent's user, as the end of upstream's agent container does.
 
-    Reads `/proc` rather than calling `pkill`: the image need not have procps.
+    In `box`, the agent's sandbox if None. Reads `/proc` rather than calling `pkill`: the image
+    need not have procps.
     """
     script = (
         f"uid=$(id -u {AGENT_USER}); "
@@ -132,9 +165,33 @@ async def stop_agent_processes() -> None:
         "kill -KILL $pids 2>/dev/null || true; sleep 1; done; "
         f"echo 'processes of {AGENT_USER} are still running' >&2; exit 1"
     )
-    result = await _exec(script, user="root")
+    result = await _exec(box or sandbox_env(), script, user="root")
     if not result.success:
         raise StagingError(f"stopping the agent's processes failed: {result.stderr}")
+
+
+async def stop_agent_container(box: SandboxEnvironment) -> None:
+    """Stop the agent's container with every process in it, as upstream's has exited (D-093).
+
+    SIGTERM to its init (`init: true` in the Compose service), which ends its child and exits;
+    the container then stops and later calls to it raise `SandboxUnavailableError`.
+
+    Raises:
+        StagingError: it was still running, or a call to it had not returned, after
+            `STOP_SECONDS` (one limit for the signal and the checks).
+    """
+    try:
+        with anyio.fail_after(STOP_SECONDS):
+            await box.exec(["bash", "-c", "kill -TERM 1"], user="root")
+            while True:
+                await anyio.sleep(1)
+                await box.exec(["true"], user="root")
+    except SandboxUnavailableError:
+        return
+    except TimeoutError:
+        raise StagingError(
+            f"the agent's container was still running after {STOP_SECONDS} s"
+        ) from None
 
 
 async def prepare_evaluation(
@@ -145,11 +202,13 @@ async def prepare_evaluation(
     seed: int | None = None,
     upstream: Path | None = None,
 ) -> EvaluationCommand:
-    """Prepare the sandbox for upstream's `evaluate.py` as the pipeline does (steps 1-3).
+    """Prepare upstream's `evaluate.py` as the pipeline does (steps 1-3).
 
-    Call once, after the agent has finished. Leaves the agent's (cleaned) `task/` in place,
-    its copy at `/mnt/eval/red_team/task_snapshot`, and the evaluator's job folder at
-    `/home/evaluator`, all owned by the agent's user.
+    Call once, after the agent has finished. Leaves the agent's (cleaned) `task/` in place, its
+    copy at `/mnt/eval/red_team/task_snapshot`, and the evaluator's job folder at `EVAL_HOME` in
+    the evaluator's container, the agent's container stopped (Docker); or at `SHARED_EVAL_HOME`
+    in the agent's container (Kubernetes). All of it belongs to the agent's user, as upstream's
+    belongs to the job's account.
 
     Args:
         setting: setting name.
@@ -159,52 +218,87 @@ async def prepare_evaluation(
         upstream: upstream tree to read; defaults to the pinned checkout.
 
     Returns:
-        The command for step 4. Upstream's scorer looks only at `metrics_path` afterwards.
+        The command for step 4, to run in `evaluator_sandbox()`. Upstream's scorer looks only
+        at `metrics_path` afterwards.
 
     Raises:
         StagingError: a step failed.
     """
     config = task_config if task_config is not None else default_task_config(setting, upstream)
     entries = evaluator_entries(setting, side_task, upstream)
-    await stop_agent_processes()
+    agent, evaluator = sandbox_env(), evaluator_sandbox()
+    separate = evaluator is not agent
+    home = EVAL_HOME if separate else SHARED_EVAL_HOME
+    await stop_agent_processes(agent)
 
-    # Step 1, with upstream's script, as the account that owns the files.
+    # Step 1, with upstream's script, as the account that owns the files, in the agent's
+    # container (D-251). `EVAL_DIR` stays root's until the evaluator's container takes it over:
+    # only `red_team/` is the agent's.
     cleaner = (upstream_root(upstream) / "lib" / "clean_hf_models.py").read_bytes()
     result = await _exec(
-        f"set -eu; rm -rf {_SCRATCH}; install -d -m 755 {_SCRATCH}; "
-        f"install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {EVAL_DIR}; "
-        f"rm -rf {EVAL_HOME}; install -d -m 700 -o {AGENT_USER} -g {AGENT_USER} {EVAL_HOME}",
+        agent,
+        f"set -eu; rm -rf {_SCRATCH}; install -d -m 755 {_SCRATCH} {EVAL_DIR}; "
+        f"install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {SUBMISSION_DIR}",
         user="root",
     )
     if not result.success:
         raise StagingError(f"creating the evaluation folders failed: {result.stderr}")
-    await sandbox_env().write_file(f"{_SCRATCH}/clean_hf_models.py", cleaner)
-    await sandbox_env().write_file(f"{_SCRATCH}/evaluator.tar", tar_entries(entries))
-    result = await _exec(f"chmod -R a+rX {_SCRATCH}", user="root")
+    await agent.write_file(f"{_SCRATCH}/clean_hf_models.py", cleaner)
+    result = await _exec(agent, f"chmod -R a+rX {_SCRATCH}", user="root")
     if not result.success:
         raise StagingError(f"preparing the scratch folder failed: {result.stderr}")
 
-    env = evaluator_env(seed=seed)
+    env = evaluator_env(seed=seed, home=home)
     umask = f"umask {UMASK:03o}"
     result = await _exec(
-        f"{umask}; python3 {_SCRATCH}/clean_hf_models.py {TASK_DIR} --exclude final_model",
+        agent,
+        # `-s`: not the agent's Python user site, which `HOME=/home/user` would load (D-251).
+        f"{umask}; python3 -s {_SCRATCH}/clean_hf_models.py {TASK_DIR} --exclude final_model",
         user=AGENT_USER,
         env=env,
     )
     if not result.success:
         raise StagingError(f"clean_hf_models.py failed: {result.stdout}{result.stderr}")
 
-    # Steps 2 and 3. `tar -m` gives the files the time they are unpacked, as upstream's `cp`.
+    # Step 2. `cp -r` gives the copies the time they are made, as upstream's.
     result = await _exec(
-        f"set -eu; {umask}; mkdir -p {EVAL_DIR}/red_team {EVAL_DIR}/eval; "
-        f"cp -r {TASK_DIR} {SNAPSHOT_DIR}; "
-        f"tar -xpmf {_SCRATCH}/evaluator.tar --no-same-owner -C {EVAL_HOME}",
+        agent, f"set -eu; {umask}; cp -r {TASK_DIR} {SNAPSHOT_DIR}", user=AGENT_USER, env=env
+    )
+    if not result.success:
+        raise StagingError(f"copying the snapshot failed: {result.stderr}")
+    result = await _exec(agent, f"rm -rf {_SCRATCH}", user="root")
+    if not result.success:
+        raise StagingError(f"removing the scratch folder failed: {result.stderr}")
+    if separate:  # D-093: the agent's container ends here, as upstream's has
+        await stop_agent_container(agent)
+
+    # Step 3, in the evaluator's container: the account (as staging makes it), its job folder
+    # (in a fresh one, holding only the cache's mount point) and `EVAL_DIR/eval`.
+    reset = "" if separate else f"rm -rf {home}; "
+    result = await _exec(
+        evaluator,
+        f"set -eu; {ACCOUNT_SETUP}; rm -rf {_SCRATCH}; install -d -m 755 {_SCRATCH}; "
+        f"{reset}install -d -m 700 -o {AGENT_USER} -g {AGENT_USER} {home}; "
+        f"chown {AGENT_USER}:{AGENT_USER} {EVAL_DIR}; "
+        f"install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {EVAL_DIR}/eval",
+        user="root",
+    )
+    if not result.success:
+        raise StagingError(f"creating the evaluator's folders failed: {result.stderr}")
+    await evaluator.write_file(f"{_SCRATCH}/evaluator.tar", tar_entries(entries))
+    result = await _exec(evaluator, f"chmod -R a+rX {_SCRATCH}", user="root")
+    if not result.success:
+        raise StagingError(f"preparing the scratch folder failed: {result.stderr}")
+    # `tar -m` gives the files the time they are unpacked, as upstream's `cp`.
+    result = await _exec(
+        evaluator,
+        f"{umask}; tar -xpmf {_SCRATCH}/evaluator.tar --no-same-owner -C {home}",
         user=AGENT_USER,
         env=env,
     )
     if not result.success:
-        raise StagingError(f"copying the snapshot and the evaluator failed: {result.stderr}")
-    result = await _exec(f"rm -rf {_SCRATCH}", user="root")
+        raise StagingError(f"copying the evaluator's files failed: {result.stderr}")
+    result = await _exec(evaluator, f"rm -rf {_SCRATCH}", user="root")
     if not result.success:
         raise StagingError(f"removing the scratch folder failed: {result.stderr}")
 
@@ -225,7 +319,7 @@ async def prepare_evaluation(
             "--task-config",
             config,
         ],
-        cwd=EVAL_HOME,
+        cwd=home,
         env=env,
         user=AGENT_USER,
         timeout=EVAL_TIMEOUT_SECONDS,
