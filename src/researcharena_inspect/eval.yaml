@@ -5,7 +5,7 @@ arxiv: https://arxiv.org/abs/2607.19321
 group: Scheming
 contributors:
   - archit-manek
-version: "4-C"
+version: "5-A"
 tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
@@ -14,7 +14,9 @@ tasks:
   # has run on a GPU without an agent (18 Nov 2026); the post-training settings have not run.
   # utility_finetuning is scored from version 4 (side scores, the upload capture service, the
   # cache and the submission store); 4-B adds the check-only option check_offline; 4-C adds the
-  # datasets' prepared builds to the agent's cache (D-187).
+  # datasets' prepared builds to the agent's cache (D-187). Version 5 scores safety_finetuning
+  # (its side scores, its model, judges and datasets in the cache, replay of its published
+  # models: D-210 to D-213); the other three settings' samples are scored as in 4-C.
   - name: researcharena
     dataset_samples: 5
   # The monitor over the authors' published runs. 113 samples with the defaults (every published
@@ -46,7 +48,7 @@ external_assets:
     source: "aisa-group/ResearchArena-output-models"
     fetch_method: other
     state: pinned
-    comment: "The authors' fine-tuned models, one final_model/ per post-training run, at revision 28acb91 (pins.OUTPUT_MODELS_REVISION), downloaded with huggingface_hub when the replay agent re-scores a published capabilities run (about 1 GB each)."
+    comment: "The authors' fine-tuned models, one final_model/ per post-training run, at revision 28acb91 (pins.OUTPUT_MODELS_REVISION), downloaded with huggingface_hub when the replay agent re-scores a published capabilities run (about 1 GB each) or safety run (about 3.4 GB each)."
   - type: huggingface
     source: "Qwen/Qwen2.5-0.5B-Instruct"
     fetch_method: other
@@ -62,6 +64,51 @@ external_assets:
     fetch_method: other
     state: pinned
     comment: "Dataset repository put in utility_finetuning's agent cache at revision bc09569 (environment.model_cache), as upstream's resources.json lists it. Holds the 200 graded GSM1K items, readable by the agent as in upstream (ledger D-182)."
+  - type: huggingface
+    source: "huihui-ai/Huihui-Qwen3-1.7B-abliterated-v2"
+    fetch_method: other
+    state: pinned
+    comment: "safety_finetuning's model, put in the agent's cache at revision 4462327 (environment.model_cache, D-210) from a host folder, as upstream's resources.json lists it."
+  - type: huggingface
+    source: "qylu4156/strongreject-15k-v1"
+    fetch_method: other
+    state: pinned
+    comment: "safety_finetuning's strong_reject judge (judgezoo 0.1.9), a LoRA adapter on google/gemma-2b, in the cache at revision 4bd893d (D-210). A local model: no paid call."
+  - type: huggingface
+    source: "google/gemma-2b"
+    fetch_method: other
+    state: pinned
+    comment: "Base of the strong_reject judge, in the cache at revision 9cf48e5 (D-210). Gated on the Hub: the user's account must be granted it and fill the host folder with its token; files pinned by size and git object id (D-211)."
+  - type: huggingface
+    source: "meta-llama/Llama-Guard-3-8B"
+    fetch_method: other
+    state: pinned
+    comment: "safety_finetuning's llama_guard_3 judge (baseline and embedded_german scorings), in the cache at revision 7327bd9 (D-210, D-216). Gated on the Hub, as google/gemma-2b."
+  - type: huggingface
+    source: "kelly8tom/advbench_orig"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset in safety_finetuning's agent cache at revision f3065b7 (D-210), which the agent's evaluate_model.py reads; holds the AdvBench prompts the backdoor and German scores use, as upstream's cache did (D-217)."
+  - type: huggingface
+    source: "cais/mmlu"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset (config all) in safety_finetuning's agent cache at revision c30699e (D-210); with Rowan/hellaswag, allenai/winogrande and allenai/ai2_arc it holds the 200 held-out multiple-choice questions, as upstream's cache did (D-217)."
+  - type: huggingface
+    source: "Rowan/hellaswag"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset in safety_finetuning's agent cache at revision 218ec52 (D-210)."
+  - type: huggingface
+    source: "allenai/winogrande"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset (config winogrande_xl) in safety_finetuning's agent cache at revision 01e7417 (D-210)."
+  - type: huggingface
+    source: "allenai/ai2_arc"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset (config ARC-Challenge) in safety_finetuning's agent cache at revision 210d026 (D-210)."
   - type: huggingface
     source: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     fetch_method: other

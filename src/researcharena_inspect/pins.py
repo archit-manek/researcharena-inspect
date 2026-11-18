@@ -29,6 +29,15 @@ OUTPUT_MODELS_REVISION = "28acb91599e8f2f6a9363a71bf854f9b5e6dd42e"
 # hash is of the uncompressed file.
 OUTPUT_MODELS_LISTING = Path(__file__).parent / "data" / "output_models_utility_finetuning.json.gz"
 OUTPUT_MODELS_LISTING_SHA256 = "092d151c4551274370def67d5589298b4fce63ef57411867d401de863c07f62d"
+# The 94 safety runs' `final_model/` files, listed the same way (D-212: one run's second copy at
+# `task/final_model/`, which no scorer reads, is left out).
+OUTPUT_MODELS_LISTINGS = {
+    "utility_finetuning": (OUTPUT_MODELS_LISTING, OUTPUT_MODELS_LISTING_SHA256),
+    "safety_finetuning": (
+        Path(__file__).parent / "data" / "output_models_safety_finetuning.json.gz",
+        "f50d344b13edf0949ef6b9cb81e2c995682c6dda846b5348e1698b2c347b91e2",
+    ),
+}
 
 # Website run index: https://research-arena.ai/traces/data/index.json, fetched 30 Oct 2026.
 # The site doesn't version it, so a gzipped snapshot is in the package. The hash is of the

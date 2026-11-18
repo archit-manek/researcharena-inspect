@@ -31,6 +31,16 @@ also held the `datasets` library's own Arrow copies (`datasets/`), which depend 
 library's version and are not reproduced. `resources.json`'s second model
 (`HuggingFaceTB/SmolLM3-3B-Base`, 6 GB, for the `smollm3_3b` config) is left out, as D-131
 leaves out the cluster's other models.
+
+`safety_finetuning` (D-210): the agent fine-tunes the task config's model, and the scorer loads two
+judges from the same cache (`evaluation_code/safety_eval.py`, `backdoor_eval.py`, `german_eval.py`
+through `judgezoo` 0.1.9): `strong_reject`, a LoRA adapter (`qylu4156/strongreject-15k-v1`) on
+`google/gemma-2b`, and `llama_guard_3` (`meta-llama/Llama-Guard-3-8B`), so they are in the cache
+for every sample (`SETTING_MODELS`), with the five datasets the agent's `evaluate_model.py` reads,
+with their prepared builds. The two judges' base repositories are gated on the Hub: only a host
+seed filled with the user's token can hold them (`model_cache="seed"`); a download in the sandbox
+has no token and fails. The Hub shows a gated repository's git object ids but not its files'
+SHA-256, so those files are pinned by git object id (D-211).
 """
 
 import json
@@ -55,8 +65,10 @@ SCRIPT_SOURCE: Final = Path(__file__).with_name("model_cache_script.py")
 SCRIPT_PATH: Final = "/var/tmp/researcharena-model-cache.py"
 RESULT_PREFIX: Final = "MODEL_CACHE_RESULT="
 
-# D-130, D-131, D-170: only these settings get a model, and only the task config's one.
-PROVISIONED_SETTINGS: Final = frozenset({"inference_optimization", "utility_finetuning"})
+# D-130, D-131, D-170, D-210: only these settings get a model, and only the task config's one.
+PROVISIONED_SETTINGS: Final = frozenset(
+    {"inference_optimization", "utility_finetuning", "safety_finetuning"}
+)
 """Settings whose agent finds the task config's `model` in its cache before it starts (offline
 servers for inference; the model to fine-tune for capabilities)."""
 
@@ -65,7 +77,11 @@ servers for inference; the model to fine-tune for capabilities)."""
 class PinnedFile:
     path: str
     size: int
-    sha256: str
+    sha256: str = ""
+    git_oid: str = ""
+    """The file's git object id at the pinned commit (of its bytes, or of its LFS pointer); the
+    only hash the Hub shows anonymously for a gated repository's files (D-211). Only for a file
+    pinned without a SHA-256: one digest per file."""
 
 
 @dataclass(frozen=True)
@@ -293,13 +309,291 @@ SCALEAI_GSM1K: Final = PinnedModel(
     ),
 )
 
+# D-210: `safety_finetuning`'s repositories, read from the Hub API on 18 Nov 2026 at the
+# commit each `main` had (every one older than the published runs). Files whose SHA-256 the Hub
+# shows (LFS files of public repositories) are pinned by it; the rest by their git object id
+# (D-211). Every file of a public repository; of the two gated ones,
+# the files `from_pretrained` reads (not `google/gemma-2b`'s 10 GB GGUF copy or
+# `meta-llama/Llama-Guard-3-8B`'s 16 GB `original/` checkpoint, which no code loads). Datasets:
+# the files `load_dataset` reads for `resources.json`'s config, and their prepared builds.
+HUIHUI_QWEN3_1_7B_ABLITERATED_V2: Final = PinnedModel(
+    repo_id="huihui-ai/Huihui-Qwen3-1.7B-abliterated-v2",
+    revision="4462327af009cd482a6b308b67ec9b3a6eeb006a",
+    files=(
+        PinnedFile(".gitattributes", 1570, git_oid="52373fe24473b1aa44333d318f578ae6bf04b49b"),
+        PinnedFile("README.md", 11586, git_oid="ca3bfcb11a897eda8085efeb99aea1d4c07d8164"),
+        PinnedFile("added_tokens.json", 735, git_oid="6f359db5332581e047a7a804174c7f6d8435081c"),
+        PinnedFile("chat_template.jinja", 4200, git_oid="0f9e3230512986d465b068efb22d7646910aa172"),
+        PinnedFile("config.json", 757, git_oid="222a29442a03142ccc4c63c304cc1c711a7aa5e5"),
+        PinnedFile(
+            "generation_config.json", 227, git_oid="a38edb1bd4a863dc848658556ac69adfb12f4acb"
+        ),
+        PinnedFile("merges.txt", 1671853, git_oid="31349551d90c7606f325fe0f11bbb8bd5fa0d7c7"),
+        PinnedFile(
+            "model.safetensors",
+            3441185608,
+            "6f9415d0807356f60a3a75d476b4b9d743acb3a6ae2e455450bf83c38b45e221",
+        ),
+        PinnedFile(
+            "special_tokens_map.json", 644, git_oid="3a7840311c8c90df33c823cdbb06626f920c509e"
+        ),
+        PinnedFile(
+            "tokenizer.json",
+            11422654,
+            "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+        ),
+        PinnedFile(
+            "tokenizer_config.json", 5643, git_oid="993ecf95c284d12b6904a255479d37d9c98090c7"
+        ),
+        PinnedFile("vocab.json", 2776833, git_oid="4783fe10ac3adce15ac8f358ef5462739852c569"),
+    ),
+)
+
+STRONGREJECT_15K_V1: Final = PinnedModel(
+    repo_id="qylu4156/strongreject-15k-v1",
+    revision="4bd893d32390d2cace4f067dc2e3ef5294fd78a2",
+    files=(
+        PinnedFile(".gitattributes", 1570, git_oid="52373fe24473b1aa44333d318f578ae6bf04b49b"),
+        PinnedFile("README.md", 5091, git_oid="985b351e01855383528ad9417124815faaa3abd5"),
+        PinnedFile("adapter_config.json", 686, git_oid="cb921f4fbef93898e37b028df8f307fcb871c04b"),
+        PinnedFile(
+            "adapter_model.safetensors",
+            39256456,
+            "c524d920e55530363bd11aa4baa6af48e0dcbe37a1a74d80e7a67bf8fcca20a3",
+        ),
+        PinnedFile(
+            "special_tokens_map.json", 636, git_oid="8d6368f7e735fbe4781bf6e956b7c6ad0586df80"
+        ),
+        PinnedFile(
+            "tokenizer.json",
+            17518596,
+            "f160d6c8998f9c650c37bc37fea8aa313e2414643093d7d9b177378e1408cea4",
+        ),
+        PinnedFile(
+            "tokenizer.model",
+            4241003,
+            "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2",
+        ),
+        PinnedFile(
+            "tokenizer_config.json", 40018, git_oid="e6ad5837ff7ebd51e1cb2715816fa58f8af5ab8b"
+        ),
+    ),
+)
+
+GEMMA_2B: Final = PinnedModel(
+    repo_id="google/gemma-2b",
+    revision="9cf48e52b224239de00d483ec8eb84fb8d0f3a3a",
+    files=(
+        PinnedFile("config.json", 627, git_oid="583327915e2ce21dbdd7c44a90a9dcb2b02559a1"),
+        PinnedFile(
+            "generation_config.json", 137, git_oid="fb47c6d9115ff49c891f9b4b495a86bfd5b0dc73"
+        ),
+        PinnedFile(
+            "model-00001-of-00002.safetensors",
+            4945242264,
+            git_oid="78890b1c2916f776ffaf1e9622ad847bc80c0f89",
+        ),
+        PinnedFile(
+            "model-00002-of-00002.safetensors",
+            67121608,
+            git_oid="d244017604db264136d954aeef6657dd63716383",
+        ),
+        PinnedFile(
+            "model.safetensors.index.json",
+            13489,
+            git_oid="b8fcee94bedd135b67735027dc217936f7444ab2",
+        ),
+        PinnedFile(
+            "special_tokens_map.json", 636, git_oid="8d6368f7e735fbe4781bf6e956b7c6ad0586df80"
+        ),
+        PinnedFile("tokenizer.json", 17518497, git_oid="e7caf9f7f6e58c4bd4563dc5b2fd2e596f0ad070"),
+        PinnedFile("tokenizer.model", 4241003, git_oid="796efe9ab515c15e146ce7588e6d7b9b8134dbf8"),
+        PinnedFile(
+            "tokenizer_config.json", 33556, git_oid="f23acead1a712a3017d73e25881ac441c71f45ce"
+        ),
+    ),
+)
+
+LLAMA_GUARD_3_8B: Final = PinnedModel(
+    repo_id="meta-llama/Llama-Guard-3-8B",
+    revision="7327bd9f6efbbe6101dc6cc4736302b3cbb6e425",
+    files=(
+        PinnedFile("config.json", 860, git_oid="4527769ce567f5abb20a81c68a053a4cc54910b6"),
+        PinnedFile(
+            "generation_config.json", 160, git_oid="83f8568e8af3ccd3ae1fd744b014d5982f1af6c7"
+        ),
+        PinnedFile(
+            "model-00001-of-00004.safetensors",
+            4976698672,
+            git_oid="95a958d21ea9b8c70bb5f66156a78a7300d69836",
+        ),
+        PinnedFile(
+            "model-00002-of-00004.safetensors",
+            4999802720,
+            git_oid="06825804527ae508f64ad4c7829cc14c04cec105",
+        ),
+        PinnedFile(
+            "model-00003-of-00004.safetensors",
+            4915916176,
+            git_oid="c468980361a7761256b15d2c9874ccf795be56cb",
+        ),
+        PinnedFile(
+            "model-00004-of-00004.safetensors",
+            1168138808,
+            git_oid="7504a0ef48cc50af39ce0f7dc599713fa02b00c0",
+        ),
+        PinnedFile(
+            "model.safetensors.index.json",
+            23950,
+            git_oid="0fd8120f1c6acddc268ebc2583058efaf699a771",
+        ),
+        PinnedFile(
+            "special_tokens_map.json", 73, git_oid="d8cd5076496dbe4be2320312abc10adc43097b81"
+        ),
+        PinnedFile("tokenizer.json", 9084449, git_oid="412806596a1283ba83602123e49ec97da18e7f16"),
+        PinnedFile(
+            "tokenizer_config.json", 51967, git_oid="2c7389eb390e538cee452e5049fb65f440d49d86"
+        ),
+    ),
+)
+
+ADVBENCH_ORIG: Final = PinnedModel(
+    repo_id="kelly8tom/advbench_orig",
+    revision="f3065b735459f07ea2e63c648712dd26361ba4d3",
+    repo_type="dataset",
+    builds=((None, "train", 520),),  # D-187
+    files=(
+        PinnedFile(
+            "advbench_behaviors.jsonl", 113699, git_oid="d78f70bb885568dba4765e55991e99b8f6f3451f"
+        ),
+    ),
+)
+
+CAIS_MMLU: Final = PinnedModel(
+    repo_id="cais/mmlu",
+    revision="c30699e8356da336a370243923dbaf21066bb9fe",
+    repo_type="dataset",
+    builds=(("all", "test", 14042),),  # D-187
+    files=(
+        PinnedFile("README.md", 53221, git_oid="08de94c560ad7420252bff6e4729f1d1683def4f"),
+        PinnedFile(
+            "all/auxiliary_train-00000-of-00001.parquet",
+            47513731,
+            "5126bb35f06c8ab7ac54be3c60ab02cf33adf8b93a79dcfeb071f53cac74efde",
+        ),
+        PinnedFile(
+            "all/dev-00000-of-00001.parquet",
+            76504,
+            "2b19bde1ed8ca6b482fb283abc90e8e0d9d228947029c0b91795d64b28b3bc3f",
+        ),
+        PinnedFile(
+            "all/test-00000-of-00001.parquet",
+            3504718,
+            "74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7",
+        ),
+        PinnedFile(
+            "all/validation-00000-of-00001.parquet",
+            408449,
+            "66cdf0b090ccb657d18d13cd81e31fdc55c3467da9642ffb178653268a97c8ef",
+        ),
+        PinnedFile(
+            "dataset_infos.json", 138338, git_oid="e133c92a3269e646dfd034d5c94ad41a31c7b194"
+        ),
+    ),
+)
+
+HELLASWAG: Final = PinnedModel(
+    repo_id="Rowan/hellaswag",
+    revision="218ec52e09a7e7462a5400043bb9a69a41d06b76",
+    repo_type="dataset",
+    builds=((None, "validation", 10042),),  # D-187
+    files=(
+        PinnedFile("README.md", 7019, git_oid="29f11d90eb3a5b319cfe8ce2a4e78d9f2a1aea3f"),
+        PinnedFile(
+            "data/test-00000-of-00001.parquet",
+            6112397,
+            "e572fd5579bd1768b1985f47234f8bbe29247aca200a778b635bffc637714a41",
+        ),
+        PinnedFile(
+            "data/train-00000-of-00001.parquet",
+            24365524,
+            "cacb12587faa63d7f723a72d61d12bfa94b140446f5a6a0a2e1c6906ab88bf02",
+        ),
+        PinnedFile(
+            "data/validation-00000-of-00001.parquet",
+            6315951,
+            "899813071e1e95efafec90f856e1987d2150fa4d020fc005df6962c259f660cd",
+        ),
+    ),
+)
+
+WINOGRANDE: Final = PinnedModel(
+    repo_id="allenai/winogrande",
+    revision="01e74176c63542e6b0bcb004dcdea22d94fb67b5",
+    repo_type="dataset",
+    builds=(("winogrande_xl", "validation", 1267),),  # D-187
+    files=(
+        PinnedFile("README.md", 11171, git_oid="fcafbbfef43481181b061a2819ff3396f4867cfd"),
+        PinnedFile(
+            "winogrande_xl/test-00000-of-00001.parquet",
+            117656,
+            "100885ec03a67f318d50f8a485cb7e55c9ed88fcefbc565c2907fc98de7f8444",
+        ),
+        PinnedFile(
+            "winogrande_xl/train-00000-of-00001.parquet",
+            2058506,
+            "5d8c38ad12b9a6c88f79b6e00aaf0f40781f93d4f94816f6cff2b67625d67399",
+        ),
+        PinnedFile(
+            "winogrande_xl/validation-00000-of-00001.parquet",
+            85928,
+            "f9d914d1818c0aba98cabdf8af2bc4bd943c462b9c5e7062647e05c2ce3315d1",
+        ),
+    ),
+)
+
+AI2_ARC: Final = PinnedModel(
+    repo_id="allenai/ai2_arc",
+    revision="210d026faf9955653af8916fad021475a3f00453",
+    repo_type="dataset",
+    builds=(("ARC-Challenge", "test", 1172),),  # D-187
+    files=(
+        PinnedFile(
+            "ARC-Challenge/test-00000-of-00001.parquet",
+            203808,
+            "62f03257e737aed263f55c6abf87c7bb0028a44a6bdd2a26eb1279eb42c1d1e9",
+        ),
+        PinnedFile(
+            "ARC-Challenge/train-00000-of-00001.parquet",
+            189909,
+            "e488c1587ffdcfc8443f916c53488a95cd471c5790e0746c6bfe4cecf20962cb",
+        ),
+        PinnedFile(
+            "ARC-Challenge/validation-00000-of-00001.parquet",
+            55743,
+            "395a5c88d1580d69855fbaee9450270578df1ad5af6259771cd0a42c20e99f05",
+        ),
+        PinnedFile("README.md", 9001, git_oid="d50d3b885a6d04fe8cb16cc9947f64dff0ba941a"),
+    ),
+)
+
+
 PINNED_MODELS: Final[dict[str, PinnedModel]] = {
-    m.repo_id: m for m in (QWEN2_5_3B_INSTRUCT, QWEN2_5_0_5B_INSTRUCT)
+    m.repo_id: m
+    for m in (QWEN2_5_3B_INSTRUCT, QWEN2_5_0_5B_INSTRUCT, HUIHUI_QWEN3_1_7B_ABLITERATED_V2)
 }
+
+SETTING_MODELS: Final[dict[str, tuple[PinnedModel, ...]]] = {
+    # D-210: the scorer's two judges and the base of the first, whatever the task config.
+    "safety_finetuning": (STRONGREJECT_15K_V1, GEMMA_2B, LLAMA_GUARD_3_8B),
+}
+"""Models a setting's code loads from the cache besides the task config's."""
 
 SETTING_DATASETS: Final[dict[str, tuple[PinnedModel, ...]]] = {
     # D-170: resources.json's datasets, in the cache whatever the task config.
     "utility_finetuning": (OPENAI_GSM8K, SCALEAI_GSM1K),
+    # D-210: the datasets the agent's evaluate_model.py reads (resources.json lists three more).
+    "safety_finetuning": (ADVBENCH_ORIG, CAIS_MMLU, HELLASWAG, WINOGRANDE, AI2_ARC),
 }
 """Dataset repositories a setting's agent finds in its cache besides the model."""
 
@@ -311,7 +605,8 @@ class ModelCacheError(RuntimeError):
 def models_for(setting: str, task_config: str, upstream: Path | None = None) -> list[PinnedModel]:
     """The pinned repositories a run of this setting and task config needs in its cache.
 
-    The task config's model, then the setting's datasets (`SETTING_DATASETS`).
+    The task config's model, the setting's other models (`SETTING_MODELS`), then its datasets
+    (`SETTING_DATASETS`).
 
     Raises:
         ModelCacheError: the config names a model that has no pin here.
@@ -327,7 +622,7 @@ def models_for(setting: str, task_config: str, upstream: Path | None = None) -> 
                 f"{setting}/{task_config} needs {repo_id}, which has no pinned revision"
             )
         pinned.append(PINNED_MODELS[repo_id])
-    return pinned + list(SETTING_DATASETS.get(setting, ()))
+    return pinned + list(SETTING_MODELS.get(setting, ())) + list(SETTING_DATASETS.get(setting, ()))
 
 
 def parse_result(stdout: str) -> dict[str, Any] | None:
@@ -439,6 +734,13 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "ADVBENCH_ORIG",
+    "AI2_ARC",
+    "CAIS_MMLU",
+    "GEMMA_2B",
+    "HELLASWAG",
+    "HUIHUI_QWEN3_1_7B_ABLITERATED_V2",
+    "LLAMA_GUARD_3_8B",
     "MODEL_CACHE_MODES",
     "OPENAI_GSM8K",
     "PINNED_MODELS",
@@ -448,6 +750,9 @@ __all__ = [
     "SCALEAI_GSM1K",
     "SEED_MOUNT",
     "SETTING_DATASETS",
+    "SETTING_MODELS",
+    "STRONGREJECT_15K_V1",
+    "WINOGRANDE",
     "ModelCacheError",
     "ModelCacheMode",
     "PinnedFile",

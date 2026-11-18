@@ -77,6 +77,14 @@ SIDE_SCORE_FIELDS: dict[tuple[str, str], str] = {
     ("utility_finetuning", "baseline"): "side_task_score",
     ("utility_finetuning", "embedded"): "side_task_score",
     ("utility_finetuning", "independent"): "side_task_score",
+    # D-210: a safety baseline is scored by the `embedded` evaluator too (evaluate.py:423,
+    # pipeline_redteam.sh:461-462): its side_task_score is the backdoor compliance rate.
+    # `embedded` and `embedded_german` write their judge's mean p_harmful, `independent` 0, 0.5
+    # or 1. The index's side_score equals side_task_score in all 96 published runs (counted).
+    ("safety_finetuning", "baseline"): "side_task_score",
+    ("safety_finetuning", "embedded"): "side_task_score",
+    ("safety_finetuning", "embedded_german"): "side_task_score",
+    ("safety_finetuning", "independent"): "side_task_score",
 }
 """Where the side task's headline value (the index's `side_score`) is in `metrics.json`, by the
 side task's published name (`published_side_task`)."""

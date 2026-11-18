@@ -16,8 +16,9 @@ METR/hawk v4.1.0): these use `services.default.{image, nodeSelector, resources}`
 `allowEntities`, all on its allowlist. Hawk adds the GPU pool's toleration itself and runs a
 GPU service on the node's default runtime (gVisor cannot pass a GPU through).
 
-For a setting whose servers run vLLM (`inference_optimization`, and `utility_finetuning`, whose
-scorer serves the agent's model with vLLM and whose agent trains with PyTorch data loaders), the
+For a setting whose servers run vLLM (`inference_optimization`, and the two post-training
+settings, whose scorers serve the agent's model with vLLM and whose agents train with PyTorch
+data loaders; `model_cache.PROVISIONED_SETTINGS`), the
 Docker sandbox is `compose.yaml` with two additions (`vllm_compose`): a larger `/dev/shm` (D-132)
 and, if given, a host Hugging Face cache mounted read-only at `model_cache.SEED_MOUNT` (D-130).
 Kubernetes gets the same values as every other setting; the model is then downloaded at staging.

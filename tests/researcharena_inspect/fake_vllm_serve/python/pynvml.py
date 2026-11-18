@@ -1,9 +1,12 @@
-"""A stand-in for `pynvml` (tests only): one device whose memory is always free, so that upstream's
-`_wait_for_gpu_memory_release` returns at once on a CPU."""
+"""A stand-in for `pynvml` (tests only): one device whose memory is free, so that upstream's
+`_wait_for_gpu_memory_release` returns at once on a CPU. `FAKE_NVML_USED_MIB` makes that much of
+it used, for a server whose memory is never released."""
+
+import os
 
 
 class _Memory:
-    used = 0
+    used = int(os.environ.get("FAKE_NVML_USED_MIB", "0")) * 1024**2
     total = 80 * 1024**3
 
 
