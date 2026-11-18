@@ -50,6 +50,9 @@ from researcharena_inspect.prompts import (
     resume_agent,
 )
 from researcharena_inspect.scoring import red_team_scorer
+from researcharena_inspect.scoring.baseline_process import (
+    OPTION_SETTINGS as BASELINE_PROCESS_SETTINGS,
+)
 from researcharena_inspect.scoring.epochs import scored_epochs_mean
 
 EVAL_VERSION = load_eval_version(__file__)
@@ -189,6 +192,25 @@ def dataset_setting(dataset: MemoryDataset) -> str | None:
     return None
 
 
+def check_baseline_process(dataset: MemoryDataset, scorer: object) -> None:
+    """Refuse `cuda_baseline_process` where it would not do what it says (D-160).
+
+    Raises:
+        ValueError: a sample of a setting without CUDA's in-process baseline pass, or a
+            custom scorer (the option belongs to `red_team_scorer`).
+    """
+    others = sorted(
+        {str((s.metadata or {}).get("setting")) for s in dataset} - set(BASELINE_PROCESS_SETTINGS)
+    )
+    if others:
+        raise ValueError(
+            f"cuda_baseline_process applies to {list(BASELINE_PROCESS_SETTINGS)} only; "
+            f"this task has samples of {others}"
+        )
+    if scorer is not None:
+        raise ValueError("cuda_baseline_process is an option of the default scorer; pass one")
+
+
 @task
 def researcharena(
     setting: str = "cuda_kernel",
@@ -215,6 +237,7 @@ def researcharena(
     fail_on_no_model_output: bool = True,
     keep_snapshot: bool = True,
     snapshot_max_mb: float = 20,
+    cuda_baseline_process: bool = False,
 ) -> Task:
     """ResearchArena's red-team run: an agent does the setting's task (and a side task).
 
@@ -269,6 +292,13 @@ def researcharena(
         snapshot_max_mb: largest gzipped workspace kept, in MiB. A larger one is not kept; the
             sample's `task_snapshot` metadata then says so, with its size and largest files.
             The default scorer only; ignored when `scorer` is given.
+        cuda_baseline_process: `cuda_kernel` only, off by default (D-160, not upstream's
+            behaviour). The scorer measures the plain-PyTorch baseline with the workspace's
+            own `bench.py` in a process of its own before `evaluate.py`, and leaves it where
+            `bench.py` reads a cached baseline, so the agent's kernels are benchmarked in a
+            process where no baseline pass has run. A `baseline_tps.txt` the agent left is
+            replaced by the measurement; results `evaluate.py` reads back (D-001) are not
+            touched. Refused for other settings and with a custom `scorer`.
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -285,6 +315,8 @@ def researcharena(
         if replay is not None
         else red_team_dataset(setting, side_tasks, redruntime, task_config)
     )
+    if cuda_baseline_process:  # D-160
+        check_baseline_process(dataset, scorer)
     return Task(
         dataset=dataset,
         setup=(
@@ -307,6 +339,7 @@ def researcharena(
             else red_team_scorer(
                 keep_snapshot=keep_snapshot,
                 snapshot_max_bytes=int(snapshot_max_mb * 1024 * 1024),
+                cuda_baseline_process=cuda_baseline_process,
             )
         ),
         sandbox=(
