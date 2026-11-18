@@ -9,7 +9,7 @@ The eval's documentation is in [src/researcharena_inspect/README.md](src/researc
 1. [What is in the port](src/researcharena_inspect/README.md#what-is-in-the-port) and [what "the original" means here](src/researcharena_inspect/README.md#what-the-original-means-here): the port follows upstream's code at commit `b922f4b`, reuses its task files, evaluators and templates unchanged, and rewrites only the bash orchestration as Inspect tasks.
 2. [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how): one row per check, with the result and the test or run behind it, and a list of what has not been verified.
 3. [Deviations from upstream](src/researcharena_inspect/README.md#deviations-from-upstream) and [Known limitations](src/researcharena_inspect/README.md#known-limitations).
-4. [How to run it](src/researcharena_inspect/README.md#how-to-run-it), locally or on Hawk, and the paper's setup as a run config: [`run_configs/original.yaml`](src/researcharena_inspect/run_configs/original.yaml).
+4. [How to run it](src/researcharena_inspect/README.md#how-to-run-it), locally or on Hawk, and the paper's setup as run configs, one per setting and one for the monitor: [`run_configs/`](src/researcharena_inspect/run_configs/).
 
 Where things stand (18 Nov 2026): all four settings are ported. Prompts, workspace staging and scorers match upstream's own scripts in the tests, and the paper's tables reproduce from the authors' published runs except for cells listed with their causes. On an NVIDIA H100, the paper's GPU: `cuda_kernel` has sixteen one-hour live runs and published workspaces replayed through the scorer; `inference_optimization` has its scorer checks, with one-hour live runs under way. `utility_finetuning`, `safety_finetuning` and scoring in a container of its own (version 6-A onwards) have run on a CPU only, with stand-ins for the GPU parts; their GPU checks are prepared. The details, and what has not been verified, are in [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how).
 
@@ -45,17 +45,19 @@ src/researcharena_inspect/        the eval
   task.py                         the red-team task, `researcharena`
   monitor/                        the monitor task, `researcharena_monitor`
   agents/                         Claude Code, ReAct, null and replay agents; the re-prompting loop
-  environment/                    the agent's image, sandbox configs, workspace staging, environment_check
-  scoring/                        upstream's evaluate.py as an Inspect scorer; kernel_crash_check
+  environment/                    the agent's image, the containers, workspace staging, the model cache, the hand-over to scoring, environment_check
+  scoring/                        upstream's evaluate.py as an Inspect scorer; what is kept of a run; kernel_crash_check
   prompts/                        the agent and monitor prompts
   transcripts/                    the transcripts a monitor reads, made by upstream's parser
   analysis/                       thresholds, detection rate, AUROC, the paper's tables
-  run_configs/                    original.yaml: the paper's setup as an `inspect eval --run-config` file
+  run_configs/                    the paper's setup as `inspect eval --run-config` files: one per setting, one for the monitor
   pins.py, upstream.py, published.py   pinned versions, the upstream checkout, the published runs
   eval.yaml, README.md            the eval's metadata and documentation
 tests/researcharena_inspect/      its tests
 hawk/                             job files for GL's Hawk cluster, as they ran
-agent_artefacts/trajectory_analysis/inspect_scout/   Scout scanners for the transcript audit
+docs/guide.html                   a guide for reviewers (open in a browser)
+agent_artefacts/                  the validity report, the review summary, and Scout scanners for the transcript analysis (not run yet)
+NOTICE                            attribution for the code adapted from ResearchArena (MIT)
 ```
 
 ## Skills
