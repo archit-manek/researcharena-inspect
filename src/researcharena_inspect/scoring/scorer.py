@@ -73,16 +73,15 @@ from inspect_ai.scorer import (
 )
 from inspect_ai.solver import TaskState
 from inspect_ai.util import SandboxEnvironment
-from inspect_ai.util import sandbox as sandbox_env
 
 from researcharena_inspect.agents.record import AgentRun, red_provider
 from researcharena_inspect.environment.evaluation import (
     EvaluationCommand,
     evaluator_sandbox,
+    evaluator_service,
     prepare_evaluation,
     stop_agent_processes,
 )
-from researcharena_inspect.environment.layout import EVALUATOR_SERVICE
 from researcharena_inspect.environment.services import copy_hook_evidence
 from researcharena_inspect.environment.staging import STAGING_METADATA_KEY
 from researcharena_inspect.scoring.artifacts import METADATA_KEY as ARTIFACTS_KEY
@@ -490,9 +489,7 @@ def red_team_scorer(
                 "evaluator_cwd": run.cwd,
                 "evaluator_user": run.user,
                 # D-093: which service scored; "default" (the agent's) when there is no evaluator.
-                "evaluator_service": (
-                    EVALUATOR_SERVICE if evaluator_sandbox() is not sandbox_env() else "default"
-                ),
+                "evaluator_service": evaluator_service(),
                 "prepare_seconds": run.prepare_seconds,
                 "attempts": [asdict(a) for a in run.attempts],
                 **({ARTIFACTS_KEY: artifacts} if artifacts is not None else {}),
