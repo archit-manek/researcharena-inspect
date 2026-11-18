@@ -236,9 +236,11 @@ def test_mixed_replays_with_inference_are_refused() -> None:
         return MemoryDataset([Sample(input="x", metadata={"setting": s}) for s in settings])
 
     assert dataset_setting(ds(SETTING, SETTING)) == SETTING
-    assert dataset_setting(ds("cuda_kernel", "safety_finetuning")) is None
-    with pytest.raises(ValueError, match="on their own"):
-        dataset_setting(ds("cuda_kernel", SETTING))
+    assert dataset_setting(ds("cuda_kernel", "cuda_kernel")) == "cuda_kernel"
+    # Every setting but CUDA has a model server and its own sandbox (D-210 added the last one).
+    for other in (SETTING, "utility_finetuning", "safety_finetuning"):
+        with pytest.raises(ValueError, match="on their own"):
+            dataset_setting(ds("cuda_kernel", other))
 
 
 # -------------------------------------------------------------------------- reading metrics
