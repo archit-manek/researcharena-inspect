@@ -35,21 +35,27 @@ from typing import Any
 import pytest
 from inspect_ai import eval
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import SandboxEnvironmentSpec, sandbox
+from inspect_ai.util import sandbox
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.agents import write_run_dirs
-from researcharena_inspect.environment import AGENT_USER, TASK_DIR, stage_agent_workspace
+from researcharena_inspect.environment import (
+    AGENT_USER,
+    EVAL_HOME,
+    TASK_DIR,
+    stage_agent_workspace,
+)
 from researcharena_inspect.scoring import FAILED_METRICS_RECORD, red_team_scorer
 from researcharena_inspect.upstream import upstream_dir
 from tests.researcharena_inspect.tree_manifest import describe
 from tests.researcharena_inspect.upstream_redteam_pipeline import (
     AGENT_WORK,
     DATE_SHIM,
-    IMAGE,
     PipelineRun,
     docker_available,
     export_arena,
+    port_boxes,
+    port_sandbox,
     prepare_work,
     run_pipeline,
 )
@@ -98,14 +104,6 @@ CASES: list[tuple[str, str]] = [
     ("agent_work", "none"),
 ]
 
-COMPOSE = f"""services:
-  default:
-    image: {IMAGE}
-    command: ["tail", "-f", "/dev/null"]
-    init: true
-    network_mode: none
-"""
-
 
 def _name(case: str, side_task: str) -> str:
     return f"{case}-{side_task}"
@@ -135,8 +133,9 @@ def fixed_date() -> Solver:
     """Upstream's `date +%s` is fixed (`timer.sh` records it in the snapshot); so is the port's."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        await sandbox().write_file("/usr/local/bin/date", DATE_SHIM)
-        assert (await sandbox().exec(["chmod", "a+rx", "/usr/local/bin/date"])).success
+        for box in port_boxes():
+            await box.write_file("/usr/local/bin/date", DATE_SHIM)
+            assert (await box.exec(["chmod", "a+rx", "/usr/local/bin/date"])).success
         return state
 
     return solve
@@ -158,15 +157,13 @@ def stand_in_agent_work() -> Solver:
 @pytest.fixture(scope="module")
 def port(tmp_path_factory: pytest.TempPathFactory) -> dict[tuple[str, str], dict[str, Any]]:
     folder = tmp_path_factory.mktemp("port")
-    compose = folder / "compose.yaml"
-    compose.write_text(COMPOSE)
     out: dict[tuple[str, str], dict[str, Any]] = {}
     for case in WORK:
         side_tasks = [s for c, s in CASES if c == case]
         task = researcharena(
             side_tasks=side_tasks,
             agent="null",
-            sandbox=SandboxEnvironmentSpec("docker", str(compose)),
+            sandbox=port_sandbox(),
             setup=[fixed_date(), stage_agent_workspace(agent="claude"), stand_in_agent_work()],
             scorer=red_team_scorer(pause_seconds=0),
         )
@@ -196,8 +193,9 @@ _EVAL_DIR = re.compile(r"/tmp/results/test/[^/\s']+")
 
 
 def _normalise_upstream_log(text: str) -> str:
-    """Upstream's host paths as the port's: the evaluator's job folder and the run folder."""
-    return _EVAL_DIR.sub("/mnt/eval", _JOB_DIR.sub("/home/evaluator", text))
+    """Upstream's host paths as the port's (and upstream's container's): the evaluator's job
+    folder and the run folder."""
+    return _EVAL_DIR.sub("/mnt/eval", _JOB_DIR.sub(EVAL_HOME, text))
 
 
 def _attempt_logs(run: PipelineRun) -> list[str]:

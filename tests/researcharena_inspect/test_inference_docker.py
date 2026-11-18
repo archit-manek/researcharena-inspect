@@ -38,6 +38,7 @@ from researcharena_inspect.environment import (
     AGENT_HOME,
     AGENT_USER,
     EVAL_HOME,
+    EVALUATOR_SERVICE,
     SNAPSHOT_DIR,
     TASK_DIR,
     prepare_evaluation,
@@ -46,11 +47,12 @@ from researcharena_inspect.environment import (
 from researcharena_inspect.scoring import red_team_scorer
 from tests.researcharena_inspect.upstream_redteam_pipeline import (
     DATE_SHIM,
-    IMAGE,
     MANIFEST_SOURCE,
     PipelineRun,
     docker_available,
     export_arena,
+    port_boxes,
+    port_sandbox,
     prepare_work,
     run_pipeline,
 )
@@ -65,14 +67,6 @@ pytestmark = [
 SETTING = "inference_optimization"
 SIDE_TASKS = ["none", "embedded", "embedded2", "embedded3", "independent"]
 FAKE_VLLM = Path(__file__).with_name("fake_vllm")
-
-COMPOSE = f"""services:
-  default:
-    image: {IMAGE}
-    command: ["tail", "-f", "/dev/null"]
-    init: true
-    network_mode: none
-"""
 
 # The staging comparison's stand-in work: an edit, a model folder for `clean_hf_models.py` to
 # empty, a `final_model` it must keep, a symlink, a hidden mode-600 file, a cache folder.
@@ -207,8 +201,8 @@ def _pipeline_work(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path
     return work, arena
 
 
-async def _manifest(root: str) -> dict[str, Any]:
-    result = await sandbox().exec(
+async def _manifest(root: str, service: str = "default") -> dict[str, Any]:
+    result = await sandbox(service).exec(
         ["python3", "/opt/test/tree_manifest.py", root, "--owner"], user=AGENT_USER
     )
     assert result.success, result.stderr
@@ -220,16 +214,20 @@ def install_test_tools() -> Solver:
     """The fixed `date`, the manifest program and the stand-in vLLM, as on upstream's side."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        box = sandbox()
-        await box.write_file("/usr/local/bin/date", DATE_SHIM)
-        await box.write_file("/opt/test/tree_manifest.py", MANIFEST_SOURCE.read_text())
-        site = await box.exec(["python3", "-c", "import site; print(site.getsitepackages()[0])"])
-        assert site.success, site.stderr
-        target = f"{site.stdout.strip()}/vllm/__init__.py"
-        await box.write_file(target, (FAKE_VLLM / "vllm" / "__init__.py").read_text())
-        chmod = await box.exec(["chmod", "-R", "a+rX", "/usr/local/bin/date", "/opt/test", target])
-        assert chmod.success, chmod.stderr
-        assert (await box.exec(["chmod", "a+x", "/usr/local/bin/date"])).success
+        for box in port_boxes():
+            await box.write_file("/usr/local/bin/date", DATE_SHIM)
+            await box.write_file("/opt/test/tree_manifest.py", MANIFEST_SOURCE.read_text())
+            site = await box.exec(
+                ["python3", "-c", "import site; print(site.getsitepackages()[0])"]
+            )
+            assert site.success, site.stderr
+            target = f"{site.stdout.strip()}/vllm/__init__.py"
+            await box.write_file(target, (FAKE_VLLM / "vllm" / "__init__.py").read_text())
+            chmod = await box.exec(
+                ["chmod", "-R", "a+rX", "/usr/local/bin/date", "/opt/test", target]
+            )
+            assert chmod.success, chmod.stderr
+            assert (await box.exec(["chmod", "a+x", "/usr/local/bin/date"])).success
         return state
 
     return solve
@@ -244,8 +242,8 @@ def capture_and_prepare_evaluation() -> Solver:
         work = await sandbox().exec(["sh", "-c", STAGING_WORK], user=AGENT_USER, cwd=TASK_DIR)
         assert work.success, work.stderr
         command = await prepare_evaluation(SETTING, state.metadata["side_task"])
-        state.metadata["eval_home"] = await _manifest(EVAL_HOME)
-        state.metadata["snapshot"] = await _manifest(SNAPSHOT_DIR)
+        state.metadata["eval_home"] = await _manifest(EVAL_HOME, EVALUATOR_SERVICE)
+        state.metadata["snapshot"] = await _manifest(SNAPSHOT_DIR, EVALUATOR_SERVICE)
         state.metadata["eval_argv"] = command.argv
         return state
 
@@ -266,9 +264,8 @@ def stand_in_agent_work() -> Solver:
 
 
 def _compose(folder: Path) -> SandboxEnvironmentSpec:
-    compose = folder / "compose.yaml"
-    compose.write_text(COMPOSE)
-    return SandboxEnvironmentSpec("docker", str(compose))
+    """The port's sandbox: the agent's and the evaluator's containers."""
+    return port_sandbox()
 
 
 # ---------------------------------------------------------------------------------- staging
@@ -342,7 +339,11 @@ def test_staging_matches_the_pipeline(
     assert set(home) - set(upstream.home["entries"]) == {"hf_cache"}
     del home["hf_cache"]
     assert home == upstream.home["entries"]
-    assert _without_owner(mine["eval_home"]) == upstream.eval_home["entries"]
+    # The cache's mount point is in the evaluator's home too, as in upstream's container (D-093).
+    eval_home = _without_owner(mine["eval_home"])
+    assert set(eval_home) - set(upstream.eval_home["entries"]) == {"hf_cache"}
+    del eval_home["hf_cache"]
+    assert eval_home == upstream.eval_home["entries"]
     assert _without_owner(mine["snapshot"]) == upstream.snapshot["entries"]
 
     # No hooks in this setting: no git repository and nothing run before the agent.

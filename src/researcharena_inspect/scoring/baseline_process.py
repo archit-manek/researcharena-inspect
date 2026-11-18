@@ -42,12 +42,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from inspect_ai.util import sandbox
-
 from researcharena_inspect.environment.evaluation import (
     EVAL_TIMEOUT_SECONDS,
     SNAPSHOT_DIR,
     EvaluationCommand,
+    evaluator_sandbox,
 )
 from researcharena_inspect.environment.layout import EVAL_DIR
 from researcharena_inspect.prompts.settings import settings_root
@@ -174,7 +173,7 @@ def upstream_sha256(name: str, upstream: Path | None = None) -> str:
 
 
 async def _as_user(command: EvaluationCommand, script: str, *args: str) -> Any:
-    return await sandbox().exec(
+    return await evaluator_sandbox().exec(
         ["bash", "-c", script, "baseline", *args],
         user=command.user,
         env=command.env,
@@ -248,7 +247,7 @@ def process_command(timeout: int = EVAL_TIMEOUT_SECONDS) -> list[str]:
 
 async def measure_baseline(command: EvaluationCommand) -> BaselineProcess:
     """Steps 1-4 of the module docstring, on a prepared sandbox."""
-    box = sandbox()
+    box = evaluator_sandbox()
     record = BaselineProcess(user=command.user, cwd=command.cwd)
     # Step 1: the agent's cached baseline is recorded and removed from the snapshot.
     record.agent_baseline_file = await read_text(command, DEFAULT_CACHE)

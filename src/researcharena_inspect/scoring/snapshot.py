@@ -37,10 +37,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from inspect_ai.util import Store, StoreModel
-from inspect_ai.util import sandbox as sandbox_env
 from pydantic import Field
 
-from researcharena_inspect.environment.evaluation import SNAPSHOT_DIR, stop_agent_processes
+from researcharena_inspect.environment.evaluation import (
+    SNAPSHOT_DIR,
+    evaluator_sandbox,
+    stop_agent_processes,
+)
 from researcharena_inspect.environment.layout import IMAGE_PATH
 
 logger = logging.getLogger(__name__)
@@ -129,7 +132,7 @@ async def keep_task_snapshot(
     finally:
         record.seconds = round(time.monotonic() - start, 2)
         with contextlib.suppress(Exception):
-            await sandbox_env().exec(["rm", "-rf", _SCRATCH], user="root")
+            await evaluator_sandbox().exec(["rm", "-rf", _SCRATCH], user="root")
     if record.status == "too_large":
         logger.warning(
             "task_snapshot not kept: the archive passed %d bytes (%s bytes in %s files)",
@@ -145,8 +148,8 @@ async def _archive_in_sandbox(
 ) -> None:
     # Processes the evaluator may have left (it runs as the agent's user) could still be
     # writing into the folder; upstream's evaluator container is gone at this point.
-    await stop_agent_processes()
-    box = sandbox_env()
+    await stop_agent_processes(evaluator_sandbox())
+    box = evaluator_sandbox()
     prepared = await box.exec(["install", "-d", "-m", "700", _SCRATCH], user="root")
     if not prepared.success:
         raise RuntimeError(f"creating {_SCRATCH} failed: {prepared.stderr}")

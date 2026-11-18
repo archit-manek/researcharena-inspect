@@ -34,6 +34,16 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
+from inspect_ai.util import (
+    ComposeConfig,
+    ComposeService,
+    SandboxEnvironment,
+    SandboxEnvironmentSpec,
+    sandbox,
+)
+
+from researcharena_inspect.environment.layout import EVALUATOR_SERVICE
+from researcharena_inspect.environment.sandbox import with_evaluator, with_hook_service
 from researcharena_inspect.environment.staging import GIT_IDENTITY
 from researcharena_inspect.pins import UPSTREAM_COMMIT
 from researcharena_inspect.upstream import upstream_dir
@@ -97,6 +107,25 @@ exec /usr/local/bin/python3 "$@"
 """
 
 NOOP = "#!/bin/sh\nexit 0\n"
+
+
+def port_sandbox(*, hook_service: bool = False) -> SandboxEnvironmentSpec:
+    """The port's Docker sandbox on this image, with no network: the agent's service and the
+    evaluator's (`sandbox.with_evaluator`, D-093), and the hook service if asked."""
+    config = ComposeConfig(
+        services={
+            "default": ComposeService(
+                image=IMAGE, command=["tail", "-f", "/dev/null"], init=True, network_mode="none"
+            )
+        }
+    )
+    config = with_evaluator(config)
+    return SandboxEnvironmentSpec("docker", with_hook_service(config) if hook_service else config)
+
+
+def port_boxes() -> list[SandboxEnvironment]:
+    """The agent's and the evaluator's containers, for test stand-ins both need (the image's)."""
+    return [sandbox(), sandbox(EVALUATOR_SERVICE)]
 
 
 def docker_available() -> bool:

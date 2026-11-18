@@ -444,7 +444,8 @@ def kernel_crash_check(
         ),
         solver=run_crash_check(repeats=repeats, time_limit=time_limit),
         scorer=crash_check_summary(),
-        sandbox=sandbox or sandbox_spec(backend, None if backend == "docker" else gpu),
+        sandbox=sandbox
+        or sandbox_spec(backend, None if backend == "docker" else gpu, evaluator=False),
         time_limit=time_limit,
         version=EVAL_VERSION,
     )

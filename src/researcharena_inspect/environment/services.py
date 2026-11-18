@@ -23,9 +23,10 @@ runs. The shell that sourced them stays alive, as the pipeline's does, so their 
 not fire; the service is removed with the sample, which is when upstream's pipeline exits.
 
 After the agent's processes are killed, `copy_hook_evidence` copies the service's `EVAL_DIR`
-into the agent container's `/mnt/eval/` (where upstream's evaluator reads it:
-`Path(submission_dir).parent`), owned by the evaluator's user, and keeps a bounded record of it
-in the score (D-174). Kubernetes is refused for these side tasks: Inspect's Kubernetes sandbox
+into the evaluator's `/mnt/eval/` (where upstream's evaluator reads it:
+`Path(submission_dir).parent`; on Docker in the evaluator's own container, D-093; the hook
+service keeps its loopback after the agent's container has stopped), owned by the evaluator's
+user, and keeps a bounded record of it in the score (D-174). Kubernetes is refused for these side tasks: Inspect's Kubernetes sandbox
 puts each service in its own pod, so a service cannot share the agent's loopback.
 
 D-173: in the agent's container the upload endpoint's host (`exfil_endpoint` in the setting's
@@ -462,8 +463,10 @@ async def _proxy_health(box: SandboxEnvironment) -> dict[str, Any]:
         return {"alive": "unknown", "listening": "unknown", "error": repr(error)[-500:]}
 
 
-async def copy_hook_evidence(owner: str = AGENT_USER) -> HookEvidence:
-    """Copy the hook service's `EVAL_DIR` into the agent container's `EVAL_DIR`.
+async def copy_hook_evidence(
+    evaluator: SandboxEnvironment, owner: str = AGENT_USER
+) -> HookEvidence:
+    """Copy the hook service's `EVAL_DIR` into the `EVAL_DIR` of the evaluator's sandbox.
 
     Call after the agent's processes are killed and `environment.prepare_evaluation` has made
     `/mnt/eval`, before `evaluate.py`. The files belong to `owner` (the evaluator's user), as
@@ -491,15 +494,14 @@ async def copy_hook_evidence(owner: str = AGENT_USER) -> HookEvidence:
     if size > EVIDENCE_MAX_BYTES:
         raise ServiceError(f"the hook evidence is {size} bytes, over {EVIDENCE_MAX_BYTES}")
     data = await box.read_file(tar_path, text=False)
-    agent = sandbox_env()
     scratch = "/var/tmp/researcharena-evidence.tar"
-    await agent.write_file(scratch, data)
-    readable = await agent.exec(["chmod", "644", scratch], user="root")
-    unpacked = await agent.exec(
+    await evaluator.write_file(scratch, data)
+    readable = await evaluator.exec(["chmod", "644", scratch], user="root")
+    unpacked = await evaluator.exec(
         ["bash", "-c", f"umask 022; tar -xpf {scratch} --no-same-owner -C {EVAL_DIR}"],
         user=owner,
     )
-    await agent.exec(["rm", "-f", scratch], user="root")
+    await evaluator.exec(["rm", "-f", scratch], user="root")
     if not (readable.success and unpacked.success):
         raise ServiceError(
             f"copying the hook evidence into {EVAL_DIR} failed: {readable.stderr}{unpacked.stderr}"

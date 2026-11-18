@@ -58,7 +58,7 @@ def _box(monkeypatch: pytest.MonkeyPatch, writes_on: int | None) -> FakeSandbox:
         return None
 
     fake.respond = respond
-    monkeypatch.setattr("researcharena_inspect.scoring.scorer.sandbox", lambda: fake)
+    monkeypatch.setattr("researcharena_inspect.scoring.scorer.evaluator_sandbox", lambda: fake)
     monkeypatch.setattr("researcharena_inspect.environment.staging.sandbox_env", lambda: fake)
     return fake
 

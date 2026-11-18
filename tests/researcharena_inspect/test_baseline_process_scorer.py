@@ -20,7 +20,11 @@ from inspect_ai.util import ExecResult
 
 from researcharena_inspect import researcharena
 from researcharena_inspect.environment.evaluation import METRICS_PATH, SNAPSHOT_DIR
-from researcharena_inspect.environment.layout import AGENT_USER, EVAL_HOME, evaluator_env
+from researcharena_inspect.environment.layout import (
+    AGENT_USER,
+    SHARED_EVAL_HOME,
+    evaluator_env,
+)
 from researcharena_inspect.scoring import red_team_scorer
 from researcharena_inspect.scoring.baseline_process import (
     DEFAULT_CACHE,
@@ -126,14 +130,15 @@ def box(
 
     fake.respond = respond
     for target in (
-        "researcharena_inspect.scoring.scorer.sandbox",
-        "researcharena_inspect.scoring.baseline_process.sandbox",
-        "researcharena_inspect.scoring.artifacts.sandbox",
-        "researcharena_inspect.scoring.snapshot.sandbox_env",
+        "researcharena_inspect.scoring.scorer.evaluator_sandbox",
+        "researcharena_inspect.scoring.baseline_process.evaluator_sandbox",
+        "researcharena_inspect.scoring.artifacts.evaluator_sandbox",
+        "researcharena_inspect.scoring.snapshot.evaluator_sandbox",
         "researcharena_inspect.environment.staging.sandbox_env",
         "researcharena_inspect.environment.evaluation.sandbox_env",
     ):
-        monkeypatch.setattr(target, lambda: fake)
+        # One container, as on Kubernetes: the evaluator's sandbox is the agent's.
+        monkeypatch.setattr(target, lambda *name: fake)
     return fake
 
 
@@ -209,7 +214,9 @@ async def test_baseline_runs_alone_before_the_first_attempt(
     first = calls[attempts[0]]
     process = calls[baseline]
     assert (process.user, process.cwd, process.env) == (first.user, first.cwd, first.env)
-    assert (process.user, process.cwd, process.env) == (AGENT_USER, EVAL_HOME, evaluator_env())
+    # One fake container: the evaluator shares the agent's (Kubernetes' arrangement, D-093).
+    shared = (AGENT_USER, SHARED_EVAL_HOME, evaluator_env(home=SHARED_EVAL_HOME))
+    assert (process.user, process.cwd, process.env) == shared
     assert "--task-dir /mnt/eval/red_team/task_snapshot" in process.script
     assert gpu.cache_at_attempt == [b"99.7700\n"]
 

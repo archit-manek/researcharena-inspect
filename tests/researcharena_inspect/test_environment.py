@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from inspect_ai.util import SandboxEnvironmentSpec
+from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
 
 from researcharena_inspect.environment import (
     AGENT_HOME,
@@ -37,6 +37,7 @@ from researcharena_inspect.environment.evaluation import EvaluationCommand, eval
 from researcharena_inspect.environment.staging import hook_env, pre_agent_hooks, tar_entries
 from researcharena_inspect.pins import UPSTREAM_COMMIT
 from researcharena_inspect.prompts import agent_instruction_file
+from researcharena_inspect.task import red_team_sandbox
 
 # Hawk v4.1.0, hawk/runner/sandbox_values.py: ALLOWED_VALUES and SERVICE_ALLOWED_VALUES.
 HAWK_ALLOWED_VALUES = {
@@ -141,13 +142,37 @@ def test_compose_asks_for_one_gpu() -> None:
 def test_sandbox_spec() -> None:
     assert sandbox_spec() == SandboxEnvironmentSpec("k8s", str(K8S_VALUES["l4"]))
     assert sandbox_spec("k8s", "h100") == SandboxEnvironmentSpec("k8s", str(K8S_VALUES["h100"]))
-    assert sandbox_spec("docker") == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+    # The diagnostic tasks' Docker sandbox is the file; the red-team task's adds the evaluator.
+    assert sandbox_spec("docker", evaluator=False) == SandboxEnvironmentSpec(
+        "docker", str(COMPOSE_FILE)
+    )
     with pytest.raises(ValueError, match="machine's GPU"):
         sandbox_spec("docker", "l4")
     with pytest.raises(ValueError, match="unknown GPU"):
         sandbox_spec("k8s", "t4")  # pyright: ignore[reportArgumentType]
     with pytest.raises(ValueError, match="unknown sandbox backend"):
         sandbox_spec("podman")  # pyright: ignore[reportArgumentType]
+
+
+def test_every_docker_sandbox_of_the_task_gets_the_evaluator() -> None:
+    # D-093: a second service of the same image and GPU, sharing only the cache and the run
+    # folder with the agent's, as upstream's evaluator container shares only those two.
+    config = sandbox_spec("docker", setting="cuda_kernel").config
+    assert isinstance(config, ComposeConfig)
+    default, evaluator = config.services["default"], config.services["evaluator"]
+    for field in ("image", "platform", "deploy", "cpus", "mem_limit", "shm_size", "network_mode"):
+        assert getattr(evaluator, field) == getattr(default, field), field
+    assert default.init is evaluator.init is True  # the scorer stops the agent's through init
+    shared = ["hf_cache:/home/user/hf_cache", "eval_dir:/mnt/eval"]
+    assert default.volumes == evaluator.volumes == shared
+    assert config.volumes == {"hf_cache": {}, "eval_dir": {}}
+    offline = sandbox_spec("docker", setting="utility_finetuning", offline=True).config
+    assert isinstance(offline, ComposeConfig)
+    assert offline.services["evaluator"].network_mode == "none"
+    assert offline.services["aux"].network_mode == "service:default"
+    cpu = red_team_sandbox("docker", None).config
+    assert isinstance(cpu, ComposeConfig)
+    assert list(cpu.services) == ["default", "evaluator"]
 
 
 def test_package_data_ships_the_configs() -> None:

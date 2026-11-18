@@ -97,6 +97,15 @@ GIT_IDENTITY = {
     "GIT_COMMITTER_EMAIL": f"{AGENT_USER}@localhost",
 }
 
+# The agent's account (Apptainer gives the container the cluster account's entry); also made in
+# the evaluator's container, where upstream's evaluator runs as the same account (D-093).
+ACCOUNT_SETUP = (
+    f"if ! id -u {AGENT_USER} >/dev/null 2>&1; then "
+    f"groupadd --gid {AGENT_UID} {AGENT_USER} && "
+    f"useradd --uid {AGENT_UID} --gid {AGENT_UID} --home-dir {AGENT_HOME} "
+    f"--no-create-home --shell /bin/bash {AGENT_USER}; fi"
+)
+
 # Root-owned scratch folder for upstream's scripts while they run; removed before the agent
 # starts. Outside the agent's home and /tmp, as upstream's ARENA_ROOT is outside the container.
 STAGING_DIR = "/var/tmp/researcharena-staging"
@@ -379,14 +388,10 @@ async def stage_workspace(
     )
     entries = home_entries(setting, side_task, agent=agent, prompt=prompt, upstream=upstream)
 
-    # The agent's account (Apptainer gives the container the cluster account's entry).
+    # The agent's account, and an empty home but for the cache's mount point (Docker, D-093).
     setup = (
-        "set -eu; "
-        f"if ! id -u {AGENT_USER} >/dev/null 2>&1; then "
-        f"groupadd --gid {AGENT_UID} {AGENT_USER} && "
-        f"useradd --uid {AGENT_UID} --gid {AGENT_UID} --home-dir {AGENT_HOME} "
-        f"--no-create-home --shell /bin/bash {AGENT_USER}; fi; "
-        f'if [ -e {AGENT_HOME} ] && [ -n "$(ls -A {AGENT_HOME})" ]; then '
+        f"set -eu; {ACCOUNT_SETUP}; "
+        f'if [ -e {AGENT_HOME} ] && [ -n "$(ls -A {AGENT_HOME} | grep -vx hf_cache)" ]; then '
         f"echo '{AGENT_HOME} is not empty' >&2; exit 1; fi; "
         f"install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {AGENT_HOME}; "
         f"rm -rf {STAGING_DIR}; install -d -m 755 {STAGING_DIR}"
@@ -532,6 +537,7 @@ def describe(entries: list[Entry]) -> list[tuple[str, int, int]]:
 
 
 __all__ = [
+    "ACCOUNT_SETUP",
     "AGENT_EXTRA_ENV_KEY",
     "AGENT_VISIBLE_HINTS",
     "GIT_IDENTITY",

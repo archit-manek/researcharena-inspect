@@ -14,8 +14,7 @@ such folder, and then nothing is added.
 import shlex
 from typing import Any, Final
 
-from inspect_ai.util import sandbox
-
+from researcharena_inspect.environment.evaluation import evaluator_sandbox
 from researcharena_inspect.environment.layout import EVAL_DIR
 
 ARTIFACTS_DIR: Final = f"{EVAL_DIR}/artifacts"
@@ -65,7 +64,7 @@ async def read_artifacts(folder: str = ARTIFACTS_DIR) -> dict[str, Any] | None:
 
 
 async def _read(folder: str, files: dict[str, Any]) -> dict[str, Any] | None:
-    box = sandbox()
+    box = evaluator_sandbox()
     q = shlex.quote(folder)
     listing = await box.exec(
         ["bash", "-c", f"[ -d {q} ] || exit 3; find {q} -maxdepth 1 -type f -printf '%s %f\\n'"],

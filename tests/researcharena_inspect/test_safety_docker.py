@@ -37,6 +37,7 @@ from researcharena_inspect.environment import (
     AGENT_HOME,
     AGENT_USER,
     EVAL_HOME,
+    EVALUATOR_SERVICE,
     SNAPSHOT_DIR,
     TASK_DIR,
     prepare_evaluation,
@@ -47,6 +48,7 @@ from researcharena_inspect.scoring import red_team_scorer
 from researcharena_inspect.task import STAGED_FAMILY
 from tests.researcharena_inspect.test_capabilities_docker import (
     ENDPOINT,
+    EVALUATOR_PATHS,
     REACH,
     SCAN,
     STAGING_WORK,
@@ -65,6 +67,7 @@ from tests.researcharena_inspect.test_safety import EXPECTED, _graded, stand_in_
 from tests.researcharena_inspect.upstream_redteam_pipeline import (
     PipelineRun,
     docker_available,
+    port_boxes,
     run_pipeline,
 )
 
@@ -124,9 +127,10 @@ def write_answers() -> Solver:
     """The stand-in model's replies (they hold graded items: never in the scanned sandbox)."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        await sandbox().write_file(PORT_ANSWERS, json.dumps(stand_in_answers()))
-        result = await sandbox().exec(["chmod", "a+r", PORT_ANSWERS])
-        assert result.success, result.stderr
+        for box in port_boxes():  # read by the stand-in server, in the evaluator's container
+            await box.write_file(PORT_ANSWERS, json.dumps(stand_in_answers()))
+            result = await box.exec(["chmod", "a+r", PORT_ANSWERS])
+            assert result.success, result.stderr
         return state
 
     return solve
@@ -167,9 +171,9 @@ def capture_view_and_prepare_evaluation() -> Solver:
         )
         assert scan.success, scan.stderr
         state.metadata["scan"] = json.loads(scan.stdout)
-        present = await box.exec(
-            ["bash", "-c", f"for p in {EVAL_HOME} /mnt/eval; do [ -e $p ] && echo $p; done; true"]
-        )
+        # As the agent's user: no evaluator folder, and the run folder's mount point (D-093)
+        # empty and not writable.
+        present = await box.exec(["bash", "-c", EVALUATOR_PATHS], user=AGENT_USER)
         state.metadata["evaluator_paths"] = present.stdout.split()
         env = _agent_env(state)
         if "http_proxy" in env:
@@ -190,8 +194,8 @@ def capture_view_and_prepare_evaluation() -> Solver:
         )
         assert work.success, work.stderr
         command = await prepare_evaluation(SETTING, state.metadata["side_task"])
-        state.metadata["eval_home"] = await _manifest(EVAL_HOME)
-        state.metadata["snapshot"] = await _manifest(SNAPSHOT_DIR)
+        state.metadata["eval_home"] = await _manifest(EVAL_HOME, EVALUATOR_SERVICE)
+        state.metadata["snapshot"] = await _manifest(SNAPSHOT_DIR, EVALUATOR_SERVICE)
         state.metadata["eval_argv"] = command.argv
         return state
 
@@ -245,7 +249,11 @@ def test_staging_matches_the_pipeline(
     assert set(home) - set(upstream.home["entries"]) == {"hf_cache"}
     del home["hf_cache"]
     assert home == upstream.home["entries"]
-    assert _without_owner(mine["eval_home"]) == upstream.eval_home["entries"]
+    # The cache's mount point is in the evaluator's home too, as in upstream's container (D-093).
+    eval_home = _without_owner(mine["eval_home"])
+    assert set(eval_home) - set(upstream.eval_home["entries"]) == {"hf_cache"}
+    del eval_home["hf_cache"]
+    assert eval_home == upstream.eval_home["entries"]
     assert _without_owner(mine["snapshot"]) == upstream.snapshot["entries"]
     assert mine["eval_argv"][-4:] == ["--side-task", side_task, "--task-config", "qwen3_1.7b"]
     assert mine["environment_staging"]["hooks"] == []  # no pre_agent.sh in this setting
