@@ -66,9 +66,9 @@ from researcharena_inspect.agents.react import red_team_react
 from researcharena_inspect.agents.record import AgentRun
 from researcharena_inspect.agents.replay import (
     ReplayMode,
+    replay_input,
     replay_source,
     replay_workspace,
-    snapshot_files,
 )
 from researcharena_inspect.environment.layout import (
     AGENT_USER,
@@ -76,6 +76,8 @@ from researcharena_inspect.environment.layout import (
     TASK_DIR,
     agent_env,
 )
+from researcharena_inspect.environment.services import replay_hook_evidence
+from researcharena_inspect.environment.staging import agent_extra_env
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL, UPSTREAM_COMMIT
 from researcharena_inspect.upstream import upstream_dir
 
@@ -437,6 +439,9 @@ def red_team_agent(
             agent_config=model.name,
             agent_effort=resolved,
         )
+        # `AGENT_EXTRA_ENV_ARGS` from the run's `pipeline_pre_agent.sh` hooks (:371), such as the
+        # upload-capture proxy's `http_proxy`; none for most runs (`environment.services`).
+        env.update(agent_extra_env(meta))
         no_model_exit: int | None = None
 
         def model_agent() -> Agent:
@@ -473,9 +478,17 @@ def red_team_agent(
                     no_model_exit = done.returncode
                 elif agent == "replay":
                     source = replay_source(meta["replay"])
-                    files = await anyio.to_thread.run_sync(snapshot_files, source)
-                    replayed = await replay_workspace(files, replay_mode, source.setting)
-                    run.replay = {"source": source.source, **replayed}
+                    given = await anyio.to_thread.run_sync(replay_input, source)
+                    replayed = await replay_workspace(given.files, replay_mode, source.setting)
+                    run.replay = {
+                        "source": source.source,
+                        **replayed,
+                        "provenance": given.provenance,
+                    }
+                    if given.evidence is not None:  # D-172: a stored run's capture log
+                        run.replay["evidence"] = await replay_hook_evidence(
+                            given.evidence, has_hooks=bool(agent_extra_env(meta))
+                        )
                     no_model_exit = 0
                 else:
                     if agent == "claude_code":

@@ -83,22 +83,35 @@ class TaskSnapshot(StoreModel):
     """The largest files, as [path, size]."""
     skipped: list[list[str]] = Field(default_factory=list)
     """Entries not archived, as [path, kind]: FIFOs, sockets, device files."""
+    excluded: list[list[Any]] = Field(default_factory=list)
+    """Top-level folders left out on purpose, as [name, files, bytes]: a post-training run's
+    `final_model/`, which the submission store keeps instead (D-172)."""
     seconds: float | None = None
     """How long the step took, from stopping leftover processes to reading the archive."""
     error: str | None = None
 
     def summary(self) -> dict[str, Any]:
         """The record without the archive, for the sample's metadata."""
-        return {k: v for k, v in self.model_dump().items() if k != "archive"}
+        # `excluded` only when something was left out, so other settings' records are unchanged.
+        return {
+            k: v
+            for k, v in self.model_dump().items()
+            if k != "archive" and not (k == "excluded" and not v)
+        }
 
 
 async def keep_task_snapshot(
-    store: Store, max_bytes: int = DEFAULT_MAX_BYTES, *, enabled: bool = True
+    store: Store,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    *,
+    enabled: bool = True,
+    exclude: tuple[str, ...] = (),
 ) -> TaskSnapshot:
     """Archive the sandbox's `task_snapshot` into `store` (the sample's) and return the record.
 
     Call after the last evaluation attempt. Never raises for a failure of its own: the record's
-    `status` is then `error`, with the reason, so the score is never lost to it.
+    `status` is then `error`, with the reason, so the score is never lost to it. Top-level names
+    in `exclude` are left out of the archive and counted in `excluded`.
     """
     record = TaskSnapshot(store=store)
     record.max_bytes = max_bytes
@@ -107,7 +120,7 @@ async def keep_task_snapshot(
         return record
     start = time.monotonic()
     try:
-        await _archive_in_sandbox(record, max_bytes)
+        await _archive_in_sandbox(record, max_bytes, exclude)
     except Exception as e:  # the score must not depend on the snapshot
         record.status = "error"
         record.error = f"{type(e).__name__}: {e}"
@@ -127,7 +140,9 @@ async def keep_task_snapshot(
     return record
 
 
-async def _archive_in_sandbox(record: TaskSnapshot, max_bytes: int) -> None:
+async def _archive_in_sandbox(
+    record: TaskSnapshot, max_bytes: int, exclude: tuple[str, ...] = ()
+) -> None:
     # Processes the evaluator may have left (it runs as the agent's user) could still be
     # writing into the folder; upstream's evaluator container is gone at this point.
     await stop_agent_processes()
@@ -138,8 +153,11 @@ async def _archive_in_sandbox(record: TaskSnapshot, max_bytes: int) -> None:
     script = f"{_SCRATCH}/snapshot_archive.py"
     output = f"{_SCRATCH}/{SNAPSHOT_NAME}.tar.gz"
     await box.write_file(script, ARCHIVE_SCRIPT.read_bytes())
+    argv = ["python3", script, SNAPSHOT_DIR, SNAPSHOT_NAME, output, str(max_bytes)]
+    if exclude:
+        argv.append(",".join(exclude))
     result = await box.exec(
-        ["python3", script, SNAPSHOT_DIR, SNAPSHOT_NAME, output, str(max_bytes)],
+        argv,
         user="root",
         env={"PATH": IMAGE_PATH},
         timeout=_ARCHIVE_TIMEOUT,
@@ -150,7 +168,7 @@ async def _archive_in_sandbox(record: TaskSnapshot, max_bytes: int) -> None:
             f"the archiver printed nothing (exit {result.returncode}): {result.stderr}"
         )
     report = json.loads(lines[-1])
-    for key in ("files", "dirs", "links", "raw_bytes", "largest", "skipped"):
+    for key in ("files", "dirs", "links", "raw_bytes", "largest", "skipped", "excluded"):
         if key in report:
             setattr(record, key, report[key])
     record.status = report["status"]

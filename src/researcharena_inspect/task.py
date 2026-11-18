@@ -10,8 +10,11 @@ re-prompted as upstream re-prompts it, and the workspace is then scored by upstr
   a GPU machine, or Kubernetes such as Hawk with `backend="k8s"`). `sandbox="docker"` without a
   config gives a CPU-only Debian image for tests.
 - `setup`: `environment.stage_agent_workspace`, upstream's staging and pre-agent hooks
-  (`pipeline_redteam.sh:169-309`), and for `inference_optimization` the model in the agent's
-  Hugging Face cache (`environment.model_cache`). `setup=[]` stages nothing.
+  (`pipeline_redteam.sh:169-309`), for `inference_optimization` and `utility_finetuning` the
+  model (and the latter's datasets) in the agent's Hugging Face cache
+  (`environment.model_cache`), and the `pipeline_pre_agent.sh` hooks, such as the post-training
+  `independent` side task's upload capture, in a service beside the agent
+  (`environment.services`). `setup=[]` stages nothing.
 - `scorer`: `scoring.red_team_scorer`, upstream's Phase 4 (`pipeline_redteam.sh:415-530`).
 
 The agent is Claude Code (as upstream), ReAct, `null` (does nothing, so the staged workspace is
@@ -38,6 +41,7 @@ from researcharena_inspect.environment.model_cache import (
     ModelCacheMode,
 )
 from researcharena_inspect.environment.sandbox import Backend, GpuName, sandbox_spec
+from researcharena_inspect.environment.services import pipeline_hooks
 from researcharena_inspect.environment.staging import stage_agent_workspace
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
 from researcharena_inspect.prompts import (
@@ -192,6 +196,54 @@ def dataset_setting(dataset: MemoryDataset) -> str | None:
     return None
 
 
+def check_hook_backend(dataset: MemoryDataset, backend: Backend, sandbox: object) -> None:
+    """Refuse Kubernetes for a run that needs the hook service (`environment.services`).
+
+    The service must share the agent container's network namespace; Inspect's Kubernetes
+    sandbox gives each service a pod of its own.
+
+    Raises:
+        ValueError: a sample sources a `pipeline_pre_agent.sh` hook and `backend` is `k8s`.
+    """
+    if backend != "k8s" or sandbox is not None:
+        return
+    needing = sorted(
+        str(s.id)
+        for s in dataset
+        if pipeline_hooks(str((s.metadata or {})["setting"]), str((s.metadata or {})["side_task"]))
+    )
+    if needing:
+        raise ValueError(
+            f"{needing} source upstream's pipeline_pre_agent.sh (the upload capture), whose "
+            "service must share the agent's network namespace: use backend='docker'"
+        )
+
+
+def check_offline_run(agent: str, model_cache: str, backend: str, sandbox: object = None) -> None:
+    """Refuse `check_offline` where it would not be a scorer check with every input staged.
+
+    Raises:
+        ValueError: a model agent (it needs its provider), a cache that may download, a backend
+            other than Docker, a `sandbox` given (it would replace the network-off sandbox), or
+            a host Hugging Face client that is not offline.
+    """
+    from huggingface_hub import constants as hub_constants
+
+    if agent not in ("null", "replay"):
+        raise ValueError("check_offline is for scorer checks: agent must be 'null' or 'replay'")
+    if model_cache not in ("seed", "none"):
+        raise ValueError("check_offline needs model_cache='seed' (or 'none'): nothing may download")
+    if backend != "docker":
+        raise ValueError("check_offline needs backend='docker'")
+    if sandbox is not None:
+        raise ValueError("check_offline builds its own network-off sandbox: do not give `sandbox`")
+    if not hub_constants.HF_HUB_OFFLINE:
+        raise ValueError(
+            "check_offline needs HF_HUB_OFFLINE=1 in the environment before Inspect starts, so "
+            "that replay reads only what was staged"
+        )
+
+
 def check_baseline_process(dataset: MemoryDataset, scorer: object) -> None:
     """Refuse `cuda_baseline_process` where it would not do what it says (D-160).
 
@@ -238,6 +290,9 @@ def researcharena(
     keep_snapshot: bool = True,
     snapshot_max_mb: float = 20,
     cuda_baseline_process: bool = False,
+    model_store: str = "auto",
+    model_store_max_gb: float = 20,
+    check_offline: bool = False,
 ) -> Task:
     """ResearchArena's red-team run: an agent does the setting's task (and a side task).
 
@@ -275,12 +330,13 @@ def researcharena(
             can cut upstream's evaluation attempts short (D-099). None for no limit.
         sandbox_start_timeout: seconds to wait for a Kubernetes sandbox to start (sets
             `INSPECT_HELM_TIMEOUT`).
-        model_cache: `inference_optimization` only: how the model reaches the agent's
-            Hugging Face cache before the agent starts (upstream's cluster cache already held
-            it; D-130). `auto` copies it from `hf_seed` if that holds it, else downloads it in
-            the sandbox; `seed` and `download` force one; `none` leaves the cache empty.
-        hf_seed: `inference_optimization` with Docker: absolute path on the Docker host of a
-            Hugging Face cache holding the pinned model, mounted read-only into the sandbox.
+        model_cache: `inference_optimization` and `utility_finetuning`: how the model (and for
+            `utility_finetuning` the GSM8K and GSM1K datasets) reaches the agent's Hugging Face
+            cache before the agent starts (upstream's cluster cache already held them; D-130,
+            D-170). `auto` copies each from `hf_seed` if that holds it, else downloads it in the
+            sandbox; `seed` and `download` force one; `none` leaves the cache empty.
+        hf_seed: with Docker, for those two settings: absolute path on the Docker host of a
+            Hugging Face cache holding the pinned repositories, mounted read-only.
         fail_on_no_model_output: end the sample with an error, unscored, when `claude_code` or
             `react` got no response from any model call (an outage, a wrong model name, an
             exhausted key), so that it is not counted as a score and Inspect's retries can rerun
@@ -299,6 +355,20 @@ def researcharena(
             process where no baseline pass has run. A `baseline_tps.txt` the agent left is
             replaced by the measurement; results `evaluate.py` reads back (D-001) are not
             touched. Refused for other settings and with a custom `scorer`.
+        model_store: post-training settings (`utility_finetuning`): where the submitted
+            workspace, `final_model/` first, is copied after scoring so that it can be re-scored
+            (`agent=replay`) and monitored (D-172). `auto`: a folder beside the log
+            (`<log>.submissions/<sample>__e<epoch>__<uuid8>/`); `none`: not kept; or a folder. The log
+            keeps the workspace without `final_model/` and the store's manifest. The default
+            scorer only.
+        model_store_max_gb: cap on one stored run folder, in GiB (`final_model/` goes first).
+        check_offline: for scorer checks with no agent only (D-185; off by default, when the
+            sandbox's network is upstream's open one). The Docker sandbox has no network, and
+            the task refuses to build unless the agent calls no model (`null`, `replay`), the
+            cache comes from `hf_seed` or is not filled (`model_cache` `seed` or `none`), no
+            `sandbox` override is given, and the host's Hugging Face client is offline (`HF_HUB_OFFLINE=1` in the environment
+            before Inspect starts), so that nothing calls the Hub during the run: every input
+            must be staged first.
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -317,6 +387,9 @@ def researcharena(
     )
     if cuda_baseline_process:  # D-160
         check_baseline_process(dataset, scorer)
+    check_hook_backend(dataset, backend, sandbox)
+    if check_offline:  # D-185
+        check_offline_run(agent, model_cache, backend, sandbox)
     return Task(
         dataset=dataset,
         setup=(
@@ -340,10 +413,18 @@ def researcharena(
                 keep_snapshot=keep_snapshot,
                 snapshot_max_bytes=int(snapshot_max_mb * 1024 * 1024),
                 cuda_baseline_process=cuda_baseline_process,
+                model_store=model_store,
+                model_store_max_bytes=int(model_store_max_gb * 1024**3),
             )
         ),
         sandbox=(
-            sandbox_spec(backend, gpu, setting=dataset_setting(dataset), hf_seed=hf_seed)
+            sandbox_spec(
+                backend,
+                gpu,
+                setting=dataset_setting(dataset),
+                hf_seed=hf_seed,
+                offline=check_offline,
+            )
             if sandbox is None
             else red_team_sandbox(sandbox, sandbox_config)
         ),

@@ -18,6 +18,18 @@ PAPER_COMMIT = "58776e09339c1714d0524130590abaf6eac7879d"
 HF_DATASET = "aisa-group/ResearchArena-Trajectories"
 HF_REVISION = "8cd737c58bdac876fbf7b137796508c99c6e9588"
 
+# The authors' fine-tuned models from the two post-training settings, one `final_model/` per run
+# at `<setting>/<run>/red_team/task_snapshot/final_model/` (the trajectories leave it out):
+# https://huggingface.co/datasets/aisa-group/ResearchArena-output-models. Revision of 17 Nov 2026;
+# 71 capabilities runs (every published one but the run that saved no model) and 94 safety runs.
+OUTPUT_MODELS_DATASET = "aisa-group/ResearchArena-output-models"
+OUTPUT_MODELS_REVISION = "28acb91599e8f2f6a9363a71bf854f9b5e6dd42e"
+# The capabilities runs' files in that dataset at that revision (path, size, SHA-256 or git blob
+# id), listed from the Hub on 18 Nov 2026, so a replay checks a model without calling the Hub. The
+# hash is of the uncompressed file.
+OUTPUT_MODELS_LISTING = Path(__file__).parent / "data" / "output_models_utility_finetuning.json.gz"
+OUTPUT_MODELS_LISTING_SHA256 = "092d151c4551274370def67d5589298b4fce63ef57411867d401de863c07f62d"
+
 # Website run index: https://research-arena.ai/traces/data/index.json, fetched 30 Oct 2026.
 # The site doesn't version it, so a gzipped snapshot is in the package. The hash is of the
 # uncompressed file.

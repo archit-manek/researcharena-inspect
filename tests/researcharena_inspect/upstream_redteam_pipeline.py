@@ -155,6 +155,9 @@ class PipelineRun:
     the folder the run keeps and an artifact monitor is given."""
     artifact_files: dict[str, bytes] | None = None
     """With `real_evaluate`: the run's `artifacts/` folder (the inference evaluator's), by name."""
+    evidence_files: dict[str, bytes] | None = None
+    """With `real_evaluate`: the run's `side_task_evidence/` folder (the upload capture's), by
+    path relative to it."""
 
 
 def run_pipeline(
@@ -169,6 +172,7 @@ def run_pipeline(
     name: str | None = None,
     setting: str = "cuda_kernel",
     extra_env: dict[str, str] | None = None,
+    network: str | None = None,
 ) -> PipelineRun:
     """`pipeline_redteam.sh <setting> <side_task> <redruntime> <agent> test-model 1 test`.
 
@@ -178,6 +182,7 @@ def run_pipeline(
         name: the run folder's name under `work` (default `run_<side_task>_<agent>`).
         setting: the setting (`cuda_kernel` by default).
         extra_env: more variables for the pipeline's environment (inherited by `evaluate.py`).
+        network: `docker run --network` (for example `none`); Docker's default if None.
     """
     run_dir = work / (name or f"run_{side_task}_{agent}")
     if run_dir.exists():
@@ -210,6 +215,8 @@ def run_pipeline(
         env["AGENT_WORK_SCRIPT"] = inside(run_dir / "agent_work.sh")
     env.update(extra_env or {})
     cmd = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}"]
+    if network is not None:
+        cmd += ["--network", network]
     cmd += ["-v", f"{work}:/work", "-v", f"{capture}:/capture"]
     for key, value in env.items():
         cmd += ["-e", f"{key}={value}"]
@@ -222,6 +229,8 @@ def run_pipeline(
             'bash "$@"; rc=$?; '
             'for d in /tmp/results/*/*/eval; do cp -r "$d" /capture/eval_out; done; '
             'for d in /tmp/results/*/*/artifacts; do cp -r "$d" /capture/artifacts_out; done; '
+            "for d in /tmp/results/*/*/side_task_evidence; do "
+            'cp -r "$d" /capture/evidence_out; done; '
             "for d in /tmp/results/*/*/red_team/task_snapshot; do "
             'python3 /work/tree_manifest.py "$d" > /capture/final_snapshot.json; done; '
             "exit $rc"
@@ -238,6 +247,7 @@ def run_pipeline(
     cwd = capture / "agent_cwd.txt"
     eval_out = capture / "eval_out"
     artifacts_out = capture / "artifacts_out"
+    evidence_out = capture / "evidence_out"
     return PipelineRun(
         home=load("home.json") or {},
         agent_cwd=cwd.read_text().strip() if cwd.is_file() else "",
@@ -255,6 +265,15 @@ def run_pipeline(
         artifact_files=(
             {p.name: p.read_bytes() for p in sorted(artifacts_out.iterdir()) if p.is_file()}
             if artifacts_out.is_dir()
+            else None
+        ),
+        evidence_files=(
+            {
+                p.relative_to(evidence_out).as_posix(): p.read_bytes()
+                for p in sorted(evidence_out.rglob("*"))
+                if p.is_file()
+            }
+            if evidence_out.is_dir()
             else None
         ),
     )

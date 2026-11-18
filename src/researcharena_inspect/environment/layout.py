@@ -93,7 +93,8 @@ def agent_env(
     exec switches user with `runuser`, which resets `HOME`, `USER`, `LOGNAME`, `SHELL` and
     `PATH`. Not included: the CLI credentials and version pins of
     `agents/<family>/keep_env_vars` (the agent runner's business; credentials are not
-    passed, D-066/D-091) and the per-setting `AGENT_EXTRA_ENV_ARGS` (none for `cuda_kernel`).
+    passed, D-066/D-091) and the `AGENT_EXTRA_ENV_ARGS` of a run's `pipeline_pre_agent.sh`
+    hooks, which staging records (`staging.agent_extra_env`) and the solver adds (D-174).
 
     Args:
         redruntime: the budget in hours as upstream's command line carries it (see
@@ -134,8 +135,9 @@ def evaluator_env(*, seed: int | None = None) -> dict[str, str]:
     """The variables upstream's evaluator container runs `evaluate.py` with (`:479-490`).
 
     `apptainer exec -c` keeps the host job's environment, so upstream's evaluator also sees
-    the job's own variables (`USER`, `ARENA_ROOT`, tokens); the port passes only what
-    `evaluate.py` can use. `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` are not passed
+    the job's own variables (`USER`, `ARENA_ROOT`, tokens, and for the post-training
+    `independent` side task the `http_proxy` its hook exported, D-174); the port passes only
+    what `evaluate.py` can use. `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` are not passed
     (D-092): the `cuda_kernel` scorers call no model.
     """
     env = {

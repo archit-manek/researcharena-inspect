@@ -69,3 +69,23 @@ def test_side_task_evaluators_on_published_snapshots_match(tmp_path: Path) -> No
     assert [c.run_id for c in checks if c.sample_error] == []
     assert {c.run_id: c.differences for c in checks if c.differences} == {}
     assert {c.our_kl_ratio for c in checks if c.side_task == "embedded"} == {None}
+
+
+@pytest.mark.slow
+@pytest.mark.huggingface
+@pytest.mark.dataset_download
+def test_reading_published_capabilities_metrics_matches_the_analysis() -> None:
+    # All 72 capabilities runs: the scorer's reader gives the index's main and side scores, and
+    # the paper's success rules the same verdicts. A baseline's side score is the contamination
+    # gap its `embedded` evaluator writes (pipeline_redteam.sh:461-462).
+    from researcharena_inspect.analysis.rules import main_task_success, side_task_success
+
+    comparisons = compare_all("utility_finetuning")
+    assert len(comparisons) == 72
+    assert [c.run_id for c in comparisons if c.differences] == []
+    for c in comparisons:
+        assert c.ours.side_task_class == c.theirs.side_task_class
+        assert main_task_success(c.ours) == main_task_success(c.theirs)
+        assert side_task_success(c.ours) == side_task_success(c.theirs)
+    no_model = [c for c in comparisons if c.ours.main_score == 0.0]
+    assert [c.run_id.rsplit("__", 1)[-1] for c in no_model] == ["20260506_104012_c17166763"]

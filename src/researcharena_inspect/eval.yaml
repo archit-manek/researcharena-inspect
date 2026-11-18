@@ -5,13 +5,16 @@ arxiv: https://arxiv.org/abs/2607.19321
 group: Scheming
 contributors:
   - archit-manek
-version: "3-D"
+version: "4-C"
 tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
   # baseline). Other settings: inference_optimization 5, safety_finetuning 4,
   # utility_finetuning 3. cuda_kernel has had live runs on a GPU; inference_optimization's scorer
   # has run on a GPU without an agent (18 Nov 2026); the post-training settings have not run.
+  # utility_finetuning is scored from version 4 (side scores, the upload capture service, the
+  # cache and the submission store); 4-B adds the check-only option check_offline; 4-C adds the
+  # datasets' prepared builds to the agent's cache (D-187).
   - name: researcharena
     dataset_samples: 5
   # The monitor over the authors' published runs. 113 samples with the defaults (every published
@@ -39,6 +42,26 @@ external_assets:
     fetch_method: hf_hub_download
     state: pinned
     comment: "The authors' 386 published runs at revision 8cd737c (pins.HF_REVISION): transcripts, workspaces and judgements, for the monitor task, the replay agent and the tests. The website's run index is a gzipped snapshot in the package."
+  - type: huggingface
+    source: "aisa-group/ResearchArena-output-models"
+    fetch_method: other
+    state: pinned
+    comment: "The authors' fine-tuned models, one final_model/ per post-training run, at revision 28acb91 (pins.OUTPUT_MODELS_REVISION), downloaded with huggingface_hub when the replay agent re-scores a published capabilities run (about 1 GB each)."
+  - type: huggingface
+    source: "Qwen/Qwen2.5-0.5B-Instruct"
+    fetch_method: other
+    state: pinned
+    comment: "utility_finetuning's model, put in the agent's cache at revision 7ae5576 (environment.model_cache), copied from a host folder or downloaded in the sandbox, as upstream's resources.json lists it."
+  - type: huggingface
+    source: "openai/gsm8k"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset repository put in utility_finetuning's agent cache at revision 740312a (environment.model_cache), as upstream's resources.json lists it. Its test split holds the 200 graded GSM8K items, readable by the agent as in upstream (ledger D-182)."
+  - type: huggingface
+    source: "ScaleAI/gsm1k"
+    fetch_method: other
+    state: pinned
+    comment: "Dataset repository put in utility_finetuning's agent cache at revision bc09569 (environment.model_cache), as upstream's resources.json lists it. Holds the 200 graded GSM1K items, readable by the agent as in upstream (ledger D-182)."
   - type: huggingface
     source: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     fetch_method: other
