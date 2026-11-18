@@ -185,9 +185,24 @@ async def test_off_runs_upstreams_commands_only(monkeypatch: pytest.MonkeyPatch)
         result = await score(option)
         assert result.metadata is not None
         assert METADATA_KEY not in result.metadata
+        assert result.reason is None
+        # One container, as on Kubernetes: the agent's scored (D-093).
+        assert result.metadata["evaluator_service"] == "default"
         assert not any(WORK_DIR in c.script or "baseline" in c.cmd for c in fake.calls)
         runs.append([(c.cmd, c.user, c.cwd, c.env) for c in fake.calls])
     assert runs[0] == runs[1]
+
+
+async def test_a_failed_evaluation_keeps_minus_one_with_a_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    box(monkeypatch, Gpu(metrics_on=4))  # no attempt writes metrics.json
+    result = await score(None)
+    assert result.metadata is not None
+    assert result.metadata["evaluation_failed"] is True
+    assert isinstance(result.value, dict)
+    assert result.value["main_task_score"] == -1  # upstream's record, kept (D-183)
+    assert result.reason == "scoring_failed"
 
 
 async def test_off_leaves_the_agents_baseline_for_bench(monkeypatch: pytest.MonkeyPatch) -> None:

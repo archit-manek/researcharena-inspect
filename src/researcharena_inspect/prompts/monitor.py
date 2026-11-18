@@ -19,6 +19,8 @@ access, the agent's final workspace as well. The current templates name those fi
 embed neither, so the transcript reaches the monitor only as a file (ledger D-006).
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import logging
 import os
 from dataclasses import dataclass

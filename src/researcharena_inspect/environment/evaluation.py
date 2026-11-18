@@ -144,6 +144,11 @@ def evaluator_sandbox() -> SandboxEnvironment:
         return sandbox_env()
 
 
+def evaluator_service() -> str:
+    """The service `evaluator_sandbox()` is: `EVALUATOR_SERVICE`, or "default" (the agent's)."""
+    return EVALUATOR_SERVICE if evaluator_sandbox() is not sandbox_env() else "default"
+
+
 async def _exec(
     box: SandboxEnvironment, cmd: str, *, user: str, env: dict[str, str] | None = None
 ) -> ExecResult[str]:

@@ -1,4 +1,4 @@
-"""The model a setting's servers load, put into the agent's Hugging Face cache before the agent starts.
+"""The models and datasets a setting reads, put into the agent's Hugging Face cache before it starts.
 
 Upstream (`src/pipeline_redteam.sh` at the pinned commit) mounts a per-run fuse-overlayfs over the
 cluster's own `$HF_HOME` at `/home/user/hf_cache` in the agent's container and again in the
@@ -16,9 +16,11 @@ at staging, as the agent's user, before the agent's clock starts, from one of:
   copied, so that writes stay within the sample as with upstream's overlay;
 - a download inside the sandbox (its network is open, as upstream's is: D-029).
 
-The cache then holds that one model, where upstream's held the cluster's whole cache (D-131).
-`cuda_kernel` is not in `PROVISIONED_SETTINGS`: its staging is unchanged and its benchmark
-downloads TinyLlama at run time, as before.
+The cache then holds the pinned repositories the setting needs (`models_for`), where upstream's
+held the cluster's whole cache (D-131). On Docker the evaluator's container mounts the same cache
+(D-093), as upstream's evaluator mounted the same overlay. `cuda_kernel` is not in
+`PROVISIONED_SETTINGS`: its staging is unchanged and its benchmark downloads TinyLlama at run
+time, as before.
 
 `utility_finetuning` (D-170): the agent fine-tunes the task config's model, which upstream's
 cluster cache held because `preparation_code/download_hf_cache/resources.json` lists it, with
@@ -26,9 +28,11 @@ the two datasets the same file lists (`openai/gsm8k` main train and test, `Scale
 test). Its agent and evaluator do not run offline (the network is open, D-029), so the cache is
 not needed for the run to work; it is filled so that the agent finds what upstream's agent found,
 the GSM8K test split and GSM1K included. The datasets go in as their repositories' files at a
-pinned revision (`hub/datasets--...`, as `huggingface_hub` downloads them); upstream's cache
-also held the `datasets` library's own Arrow copies (`datasets/`), which depend on that
-library's version and are not reproduced. `resources.json`'s second model
+pinned revision (`hub/datasets--...`, as `huggingface_hub` downloads them), with the
+`datasets` library's prepared builds (`datasets/`) that upstream's `download_resources.py` left
+there, made with the image's `datasets` (copied from a host seed that `seed_datasets` filled, or
+made in the sandbox when downloading) and loaded by name with no network at staging (D-187).
+`resources.json`'s second model
 (`HuggingFaceTB/SmolLM3-3B-Base`, 6 GB, for the `smollm3_3b` config) is left out, as D-131
 leaves out the cluster's other models.
 
@@ -70,7 +74,7 @@ PROVISIONED_SETTINGS: Final = frozenset(
     {"inference_optimization", "utility_finetuning", "safety_finetuning"}
 )
 """Settings whose agent finds the task config's `model` in its cache before it starts (offline
-servers for inference; the model to fine-tune for capabilities)."""
+servers for inference; the model to fine-tune for the two post-training settings)."""
 
 
 @dataclass(frozen=True)

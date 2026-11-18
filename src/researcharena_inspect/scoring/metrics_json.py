@@ -26,6 +26,8 @@ the pinned commit returns the raw speedup, so a live run's `main_task_score` is 
 paper's units. `analysis_main_score` applies the decoding for published runs and nothing else.
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field

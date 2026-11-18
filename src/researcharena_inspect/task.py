@@ -23,6 +23,8 @@ scored as staged) or `replay` (a given workspace, such as a published run's, in 
 agent's work; one sample per replayed run).
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import os
 from pathlib import PurePosixPath
 
@@ -74,7 +76,9 @@ STAGED_FAMILY = "claude"
 """Whose launch helpers (`agent_solve.sh`, ...) staging puts in the agent's home: Claude Code's
 for every agent, so ReAct and the no-model agents see the home a Claude Code run sees."""
 
-CPU_IMAGE = "python:3.12-bookworm"
+CPU_IMAGE = (
+    "python:3.12-bookworm@sha256:4209fae09a3e20afd863e528bfddc235da5fd5977983e1996cd54cc9a72e6267"
+)
 """The CPU-only sandbox's image (`sandbox="docker"` without a config): no CUDA and none of the
 setting's packages, but git, which staging's hooks need. For tests and plumbing only."""
 

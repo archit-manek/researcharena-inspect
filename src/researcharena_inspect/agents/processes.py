@@ -6,7 +6,9 @@ with it, so nothing the agent started (background jobs, servers, benchmarks) out
 agent; `free_gpu_memory` (`:61-64`, `:415`) then kills any process still holding the GPU. The
 scorer runs in a fresh container on a copy of the workspace (`:438`, `:478-500`).
 
-In Inspect the scorer runs in the same sandbox, so the port does the teardown explicitly
+In Inspect the agent's container outlives the solver: on Docker the workspace is cleaned and
+copied in it before it is stopped (D-251), and on Kubernetes, or with a sandbox that has no
+`evaluator` service, the scorer runs in it (D-093). So the port does the teardown explicitly
 (D-081): it lists the sandbox's processes before the agent starts and, after the last round,
 kills every process that is new, except Inspect's own sandbox tools and the shell doing the
 killing. It reads `/proc` and uses only bash and coreutils, so it works in images without `ps`

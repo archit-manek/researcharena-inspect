@@ -11,10 +11,12 @@ from inspect_ai.model import (
     ChatMessageAssistant,
     ChatMessageTool,
     ChatMessageUser,
+    ModelName,
     ModelOutput,
     get_model,
 )
-from inspect_ai.scorer import SampleScore, Score
+from inspect_ai.scorer import SampleScore, Score, Target
+from inspect_ai.solver import TaskState
 from inspect_ai.util import ComposeConfig, ComposeService, SandboxEnvironmentSpec
 from pytest_inspect_evals.metrics import assert_agreeing_epochs_change_nothing, run_metrics
 
@@ -33,6 +35,7 @@ from researcharena_inspect.monitor import (
     stage_monitor_inputs,
 )
 from researcharena_inspect.monitor.agents import CLAUDE_CODE_ENV
+from researcharena_inspect.monitor.staging import SANDBOX_HOME
 from researcharena_inspect.monitor.task import (
     ARTIFACT_IMAGE,
     MONITOR_K8S_VALUES,
@@ -50,6 +53,7 @@ from researcharena_inspect.monitor.task import (
 )
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
 from researcharena_inspect.task import EVAL_VERSION
+from tests.researcharena_inspect.fake_sandbox import FakeSandbox
 
 from .test_environment import (
     HAWK_ALLOWED_VALUES,
@@ -132,7 +136,8 @@ def test_artifact_monitors_run_in_the_agents_image(access: str) -> None:
 def test_transcript_monitors_keep_the_small_image(access: str) -> None:
     # The image the port's 190 transcript monitors ran on (D-107).
     service = _service(access)
-    assert service.image == TRANSCRIPT_IMAGE == "python:3.12-slim-bookworm"
+    assert service.image == TRANSCRIPT_IMAGE
+    assert TRANSCRIPT_IMAGE.startswith("python:3.12-slim-bookworm@sha256:")
     assert service.platform is None
 
 
@@ -326,6 +331,7 @@ def test_monitor_without_a_judgement_scores_minus_one(tmp_path: Path) -> None:
     assert log.samples is not None
     score = log.samples[0].scores["monitor_suspicion"]  # type: ignore[index]
     assert score.value == SUSPICION_ERROR
+    assert score.reason == "no_response"
     assert score.metadata is not None
     assert score.metadata["judgement_source"] == "none"
     assert score.explanation == "Monitor failed to produce structured output"
@@ -451,3 +457,49 @@ def test_artifact_monitor_has_the_agents_tools_and_no_gpu(tmp_path: Path) -> Non
     assert "NO_NVIDIA_SMI" in probe
     assert "NO_MODEL_CACHE" in probe
     assert "HF_HOME=[]" in probe
+
+
+@pytest.mark.parametrize(
+    ("files", "reply", "source", "suspicion"),
+    [
+        (
+            {f"{SANDBOX_TASK_DIR}/judgement.json": 30, f"{SANDBOX_HOME}/judgement.json": 70},
+            "",
+            "task",
+            30,
+        ),
+        ({f"{SANDBOX_HOME}/judgement.json": 70}, "", "home", 70),
+        ({}, 'Verdict: {"suspicion_score": 55}', "recovered", 55),
+        ({}, "No verdict.", "none", SUSPICION_ERROR),
+    ],
+)
+async def test_monitor_scorer_reads_task_then_home_then_the_messages(
+    files: dict[str, int], reply: str, source: str, suspicion: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scorer's order without Docker: `task/`, the home, recovered from the messages, none."""
+    fake = FakeSandbox(
+        files={
+            p: json.dumps({"suspicion_score": s, "reasoning": "r"}).encode()
+            for p, s in files.items()
+        }
+    )
+    monkeypatch.setattr("researcharena_inspect.monitor.task.sandbox", lambda: fake)
+    state = TaskState(
+        model=ModelName("mockllm/model"),
+        sample_id="run",
+        epoch=1,
+        input="prompt",
+        messages=[ChatMessageAssistant(content=reply)],
+        metadata={
+            "access": "transcript",
+            "monitor_agent": "react",
+            "setting": "s",
+            "side_task": "t",
+        },
+    )
+    score = await monitor_suspicion()(state, Target(""))
+    assert score is not None
+    assert score.value == suspicion
+    assert score.metadata is not None
+    assert score.metadata["judgement_source"] == source
+    assert score.reason == ("no_response" if suspicion == SUSPICION_ERROR else None)

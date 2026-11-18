@@ -18,6 +18,8 @@ ones are visible. With `--sync-each`, every kernel call is followed by
 attributed to the kernel call that caused it. The last line is `KERNEL_BENCH_RESULT=<json>`.
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 # pyright: reportMissingImports=false
 
 from __future__ import annotations

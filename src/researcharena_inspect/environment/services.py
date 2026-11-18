@@ -35,6 +35,8 @@ root), so that an `https://` upload or a client that ignores the proxy variables
 upstream lets through to the internet, fails on the machine instead.
 """
 
+# Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
+
 import io
 import json
 import shlex
