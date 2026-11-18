@@ -89,4 +89,9 @@ generate_config: {}
 # The paper runs each configuration three times (§5, "three independent trials"); `--epochs 3`
 # does that. The task reduces each sample's epochs to the mean of those with a score, leaving
 # upstream's -1 ("no score") out (D-123); each epoch's own score is still in its sample.
-eval_config: {}
+#
+# One sample at a time: the main score is a speed measurement on the machine's one GPU, which
+# every sandbox asks for (upstream gives each run its own GPU, run_redteam.sub). Our CUDA runs
+# all passed `--max-samples 1` on the command line, which overrides this.
+eval_config:
+  max_samples: 1

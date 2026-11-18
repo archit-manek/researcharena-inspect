@@ -37,7 +37,8 @@ from researcharena_inspect.environment.staging import stage_workspace
 from researcharena_inspect.prompts import list_side_tasks
 from researcharena_inspect.prompts.settings import load_config
 from researcharena_inspect.scoring import parse_metrics, read_metrics
-from researcharena_inspect.scoring.artifacts import read_artifacts
+from researcharena_inspect.scoring.artifacts import _READ as ARTIFACT_READER
+from researcharena_inspect.scoring.artifacts import LOG_END_BYTES, read_artifacts
 from researcharena_inspect.scoring.metrics_json import published_side_task, upstream_side_task
 from researcharena_inspect.scoring.rows import side_task_class
 from researcharena_inspect.task import dataset_setting
@@ -427,9 +428,50 @@ def test_a_failure_to_read_artifacts_is_recorded_not_raised(
     _artifact_box(monkeypatch, fail_on=fail_on)
     record = asyncio.run(read_artifacts())
     assert record is not None
-    assert record["error"] == "RuntimeError: sandbox connection lost"
-    # What was read before the failure is kept.
-    assert sorted(record["files"]) == ([] if fail_on == 1 else ["startup_check.json"])
+    if fail_on == 1:  # the listing failed: nothing to read
+        assert record["error"] == "RuntimeError: sandbox connection lost"
+        assert record["files"] == {}
+    else:  # one file's read failed: recorded on that file, the others still read
+        assert "error" not in record
+        assert sorted(record["files"]) == ["startup_check.json", "startup_stderr.log"]
+        failed = record["files"]["startup_stderr.log"]  # the third exec: the second file
+        assert failed["text"] == "[not read: RuntimeError: sandbox connection lost]"
+        assert failed["bytes"] == 30
+        assert record["files"]["startup_check.json"]["text"] == "text of startup_check.json"
+
+
+def _read(path: Path, n: int, end: str) -> str:
+    result = subprocess.run(
+        [sys.executable, "-c", ARTIFACT_READER, str(path), str(n), end],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    return result.stdout
+
+
+def test_a_huge_log_is_read_only_at_its_ends(tmp_path: Path) -> None:
+    # An 8 GiB server log (sparse, so it takes no disk): only its first and last 32 KiB are
+    # read, so a verbose server cannot stall or break the score's delivery.
+    path = tmp_path / "speed_submitted_stderr.log"
+    size = 8 * 1024**3
+    with path.open("wb") as f:
+        f.write(b"first line\n")
+        f.truncate(size)
+        f.seek(size - len(b"last line\n"))
+        f.write(b"last line\n")
+    n = LOG_END_BYTES
+    text = _read(path, n, "ends")
+    assert text.startswith("first line\n")
+    assert text.endswith("last line\n")
+    assert f"\n[... {size - 2 * n} bytes not kept ...]\n" in text
+    assert len(text.encode()) == 2 * n + len(f"\n[... {size - 2 * n} bytes not kept ...]\n")
+    # A JSON file's start only; a short log whole.
+    assert _read(path, 100, "head") == "first line\n" + "\x00" * 89
+    small = tmp_path / "api_stdout.log"
+    small.write_bytes(b"ready\n\xff")
+    assert _read(small, n, "ends") == "ready\n\ufffd"
 
 
 def test_no_artifacts_folder_adds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
