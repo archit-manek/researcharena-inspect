@@ -113,7 +113,7 @@ def agent_env(
         "USER": AGENT_USER,
         "LOGNAME": AGENT_USER,
         "HF_HOME": HF_HOME,
-        "HF_TOKEN": hf_token,
+        "HF_TOKEN": hf_token,  # D-213: empty; the user's token never enters a sandbox
         "CUDA_VISIBLE_DEVICES": CUDA_VISIBLE_DEVICES,
     }
     if agent_config is not None:
