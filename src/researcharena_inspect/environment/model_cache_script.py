@@ -169,10 +169,11 @@ def verify(
         pinned, oid = entry.get("sha256"), entry.get("git_oid")
         if not (pinned or oid):
             problems.append(f"{entry['path']}: no hash pinned")
-        if pinned and actual != pinned:
-            problems.append(f"{entry['path']}: sha256 {actual}, pinned {pinned}")
+        elif pinned:
+            if actual != pinned:
+                problems.append(f"{entry['path']}: sha256 {actual}, pinned {pinned}")
         # The pointer first: a weight file is not read a second time when it matches.
-        if oid and oid != lfs_pointer_id(actual, size) and oid != git_blob_id(path):
+        elif oid != lfs_pointer_id(actual, size) and oid != git_blob_id(path):
             problems.append(f"{entry['path']}: not the git object {oid}")
         if not pinned and hashed is not None:
             hashed[entry["path"]] = actual

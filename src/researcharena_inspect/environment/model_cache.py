@@ -80,7 +80,8 @@ class PinnedFile:
     sha256: str = ""
     git_oid: str = ""
     """The file's git object id at the pinned commit (of its bytes, or of its LFS pointer); the
-    only hash the Hub shows anonymously for a gated repository's files (D-211)."""
+    only hash the Hub shows anonymously for a gated repository's files (D-211). Only for a file
+    pinned without a SHA-256: one digest per file."""
 
 
 @dataclass(frozen=True)
@@ -310,8 +311,8 @@ SCALEAI_GSM1K: Final = PinnedModel(
 
 # D-210: `safety_finetuning`'s repositories, read from the Hub API on 18 Nov 2026 at the
 # commit each `main` had (every one older than the published runs). Files whose SHA-256 the Hub
-# shows (LFS files of public repositories) are pinned by it and by their git object id; the rest
-# by their git object id only (D-211). Every file of a public repository; of the two gated ones,
+# shows (LFS files of public repositories) are pinned by it; the rest by their git object id
+# (D-211). Every file of a public repository; of the two gated ones,
 # the files `from_pretrained` reads (not `google/gemma-2b`'s 10 GB GGUF copy or
 # `meta-llama/Llama-Guard-3-8B`'s 16 GB `original/` checkpoint, which no code loads). Datasets:
 # the files `load_dataset` reads for `resources.json`'s config, and their prepared builds.
@@ -332,7 +333,6 @@ HUIHUI_QWEN3_1_7B_ABLITERATED_V2: Final = PinnedModel(
             "model.safetensors",
             3441185608,
             "6f9415d0807356f60a3a75d476b4b9d743acb3a6ae2e455450bf83c38b45e221",
-            git_oid="002a709f58c97ffb4860f67c84d332bd722651ed",
         ),
         PinnedFile(
             "special_tokens_map.json", 644, git_oid="3a7840311c8c90df33c823cdbb06626f920c509e"
@@ -341,7 +341,6 @@ HUIHUI_QWEN3_1_7B_ABLITERATED_V2: Final = PinnedModel(
             "tokenizer.json",
             11422654,
             "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
-            git_oid="cd71f61a15a522601badb3dc960d800d9cb3766c",
         ),
         PinnedFile(
             "tokenizer_config.json", 5643, git_oid="993ecf95c284d12b6904a255479d37d9c98090c7"
@@ -361,7 +360,6 @@ STRONGREJECT_15K_V1: Final = PinnedModel(
             "adapter_model.safetensors",
             39256456,
             "c524d920e55530363bd11aa4baa6af48e0dcbe37a1a74d80e7a67bf8fcca20a3",
-            git_oid="d59c508e224529dde886d75d4d3d60644385ca34",
         ),
         PinnedFile(
             "special_tokens_map.json", 636, git_oid="8d6368f7e735fbe4781bf6e956b7c6ad0586df80"
@@ -370,13 +368,11 @@ STRONGREJECT_15K_V1: Final = PinnedModel(
             "tokenizer.json",
             17518596,
             "f160d6c8998f9c650c37bc37fea8aa313e2414643093d7d9b177378e1408cea4",
-            git_oid="93607bb3d0650af37411e111af69df978b18ceea",
         ),
         PinnedFile(
             "tokenizer.model",
             4241003,
             "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2",
-            git_oid="796efe9ab515c15e146ce7588e6d7b9b8134dbf8",
         ),
         PinnedFile(
             "tokenizer_config.json", 40018, git_oid="e6ad5837ff7ebd51e1cb2715816fa58f8af5ab8b"
@@ -484,25 +480,21 @@ CAIS_MMLU: Final = PinnedModel(
             "all/auxiliary_train-00000-of-00001.parquet",
             47513731,
             "5126bb35f06c8ab7ac54be3c60ab02cf33adf8b93a79dcfeb071f53cac74efde",
-            git_oid="651449040ef2ed40e9c609f5df43c888ff0330c5",
         ),
         PinnedFile(
             "all/dev-00000-of-00001.parquet",
             76504,
             "2b19bde1ed8ca6b482fb283abc90e8e0d9d228947029c0b91795d64b28b3bc3f",
-            git_oid="a16adae3c52a11398a48eef47e04acf7d5dd7883",
         ),
         PinnedFile(
             "all/test-00000-of-00001.parquet",
             3504718,
             "74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7",
-            git_oid="d537a397c5336319c992bac63f783a8c156ec00b",
         ),
         PinnedFile(
             "all/validation-00000-of-00001.parquet",
             408449,
             "66cdf0b090ccb657d18d13cd81e31fdc55c3467da9642ffb178653268a97c8ef",
-            git_oid="eee68c6d7aa7c4204e8667193ac9437cb3aa8807",
         ),
         PinnedFile(
             "dataset_infos.json", 138338, git_oid="e133c92a3269e646dfd034d5c94ad41a31c7b194"
@@ -521,19 +513,16 @@ HELLASWAG: Final = PinnedModel(
             "data/test-00000-of-00001.parquet",
             6112397,
             "e572fd5579bd1768b1985f47234f8bbe29247aca200a778b635bffc637714a41",
-            git_oid="489f025aa27a8558c035b1553816a167f4d0e971",
         ),
         PinnedFile(
             "data/train-00000-of-00001.parquet",
             24365524,
             "cacb12587faa63d7f723a72d61d12bfa94b140446f5a6a0a2e1c6906ab88bf02",
-            git_oid="751446a45a5ae289fd5a1eef3dc34cb638b31b18",
         ),
         PinnedFile(
             "data/validation-00000-of-00001.parquet",
             6315951,
             "899813071e1e95efafec90f856e1987d2150fa4d020fc005df6962c259f660cd",
-            git_oid="dc9b677af9ca42f2ec1d89ea515511f0945d789d",
         ),
     ),
 )
@@ -549,19 +538,16 @@ WINOGRANDE: Final = PinnedModel(
             "winogrande_xl/test-00000-of-00001.parquet",
             117656,
             "100885ec03a67f318d50f8a485cb7e55c9ed88fcefbc565c2907fc98de7f8444",
-            git_oid="bef3e6916934d59b8b793d48ed873a2e689923a6",
         ),
         PinnedFile(
             "winogrande_xl/train-00000-of-00001.parquet",
             2058506,
             "5d8c38ad12b9a6c88f79b6e00aaf0f40781f93d4f94816f6cff2b67625d67399",
-            git_oid="07b7ac4b4029e54c47f54bcb97e6090a61b47618",
         ),
         PinnedFile(
             "winogrande_xl/validation-00000-of-00001.parquet",
             85928,
             "f9d914d1818c0aba98cabdf8af2bc4bd943c462b9c5e7062647e05c2ce3315d1",
-            git_oid="e7dfb2738e94caa3cb68fc5ef499af12aea2b08c",
         ),
     ),
 )
@@ -576,19 +562,16 @@ AI2_ARC: Final = PinnedModel(
             "ARC-Challenge/test-00000-of-00001.parquet",
             203808,
             "62f03257e737aed263f55c6abf87c7bb0028a44a6bdd2a26eb1279eb42c1d1e9",
-            git_oid="dccb239c736b6aa3f70117b44820ab50fba7fb53",
         ),
         PinnedFile(
             "ARC-Challenge/train-00000-of-00001.parquet",
             189909,
             "e488c1587ffdcfc8443f916c53488a95cd471c5790e0746c6bfe4cecf20962cb",
-            git_oid="ae987592f5e0913097e4b6637fcfcbae7dcd994c",
         ),
         PinnedFile(
             "ARC-Challenge/validation-00000-of-00001.parquet",
             55743,
             "395a5c88d1580d69855fbaee9450270578df1ad5af6259771cd0a42c20e99f05",
-            git_oid="108b2f1e32ff87935ae766487409bbdf5c169964",
         ),
         PinnedFile("README.md", 9001, git_oid="d50d3b885a6d04fe8cb16cc9947f64dff0ba941a"),
     ),

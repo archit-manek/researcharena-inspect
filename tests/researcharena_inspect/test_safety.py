@@ -146,8 +146,9 @@ def test_the_gated_repositories_are_pinned_by_git_object_id() -> None:
         )
     assert GEMMA_2B.total_bytes == 5_034_171_817
     assert LLAMA_GUARD_3_8B.total_bytes == 16_069_717_835
+    for pin in models_for(SETTING, "qwen3_1.7b"):
+        assert all(bool(f.sha256) != bool(f.git_oid) for f in pin.files)  # one digest per file
     for pin in (HUIHUI_QWEN3_1_7B_ABLITERATED_V2, STRONGREJECT_15K_V1):
-        assert all(f.git_oid for f in pin.files)
         assert all(f.sha256 for f in pin.files if f.path.endswith(".safetensors"))
 
 
