@@ -2,6 +2,8 @@
 
 An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://research-arena.ai/) ([paper](https://arxiv.org/abs/2607.19321), [code](https://github.com/aisa-group/ResearchArena)), an AI-control evaluation of sabotage and monitoring in automated AI R&D. An agent does a long research-engineering task while some runs also ask it to sabotage the work in secret; a monitor model then reads the run and scores how suspicious it looks.
 
+New to the benchmark or to this code? Start with the guide, [docs/guide.html](docs/guide.html): one run stage by stage, the four settings, the monitor, the evidence and the differences from the original, each linked to the lines it describes. It is a single HTML file; open it in a browser after cloning (GitHub shows its source, not the page). It was written on 18 Nov 2026 against commit `68c52cc`, and its links point at that commit.
+
 The eval's documentation is in [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md). For a review, read it in this order:
 
 1. [What is in the port](src/researcharena_inspect/README.md#what-is-in-the-port) and [what "the original" means here](src/researcharena_inspect/README.md#what-the-original-means-here): the port follows upstream's code at commit `b922f4b`, reuses its task files, evaluators and templates unchanged, and rewrites only the bash orchestration as Inspect tasks.
