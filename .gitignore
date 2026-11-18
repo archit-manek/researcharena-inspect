@@ -28,9 +28,12 @@ dist/
 # Eval / run output
 logs/
 
-# Agent artefacts: only the Scout scanners are tracked, never their outputs
+# Agent artefacts: the Scout scanners and the checklist's required reports are tracked, never
+# the scanners' outputs
 agent_artefacts/*
 !agent_artefacts/trajectory_analysis/
+!agent_artefacts/researcharena_inspect/
+!agent_artefacts/researcharena_inspect_*/
 agent_artefacts/trajectory_analysis/*
 !agent_artefacts/trajectory_analysis/inspect_scout/
 agent_artefacts/trajectory_analysis/inspect_scout/scout_results/
