@@ -35,7 +35,7 @@ This repo ports [ResearchArena](https://github.com/aisa-group/ResearchArena) to 
 - **No spend in tests.** Tests never call a paid model or need a GPU unless marked `slow` and run on purpose.
 - **New dependencies** must have been on PyPI for at least 7 days, or Hawk refuses to install the package.
 
-Modules: `pins.py`, `upstream.py`, `published.py` (shared base); `prompts/` (agent and monitor prompts); `task.py` and `agents/` (red-team task; Claude Code, ReAct, null and replay agents; the re-prompting loop); `environment/` (image, sandbox configs, workspace staging, `environment_check`); `scoring/` (upstream's `evaluate.py` as a scorer, `kernel_crash_check`); `transcripts/` (the text a monitor reads); `monitor/` (monitor task); `analysis/` (success rules, detection rate, AUROC, the paper's tables); `gpu_probe.py` (whether a sandbox sees a GPU, outside `eval.yaml`).
+Modules: `pins.py`, `upstream.py`, `published.py` (shared base); `prompts/` (agent and monitor prompts); `task.py` and `agents/` (red-team task; Claude Code, ReAct, null and replay agents; the re-prompting loop); `environment/` (image, sandbox configs, workspace staging, `environment_check`); `scoring/` (upstream's `evaluate.py` as a scorer, the opt-in CUDA baseline process of D-160, `kernel_crash_check`); `transcripts/` (the text a monitor reads); `monitor/` (monitor task); `analysis/` (success rules, detection rate, AUROC, the paper's tables); `gpu_probe.py` (whether a sandbox sees a GPU, outside `eval.yaml`).
 
 ## Checks
 

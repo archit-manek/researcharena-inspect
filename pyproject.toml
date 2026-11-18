@@ -66,6 +66,8 @@ preset = "multi-eval"
 [tool.inspect-evals-lint.per-file-ignores]
 # kernel_bench.py runs in the sandbox image (PyTorch, transformers, upstream's bench.py).
 "src/researcharena_inspect/scoring/kernel_bench.py" = ["external_dependencies"]
+# cuda_baseline.py runs in the sandbox and imports the workspace's own bench.py and config.py.
+"src/researcharena_inspect/scoring/cuda_baseline.py" = ["external_dependencies"]
 # model_cache_script.py runs in the sandbox image, whose huggingface_hub downloads the model.
 "src/researcharena_inspect/environment/model_cache_script.py" = ["external_dependencies"]
 # The GPU sandbox check is `environment_check` (kind: maintenance), which builds the kernels and
