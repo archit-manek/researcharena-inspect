@@ -13,6 +13,7 @@ from typing import Any, cast
 import anyio
 import pytest
 from inspect_ai.agent import Agent, AgentState
+from inspect_ai.model import ChatMessageAssistant, ChatMessageUser
 from inspect_ai.util import ExecCompleted, ExecStderr, ExecStdout
 
 from researcharena_inspect.agents import (
@@ -290,3 +291,111 @@ async def test_signal_failure_still_stops_the_round(monkeypatch: pytest.MonkeyPa
     assert await rounds("exec", "p", REMAINING) == RC_KILLED
     [stop] = rounds.deadline_stops
     assert [e.split(":")[0] for e in stop.signal_errors] == ["TERM", "KILL"]
+
+
+# --- D-105: a resume round before any assistant message -------------------------------------
+
+
+def _session_agent(name: str, seen: list[tuple[str, list[str]]], answer: bool) -> Agent:
+    """A Claude Code stand-in: one per CLI session; records which session ran on what."""
+
+    async def run(state: AgentState) -> AgentState:
+        seen.append((name, [m.role for m in state.messages]))
+        if answer:
+            state.messages.append(ChatMessageAssistant(content=f"answer from {name}"))
+        return state
+
+    return _agent(run)
+
+
+async def test_resume_before_any_assistant_message_starts_a_new_session() -> None:
+    # Round 0's model calls all fail (no assistant message); Inspect SWE would start round 1
+    # with the same --session-id, which the CLI refuses. The round gets a new agent instead,
+    # and later rounds resume that agent's session.
+    seen: list[tuple[str, list[str]]] = []
+    made = iter(["session 2", "session 3"])
+
+    def new_agent() -> Agent:
+        return _session_agent(next(made), seen, answer=True)
+
+    state = AgentState(messages=[ChatMessageUser(content="first prompt")])
+    codes: list[int] = []
+    rounds = AgentRounds(
+        _session_agent("session 1", seen, answer=False),
+        state,
+        "claude_code",
+        [],
+        cli=CliStop(keep=[], exit_codes=codes),
+        new_agent=new_agent,
+    )
+    assert await rounds("exec", "first prompt", 60) == RC_OK
+    assert await rounds("resume", "continue 1", 60) == RC_OK
+    assert await rounds("resume", "continue 2", 60) == RC_OK
+    assert seen == [
+        ("session 1", ["user"]),
+        # The new session starts with every user message so far: the first prompt, then
+        # the continuation prompt (Inspect SWE joins them into the CLI's first prompt).
+        ("session 2", ["user", "user"]),
+        ("session 2", ["user", "user", "assistant", "user"]),
+    ]
+    assert rounds.new_sessions == [1]
+
+
+async def test_resume_after_an_assistant_message_keeps_the_session() -> None:
+    seen: list[tuple[str, list[str]]] = []
+
+    def new_agent() -> Agent:
+        raise AssertionError("no new session once the model has answered")
+
+    rounds = AgentRounds(
+        _session_agent("session 1", seen, answer=True),
+        AgentState(messages=[ChatMessageUser(content="first prompt")]),
+        "claude_code",
+        [],
+        cli=CliStop(keep=[], exit_codes=[]),
+        new_agent=new_agent,
+    )
+    assert await rounds("exec", "first prompt", 60) == RC_OK
+    assert await rounds("resume", "continue 1", 60) == RC_OK
+    assert [name for name, _ in seen] == ["session 1", "session 1"]
+    assert rounds.new_sessions == []
+
+
+async def test_each_resume_without_an_answer_gets_its_own_session() -> None:
+    # A new session that fails too leaves no assistant message, so the next round needs
+    # another one: reusing it would hit the same refusal.
+    seen: list[tuple[str, list[str]]] = []
+    count = 0
+
+    def new_agent() -> Agent:
+        nonlocal count
+        count += 1
+        return _session_agent(f"session {count + 1}", seen, answer=False)
+
+    rounds = AgentRounds(
+        _session_agent("session 1", seen, answer=False),
+        AgentState(messages=[ChatMessageUser(content="first prompt")]),
+        "claude_code",
+        [],
+        cli=CliStop(keep=[], exit_codes=[]),
+        new_agent=new_agent,
+    )
+    await rounds("exec", "first prompt", 60)
+    await rounds("resume", "continue 1", 60)
+    await rounds("resume", "continue 2", 60)
+    assert [name for name, _ in seen] == ["session 1", "session 2", "session 3"]
+    assert rounds.new_sessions == [1, 2]
+
+
+async def test_react_rounds_never_get_a_new_agent() -> None:
+    seen: list[tuple[str, list[str]]] = []
+    rounds = AgentRounds(
+        _session_agent("react", seen, answer=False),
+        AgentState(messages=[ChatMessageUser(content="first prompt")]),
+        "react",
+        [],
+    )
+    await rounds("exec", "first prompt", 60)
+    await rounds("resume", "continue 1", 60)
+    assert [name for name, _ in seen] == ["react", "react"]
+    assert rounds.new_sessions == []

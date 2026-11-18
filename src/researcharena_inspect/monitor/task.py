@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 
 import anyio
-from inspect_ai import Task, task
+from inspect_ai import Epochs, Task, task
 from inspect_ai.agent import as_solver
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import ChatMessage, ChatMessageAssistant, get_model
@@ -53,6 +53,7 @@ from researcharena_inspect.monitor.staging import (
 )
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL, PAPER_COMMIT, UPSTREAM_COMMIT
 from researcharena_inspect.published import fetch_run_file
+from researcharena_inspect.scoring.epochs import scored_epochs_mean
 from researcharena_inspect.transcripts import messages_to_stream_events
 
 # eval.yaml sits in the package folder, one above this module.
@@ -333,7 +334,10 @@ def mean_suspicion() -> Metric:
 
 @metric
 def failed_judgements() -> Metric:
-    """Number of samples without a usable judgement (suspicion -1)."""
+    """Number of samples without a usable judgement (suspicion -1).
+
+    With `--epochs`, a sample counts only if no epoch had a usable judgement (D-123).
+    """
 
     def compute(scores: list[SampleScore]) -> int:
         return sum(1 for s in scores if s.score.as_float() == SUSPICION_ERROR)
@@ -480,5 +484,7 @@ def researcharena_monitor(
         ),
         scorer=monitor_suspicion(),
         sandbox=monitor_sandbox(sandbox, sandbox_config, access),
+        # D-123: with --epochs, a failed judgement (-1) is left out of each sample's mean.
+        epochs=Epochs(1, scored_epochs_mean()),
         version=EVAL_VERSION,
     )

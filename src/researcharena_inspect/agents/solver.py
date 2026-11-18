@@ -29,6 +29,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from functools import cache
 
@@ -36,7 +37,7 @@ import anyio
 from inspect_ai.agent import Agent, AgentState
 from inspect_ai.event import Event, ModelEvent
 from inspect_ai.log import transcript
-from inspect_ai.model import ChatMessageUser, get_model
+from inspect_ai.model import ChatMessageAssistant, ChatMessageUser, get_model
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import LimitExceededError, apply_limits, sandbox, span, time_limit
 
@@ -237,6 +238,8 @@ class AgentRounds:
         log: receives error lines.
         cli: for Claude Code, how to find and stop its CLI and read its exit code; None for
             ReAct, which has no CLI process.
+        new_agent: for Claude Code, makes a new agent (a new CLI session) for a resume round
+            that comes before any assistant message (D-105); None never replaces the agent.
     """
 
     def __init__(
@@ -246,17 +249,34 @@ class AgentRounds:
         name: str,
         log: list[str],
         cli: CliStop | None = None,
+        new_agent: Callable[[], Agent] | None = None,
     ) -> None:
         self.agent = agent
         self.state = state
         self.name = name
         self.log = log
         self.cli = cli
+        self.new_agent = new_agent
         self.deadline_stops: list[DeadlineStop] = []
+        self.new_sessions: list[int] = []
+        """Indexes (0 = the first round) of the rounds that ran in a new CLI session."""
+        self._launched = 0
 
     async def __call__(self, phase: Phase, prompt: str, remaining: int) -> int:
         if phase == "resume":
+            # D-105: Inspect SWE passes `--resume <session id>` only once the conversation has
+            # an assistant message; before that it starts the CLI with the same `--session-id`
+            # again, which the CLI refuses ("Session ID ... is already in use") because the
+            # earlier round created that session. Upstream's `claude --continue` resumes it
+            # whatever happened. So such a round gets a new agent, whose new session starts
+            # with the user messages so far: the first prompt, then this continuation prompt.
+            if self.new_agent is not None and not any(
+                isinstance(m, ChatMessageAssistant) for m in self.state.messages
+            ):
+                self.agent = self.new_agent()
+                self.new_sessions.append(self._launched)
             self.state.messages.append(ChatMessageUser(content=prompt))
+        self._launched += 1
         if self.cli is None:
             return await self._react_round(phase, remaining)
         return await self._cli_round(phase, remaining, self.cli)
@@ -470,7 +490,14 @@ def red_team_agent(
                         if agent == "claude_code"
                         else None
                     )
-                    rounds = AgentRounds(model_agent(), agent_state, agent, log, cli=cli_stop)
+                    rounds = AgentRounds(
+                        model_agent(),
+                        agent_state,
+                        agent,
+                        log,
+                        cli=cli_stop,
+                        new_agent=model_agent if agent == "claude_code" else None,  # D-105
+                    )
                     budget = Budget(redruntime)
                     run.budget_seconds = budget.total_seconds
                     run.budget_start = budget.start
@@ -501,6 +528,7 @@ def red_team_agent(
             if rounds is not None:
                 agent_state = rounds.state
                 run.deadline_stops = [asdict(s) for s in rounds.deadline_stops]
+                run.new_sessions = list(rounds.new_sessions)
             state.messages = agent_state.messages
             if agent_state.output:
                 state.output = agent_state.output

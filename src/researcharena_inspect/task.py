@@ -21,7 +21,7 @@ agent's work; one sample per replayed run).
 import os
 from pathlib import PurePosixPath
 
-from inspect_ai import Task, task
+from inspect_ai import Epochs, Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Solver
@@ -44,6 +44,7 @@ from researcharena_inspect.prompts import (
     resume_agent,
 )
 from researcharena_inspect.scoring import red_team_scorer
+from researcharena_inspect.scoring.epochs import scored_epochs_mean
 
 EVAL_VERSION = load_eval_version(__file__)
 
@@ -279,5 +280,7 @@ def researcharena(
             else red_team_sandbox(sandbox, sandbox_config)
         ),
         time_limit=time_limit,
+        # D-123: with --epochs, upstream's -1 ("no score") is left out of each sample's mean.
+        epochs=Epochs(1, scored_epochs_mean()),
         version=EVAL_VERSION,
     )

@@ -5,12 +5,14 @@ and then stops (no tool call), as an agent that thinks it is done would; upstrea
 each time. In round 2 it starts a background `sleep 300` and a foreground one, so it is still
 working when the budget runs out. The budget is 25 seconds (`redruntime` 0.007 hours).
 A second Claude Code run has the model refuse in rounds 0 and 2 (D-084). A third pair of runs
-has every model call fail with a 404, as on Hawk, and ends with an error (D-108).
+has every model call fail with a 404, as on Hawk, and ends with an error (D-108). A fourth
+Claude Code run has the model fail until the first resume round and answer from then on (D-105).
 
 Claude Code is the real CLI (Inspect SWE, version `CLI_VERSION`) talking to the mock model
 through Inspect's bridge. No paid model is called.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -514,8 +516,11 @@ def test_errored_sample_keeps_the_run_record(no_output_run: tuple[str, EvalSampl
         assert run.cli_version == f"{CLI_VERSION} (Claude Code)"
         assert run.cli_exit_codes == [1, 1]
         assert run.stdout[0].startswith('{"type":"system","subtype":"init"')
-        # Round 1 cannot resume a session with no assistant message (D-105).
-        assert "is already in use" in "".join(run.stderr)
+        # Round 1 had no assistant message to resume from, so it ran in a new session, which
+        # failed on the same 404 (D-105); without it the CLI refused to start ("Session ID
+        # ... is already in use").
+        assert run.new_sessions == [1]
+        assert "is already in use" not in "".join(run.stderr)
 
 
 def test_without_the_check_the_workspace_is_scored(tmp_path: Path) -> None:
@@ -526,3 +531,78 @@ def test_without_the_check_the_workspace_is_scored(tmp_path: Path) -> None:
     assert sample.error is None
     assert sample.scores is not None
     assert run.exit_code == 1
+
+
+# --- A first round with no model response, then a working model (D-105) ----------------------
+
+
+def model_not_found_until_resumed(messages, tools, tool_choice, config) -> ModelOutput:
+    """404 for every call of round 0 (as on Hawk), answers once a continuation prompt is in."""
+    if not any(CONTINUE in m.text for m in messages):
+        raise ModelNotFoundError()
+    return ModelOutput.from_content("mockllm/model", "Done.")
+
+
+@pytest.fixture(scope="module")
+def late_model_run(tmp_path_factory: pytest.TempPathFactory) -> EvalSample:
+    task = _no_output_task("claude_code")
+    model = get_model("mockllm/model", custom_outputs=model_not_found_until_resumed)
+    log_dir = tmp_path_factory.mktemp("late_model")
+    [log] = eval(task, model=model, display="none", log_dir=str(log_dir))
+    logged = read_eval_log(log.location)
+    assert logged.samples is not None
+    [sample] = logged.samples
+    return resolve_sample_attachments(sample)
+
+
+def _init_sessions(run: AgentRun) -> list[str]:
+    return [
+        json.loads(line)["session_id"]
+        for line in run.stdout
+        if line.startswith('{"type":"system","subtype":"init"')
+    ]
+
+
+def test_run_carries_on_after_a_first_round_without_a_response(late_model_run) -> None:
+    sample = late_model_run
+    run = sample.store_as(AgentRun)
+    assert sample.error is None
+    assert sample.scores is not None
+    # Round 0 failed (the CLI exits 1 after the 404s); round 1 resumed, as upstream's
+    # `--continue` does after any round but a timed-out one, and the loop went on until the
+    # budget ran out.
+    phases = [(r["phase"], r["rc"]) for r in run.rounds]
+    assert phases[0] == ("exec", 1)
+    assert phases[1] == ("resume", RC_OK)
+    assert phases[-1] == ("resume", RC_BUDGET)
+    assert run.cli_exit_codes[:2] == [1, 0]
+    assert "is already in use" not in "".join(run.stderr)
+    # Round 1 started a new session; every later round resumed it.
+    assert run.new_sessions == [1]
+    sessions = _init_sessions(run)
+    assert len(sessions) == len(run.rounds)
+    assert sessions[0] != sessions[1]
+    assert set(sessions[1:]) == {sessions[1]}
+
+
+def test_the_new_session_starts_with_the_first_prompt_and_the_continuation(
+    late_model_run,
+) -> None:
+    sample = late_model_run
+    run = sample.store_as(AgentRun)
+    answered = [
+        e
+        for e in sample.events
+        if isinstance(e, ModelEvent) and e.error is None and "Bash" in {t.name for t in e.tools}
+    ]
+    assert answered
+    # Upstream's `--continue` sends the session's first prompt and then the continuation; the
+    # new session sends both too, in that order (D-105).
+    text = "\n".join(m.text for m in answered[0].input if isinstance(m, ChatMessageUser))
+    assert isinstance(sample.input, str)
+    first_prompt = sample.input.strip()
+    continuation = run.rounds[1]["prompt"]
+    assert continuation.startswith(CONTINUE)
+    assert first_prompt in text
+    assert continuation in text
+    assert text.index(first_prompt) < text.index(continuation)
