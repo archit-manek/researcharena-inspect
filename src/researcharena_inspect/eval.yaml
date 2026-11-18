@@ -10,7 +10,8 @@ tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
   # baseline). Other settings: inference_optimization 5, safety_finetuning 4,
-  # utility_finetuning 3; only cuda_kernel has been run on a GPU.
+  # utility_finetuning 3. cuda_kernel has had live runs on a GPU; inference_optimization's scorer
+  # has run on a GPU without an agent (18 Nov 2026); the post-training settings have not run.
   - name: researcharena
     dataset_samples: 5
   # The monitor over the authors' published runs. 113 samples with the defaults (every published
