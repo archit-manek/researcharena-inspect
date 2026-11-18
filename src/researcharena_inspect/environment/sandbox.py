@@ -99,11 +99,25 @@ def with_hook_service(config: ComposeConfig) -> ComposeConfig:
     return config
 
 
+def without_network(config: ComposeConfig) -> ComposeConfig:
+    """`config` with the agent's service on no network (`network_mode: none`), D-185.
+
+    For a scorer check with no agent (`check_offline`): the hook service, if there is one,
+    shares that namespace and has none either. The setting's default stays upstream's open
+    network (D-029).
+    """
+    default = config.services["default"]
+    default.network_mode = "none"
+    default.networks = None
+    return config
+
+
 def sandbox_spec(
     backend: Backend = "k8s",
     gpu: GpuName | None = None,
     setting: str | None = None,
     hf_seed: str | None = None,
+    offline: bool = False,
 ) -> SandboxEnvironmentSpec:
     """The Inspect sandbox for the agent.
 
@@ -115,10 +129,12 @@ def sandbox_spec(
             gets `vllm_compose`, plus the hook service if the setting has
             `pipeline_pre_agent.sh` hooks; every other one gets `compose.yaml` unchanged.
         hf_seed: Docker only: a host Hugging Face cache to mount read-only (see `vllm_compose`).
+        offline: Docker only, for scorer checks with no agent: the sandbox has no network
+            (`without_network`, D-185). Off by default.
 
     Raises:
-        ValueError: an unknown backend or GPU, a GPU model with Docker, or `hf_seed` with
-            Kubernetes.
+        ValueError: an unknown backend or GPU, a GPU model with Docker, or `hf_seed` or
+            `offline` with Kubernetes.
     """
     if backend == "docker":
         if gpu is not None:
@@ -126,13 +142,15 @@ def sandbox_spec(
         hooks = setting is not None and setting_has_hooks(setting)
         if setting in PROVISIONED_SETTINGS or hf_seed is not None:
             config = vllm_compose(hf_seed)
-        elif hooks:
+        elif hooks or offline:
             config = _load_compose()
         else:
             return SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
-        return SandboxEnvironmentSpec("docker", with_hook_service(config) if hooks else config)
-    if hf_seed is not None:
-        raise ValueError("hf_seed mounts a host folder and needs backend='docker'")
+        if hooks:
+            config = with_hook_service(config)
+        return SandboxEnvironmentSpec("docker", without_network(config) if offline else config)
+    if hf_seed is not None or offline:
+        raise ValueError("hf_seed and offline need backend='docker'")
     if backend == "k8s":
         chosen = gpu or "l4"
         if chosen not in K8S_VALUES:

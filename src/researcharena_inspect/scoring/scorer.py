@@ -304,7 +304,7 @@ async def keep_store(state: TaskState, option: str, max_bytes: int) -> dict[str,
         return None
     return await keep_submission(
         root,
-        name=run_folder_name(state.sample_id, state.epoch),
+        name=run_folder_name(state.sample_id, state.epoch, state.uuid),
         run_metadata=store_metadata(state),
         max_bytes=max_bytes,
     )

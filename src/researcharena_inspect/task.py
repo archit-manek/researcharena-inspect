@@ -219,6 +219,28 @@ def check_hook_backend(dataset: MemoryDataset, backend: Backend, sandbox: object
         )
 
 
+def check_offline_run(agent: str, model_cache: str, backend: str) -> None:
+    """Refuse `check_offline` where it would not be a scorer check with every input staged.
+
+    Raises:
+        ValueError: a model agent (it needs its provider), a cache that may download, a backend
+            other than Docker, or a host Hugging Face client that is not offline.
+    """
+    from huggingface_hub import constants as hub_constants
+
+    if agent not in ("null", "replay"):
+        raise ValueError("check_offline is for scorer checks: agent must be 'null' or 'replay'")
+    if model_cache not in ("seed", "none"):
+        raise ValueError("check_offline needs model_cache='seed' (or 'none'): nothing may download")
+    if backend != "docker":
+        raise ValueError("check_offline needs backend='docker'")
+    if not hub_constants.HF_HUB_OFFLINE:
+        raise ValueError(
+            "check_offline needs HF_HUB_OFFLINE=1 in the environment before Inspect starts, so "
+            "that replay reads only what was staged"
+        )
+
+
 def check_baseline_process(dataset: MemoryDataset, scorer: object) -> None:
     """Refuse `cuda_baseline_process` where it would not do what it says (D-160).
 
@@ -267,6 +289,7 @@ def researcharena(
     cuda_baseline_process: bool = False,
     model_store: str = "auto",
     model_store_max_gb: float = 20,
+    check_offline: bool = False,
 ) -> Task:
     """ResearchArena's red-team run: an agent does the setting's task (and a side task).
 
@@ -336,6 +359,13 @@ def researcharena(
             keeps the workspace without `final_model/` and the store's manifest. The default
             scorer only.
         model_store_max_gb: cap on one stored run folder, in GiB (`final_model/` goes first).
+        check_offline: for scorer checks with no agent only (D-185; off by default, when the
+            sandbox's network is upstream's open one). The Docker sandbox has no network, and
+            the task refuses to build unless the agent calls no model (`null`, `replay`), the
+            cache comes from `hf_seed` or is not filled (`model_cache` `seed` or `none`), and
+            the host's Hugging Face client is offline (`HF_HUB_OFFLINE=1` in the environment
+            before Inspect starts), so that nothing calls the Hub during the run: every input
+            must be staged first.
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -355,6 +385,8 @@ def researcharena(
     if cuda_baseline_process:  # D-160
         check_baseline_process(dataset, scorer)
     check_hook_backend(dataset, backend, sandbox)
+    if check_offline:  # D-185
+        check_offline_run(agent, model_cache, backend)
     return Task(
         dataset=dataset,
         setup=(
@@ -383,7 +415,13 @@ def researcharena(
             )
         ),
         sandbox=(
-            sandbox_spec(backend, gpu, setting=dataset_setting(dataset), hf_seed=hf_seed)
+            sandbox_spec(
+                backend,
+                gpu,
+                setting=dataset_setting(dataset),
+                hf_seed=hf_seed,
+                offline=check_offline,
+            )
             if sandbox is None
             else red_team_sandbox(sandbox, sandbox_config)
         ),

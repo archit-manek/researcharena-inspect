@@ -9,7 +9,9 @@ What it models of vLLM, and nothing more:
 - once up, `GET /health` and `GET /v1/models` answer 200, and `POST /v1/chat/completions`
   answers each user message from the folder's `fake_answers.json` ({prompt: reply}), or with
   "I do not know." for a prompt it does not have.
-`FAKE_VLLM_STARTUP_SECONDS` (default 0.5) delays the port's opening.
+`FAKE_VLLM_STARTUP_SECONDS` (default 0.5) delays the port's opening. Like vLLM's server
+(uvicorn's access log), it prints one line per request handled:
+`INFO:     127.0.0.1:<port> - "POST /v1/chat/completions HTTP/1.1" 200 OK`.
 """
 
 import json
@@ -26,6 +28,7 @@ def main(argv: list[str]) -> int:
         return 2
     model = Path(argv[1])
     port = int(argv[argv.index("--port") + 1])
+    print("INFO vLLM API server version 0.0.0+fake", flush=True)
     print(f"fake vllm: serving {model} on {port} (argv {argv})", flush=True)
     if not (model / "config.json").is_file():
         print(f"ValueError: no config.json in {model} (fake vllm)", file=sys.stderr, flush=True)
@@ -40,6 +43,11 @@ def main(argv: list[str]) -> int:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
             pass
+
+        def log_request(self, code: object = "-", size: object = "-") -> None:
+            host, client_port = self.client_address[:2]
+            line = f'INFO:     {host}:{client_port} - "{self.requestline}" {code} OK'
+            print(line, flush=True)
 
         def _send(self, code: int, body: dict) -> None:
             data = json.dumps(body).encode()

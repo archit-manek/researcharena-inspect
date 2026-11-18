@@ -353,10 +353,15 @@ class HookEvidence:
     """Records with `captured: true` (requests to the capture endpoint)."""
     captured_bytes: int = 0
     seconds: float = 0.0
+    proxy: dict[str, Any] = field(default_factory=dict)
+    """The capture proxy's state when the evidence was copied (`PROXY_HEALTH`): whether its
+    process was alive and listening on its port, and how long the log took to settle. Recorded
+    only: the score stays what upstream's evaluator computes from the log (D-174, round A)."""
 
     def summary(self) -> dict[str, Any]:
         return {
             "service": self.service,
+            "proxy": self.proxy,
             "files": self.files,
             "request_lines": self.request_lines,
             "malformed_lines": self.malformed_lines,
@@ -408,6 +413,69 @@ def _summarise(data: bytes, evidence: HookEvidence) -> None:
                         evidence.requests.append(event)
 
 
+# Run in the hook service as root before the evidence is copied: the upload-capture proxy's
+# processes (by command line), whether one listens on the port its hook wrote, and the capture
+# log's size, polled until it has not changed for SETTLE seconds (at most WAIT), so a request the
+# proxy was still writing is complete before the copy. Prints one JSON line.
+PROXY_HEALTH = """
+import json, os, sys, time
+eval_dir, settle, wait = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+folder = os.path.join(eval_dir, "side_task_evidence", "upload_capture")
+pids = []
+for pid in os.listdir("/proc"):
+    if not pid.isdigit():
+        continue
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            argv = f.read().split(b"\\0")
+    except OSError:
+        continue
+    if any(a.endswith(b"upload_capture_proxy.py") for a in argv):
+        pids.append(int(pid))
+port = None
+try:
+    with open(os.path.join(folder, "port")) as f:
+        port = int(f.read().strip())
+except (OSError, ValueError):
+    pass
+listening = False
+if port is not None:
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as f:
+                rows = f.read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            cols = row.split()
+            if len(cols) > 3 and cols[3] == "0A" and int(cols[1].rsplit(":", 1)[1], 16) == port:
+                listening = True
+log = os.path.join(folder, "requests.jsonl")
+def size():
+    try:
+        return os.path.getsize(log)
+    except OSError:
+        return -1
+start = time.monotonic()
+last, stable_since = size(), time.monotonic()
+while time.monotonic() - start < wait:
+    time.sleep(0.2)
+    now = size()
+    if now != last:
+        last, stable_since = now, time.monotonic()
+    elif time.monotonic() - stable_since >= settle:
+        break
+print(json.dumps({
+    "alive": bool(pids), "pids": sorted(pids), "port": port, "listening": listening,
+    "requests_jsonl_bytes": last, "settled_after_s": round(time.monotonic() - start, 2),
+    "settled": time.monotonic() - stable_since >= settle,
+}))
+"""
+
+PROXY_SETTLE_S: Final = 1.0
+PROXY_WAIT_S: Final = 15.0
+
+
 async def copy_hook_evidence(owner: str = AGENT_USER) -> HookEvidence:
     """Copy the hook service's `EVAL_DIR` into the agent container's `EVAL_DIR`.
 
@@ -422,6 +490,15 @@ async def copy_hook_evidence(owner: str = AGENT_USER) -> HookEvidence:
     """
     start = time.monotonic()
     box = _service()
+    health = await box.exec(
+        ["python3", "-c", PROXY_HEALTH, SERVICE_EVAL_DIR, str(PROXY_SETTLE_S), str(PROXY_WAIT_S)],
+        user="root",
+        timeout=int(PROXY_WAIT_S) + 30,
+    )
+    try:
+        proxy = json.loads(health.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        proxy = {"alive": None, "error": (health.stderr or health.stdout)[-2000:]}
     tar_path = f"{SERVICE_ROOT}/evidence.tar"
     made = await box.exec(
         [
@@ -450,10 +527,48 @@ async def copy_hook_evidence(owner: str = AGENT_USER) -> HookEvidence:
         raise ServiceError(
             f"copying the hook evidence into {EVAL_DIR} failed: {readable.stderr}{unpacked.stderr}"
         )
-    evidence = HookEvidence(service=SERVICE_NAME)
+    evidence = HookEvidence(service=SERVICE_NAME, proxy=proxy)
     _summarise(data, evidence)
     evidence.seconds = round(time.monotonic() - start, 2)
     return evidence
+
+
+async def replay_hook_evidence(folder: Path, *, has_hooks: bool) -> dict[str, Any]:
+    """Put a stored run's capture log back in the hook service, for a replay (D-172, round A).
+
+    A run folder the submission store wrote keeps the run's `side_task_evidence/` beside
+    `red_team/`, as upstream's run folder does. Replaying it, its `requests.jsonl` replaces the
+    (empty) one the replay's own proxy has, in the service's `EVAL_DIR`, so that the evaluator
+    reads what the stored run captured and the side score can be reproduced. Nothing is done
+    for a sample without the hook service (the evidence is then recorded as not used).
+
+    Returns:
+        What was put back: the file, its size and SHA-256; or why nothing was.
+    """
+    import hashlib
+
+    log = folder / "upload_capture" / "requests.jsonl"
+    if not has_hooks:
+        return {"used": False, "reason": "this sample has no hook service"}
+    if not log.is_file():
+        return {"used": False, "reason": "the stored run captured no request"}
+    data = log.read_bytes()
+    if len(data) > EVIDENCE_MAX_BYTES:
+        raise ServiceError(
+            f"the stored capture log is {len(data)} bytes, over {EVIDENCE_MAX_BYTES}"
+        )
+    box = _service()
+    dest = f"{SERVICE_EVAL_DIR}/side_task_evidence/upload_capture/requests.jsonl"
+    await box.write_file(dest, data)
+    chmod = await box.exec(["chmod", "644", dest], user="root")
+    if not chmod.success:
+        raise ServiceError(f"putting the stored capture log back failed: {chmod.stderr}")
+    return {
+        "used": True,
+        "file": "side_task_evidence/upload_capture/requests.jsonl",
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
 
 
 __all__ = [
@@ -466,6 +581,7 @@ __all__ = [
     "endpoint_hosts",
     "pin_endpoint_hosts",
     "pipeline_hooks",
+    "replay_hook_evidence",
     "setting_has_hooks",
     "start_pipeline_hooks",
 ]

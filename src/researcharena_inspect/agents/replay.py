@@ -46,13 +46,16 @@ replayed: its evidence (`side_task_evidence/`, the capture log) is not in the pu
 so the replayed side score is the one of a run that uploaded nothing.
 """
 
+import gzip
 import hashlib
 import io
 import json
+import os
 import shlex
 import tarfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -171,16 +174,101 @@ def snapshot_files(source: ReplaySource) -> dict[str, bytes]:
     return local_snapshot_files(Path(source.source))
 
 
-def published_model_files(run_id: str) -> dict[str, Path]:
-    """A published post-training run's `final_model/` files, by path relative to `task_snapshot/`.
+class ReplayError(RuntimeError):
+    """The replayed workspace is missing, incomplete, unverified or over the caps.
+
+    Never replaced by an empty workspace: an empty one would score as upstream's genuine "no
+    model" 0.0 (D-172, round A).
+    """
+
+
+REPLAY_MAX_BYTES = 24 * 1024**3
+"""Cap on a replayed workspace (the store's 20 GiB cap plus room)."""
+
+REPLAY_MAX_FILES = 100_000
+
+
+@dataclass
+class ReplayInput:
+    """What a replay puts in place, and where it came from (for the replay's record)."""
+
+    files: dict[str, "FileSource"]
+    provenance: dict[str, Any]
+    evidence: Path | None = None
+    """A stored run's `side_task_evidence/` folder, for the hook service (`services`)."""
+
+
+@cache
+def model_listing() -> dict[str, Any]:
+    """The pinned listing of the published capabilities models (`pins.OUTPUT_MODELS_LISTING`).
+
+    One entry per file of every run's `final_model/`, with its size and its SHA-256 (LFS files)
+    or git blob id (small files), as the Hub listed the dataset at `pins.OUTPUT_MODELS_REVISION`;
+    checked against its own pinned SHA-256 when loaded. Lets a replay verify a published model
+    without calling the Hub.
+    """
+    from researcharena_inspect.pins import (
+        OUTPUT_MODELS_LISTING,
+        OUTPUT_MODELS_LISTING_SHA256,
+        OUTPUT_MODELS_REVISION,
+    )
+
+    raw = gzip.decompress(OUTPUT_MODELS_LISTING.read_bytes())
+    if hashlib.sha256(raw).hexdigest() != OUTPUT_MODELS_LISTING_SHA256:
+        raise ReplayError(f"{OUTPUT_MODELS_LISTING} does not match its pinned SHA-256")
+    data = json.loads(raw)
+    if data["revision"] != OUTPUT_MODELS_REVISION:
+        raise ReplayError("the model listing is not for the pinned revision")
+    return data
+
+
+def _git_blob_id(path: Path) -> str:
+    size = path.stat().st_size
+    digest = hashlib.sha1(f"blob {size}\0".encode())
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 24), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 24), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def published_model_files(run_id: str) -> tuple[dict[str, Path], dict[str, Any]]:
+    """A published post-training run's `final_model/` files, checked against the pinned listing.
 
     From `pins.OUTPUT_MODELS_DATASET` at `pins.OUTPUT_MODELS_REVISION` (about 1 GB per run, cached
-    by `huggingface_hub`). Empty for a run that saved no model (one capabilities baseline).
+    by `huggingface_hub`; with `HF_HUB_OFFLINE=1` only the local copy is read). Every file the
+    pinned listing names must be present locally with its size and hash, and no other file may
+    be there: an incomplete or altered local snapshot is an error. Empty for the run that saved
+    no model (the listing has no files for it).
+
+    Returns:
+        The files by path relative to `task_snapshot/`, and their provenance (dataset,
+        revision, file count and bytes) for the replay's record.
+
+    Raises:
+        ReplayError: a file is missing, extra, of another size or another hash.
     """
     from inspect_evals_utils.huggingface import snapshot_download
 
     from researcharena_inspect.pins import OUTPUT_MODELS_DATASET, OUTPUT_MODELS_REVISION
 
+    run_name = run_id.split("/", 1)[-1]
+    listed = {e["path"]: e for e in model_listing()["runs"].get(run_name, [])}
+    provenance: dict[str, Any] = {
+        "dataset": OUTPUT_MODELS_DATASET,
+        "revision": OUTPUT_MODELS_REVISION,
+        "files": len(listed),
+        "bytes": sum(e["size"] for e in listed.values()),
+    }
+    if not listed:
+        return {}, provenance
     prefix = f"{run_id}/{SNAPSHOT}/{MODEL_FOLDER}"
     root = Path(
         snapshot_download(
@@ -192,33 +280,155 @@ def published_model_files(run_id: str) -> dict[str, Path]:
     )
     base = root / run_id / SNAPSHOT
     model = base / MODEL_FOLDER
-    if not model.is_dir():
-        return {}
-    return {p.relative_to(base).as_posix(): p for p in sorted(model.rglob("*")) if p.is_file()}
+    found = (
+        {p.relative_to(base).as_posix(): p for p in sorted(model.rglob("*")) if p.is_file()}
+        if model.is_dir()
+        else {}
+    )
+    if set(found) != set(listed):
+        raise ReplayError(
+            f"{run_id}: the local model does not match the pinned listing: missing "
+            f"{sorted(set(listed) - set(found))[:10]}, not listed {sorted(set(found) - set(listed))[:10]}"
+        )
+    for rel, path in found.items():
+        entry = listed[rel]
+        if path.stat().st_size != entry["size"]:
+            raise ReplayError(
+                f"{run_id}: {rel} has {path.stat().st_size} bytes, pinned {entry['size']}"
+            )
+        if "sha256" in entry:
+            ok = _sha256(path) == entry["sha256"]
+        else:
+            ok = _git_blob_id(path) == entry["git_blob"]
+        if not ok:
+            raise ReplayError(f"{run_id}: {rel} does not match the pinned listing's hash")
+    provenance["verified"] = True
+    return found, provenance
 
 
-def snapshot_sources(source: ReplaySource) -> dict[str, FileSource]:
-    """The replayed workspace's files as host paths (read when they are put in place).
+def _check_caps(files: Mapping[str, "FileSource"], where: str) -> None:
+    total = sum(_size(v) for v in files.values())
+    if len(files) > REPLAY_MAX_FILES or total > REPLAY_MAX_BYTES:
+        raise ReplayError(
+            f"{where}: {len(files)} files, {total} bytes; caps {REPLAY_MAX_FILES} files, "
+            f"{REPLAY_MAX_BYTES} bytes"
+        )
 
-    The same files as `snapshot_files`, plus, for a published post-training run, its
-    `final_model/` from the separate dataset (`published_model_files`).
+
+def local_run_files(run_dir: Path) -> tuple[dict[str, Path], dict[str, Any]]:
+    """The files of a local run folder's `red_team/task_snapshot/`, checked, never followed out.
+
+    - The snapshot must exist and hold a file (a missing or empty one is an error, never an
+      empty workspace), and the folder must not be a store that did not finish.
+    - A folder the submission store wrote has a `manifest.json`: its status must be `stored`
+      (a `partial` or unfinished store is refused), and the files on disk must be exactly the
+      manifest's, each with its size and SHA-256.
+    - A symbolic link is followed only when it resolves to a regular file inside the run
+      folder; any other link is left out and listed (`refused_links`), so no file outside the
+      run folder is read on the host. Links to folders are not followed.
+
+    Raises:
+        ReplayError: as above.
+    """
+    run_dir = run_dir.resolve()
+    root = run_dir / SNAPSHOT
+    if not root.is_dir() or root.is_symlink():
+        raise ReplayError(f"{run_dir} has no {SNAPSHOT}/ folder: nothing to replay")
+    files: dict[str, Path] = {}
+    refused: list[dict[str, str]] = []
+    for folder, dirs, names in os.walk(root, followlinks=False):
+        here = Path(folder)
+        for name in sorted(dirs):
+            if (here / name).is_symlink():
+                refused.append(
+                    {
+                        "path": (here / name).relative_to(root).as_posix(),
+                        "reason": "a link to a folder",
+                    }
+                )
+        for name in sorted(names):
+            path = here / name
+            rel = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                real = Path(os.path.realpath(path))
+                if not real.is_relative_to(run_dir) or not real.is_file():
+                    refused.append({"path": rel, "reason": "a link out of the run folder"})
+                    continue
+            elif not path.is_file():
+                refused.append({"path": rel, "reason": "not a regular file"})
+                continue
+            files[rel] = path
+    if not files:
+        raise ReplayError(f"{run_dir}: {SNAPSHOT}/ holds no file: nothing to replay")
+    if run_dir.name.endswith(".incomplete") or (run_dir / ".transfer").exists():
+        raise ReplayError(f"{run_dir} is a store that did not finish")
+    _check_caps(files, str(run_dir))
+    provenance: dict[str, Any] = {"run_folder": str(run_dir), "refused_links": refused}
+    manifest_path = run_dir / "manifest.json"
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("status") != "stored":
+            raise ReplayError(
+                f"{run_dir}: the store's status is {manifest.get('status')!r}; only a "
+                "complete store ('stored') is replayed"
+            )
+        listed = {e["path"]: e for e in manifest.get("entries", []) if e.get("kind") == "file"}
+        links = {e["path"] for e in manifest.get("entries", []) if e.get("kind") == "link"}
+        on_disk = set(files) - links
+        if on_disk != set(listed):
+            raise ReplayError(
+                f"{run_dir}: files differ from the manifest: missing "
+                f"{sorted(set(listed) - on_disk)[:10]}, not listed {sorted(on_disk - set(listed))[:10]}"
+            )
+        for rel, entry in listed.items():
+            path = files[rel]
+            if path.stat().st_size != entry["size"] or _sha256(path) != entry["sha256"]:
+                raise ReplayError(f"{run_dir}: {rel} differs from the manifest")
+        provenance["manifest"] = {"status": manifest["status"], "files": len(listed)}
+    return files, provenance
+
+
+def replay_input(source: "ReplaySource") -> ReplayInput:
+    """The replayed workspace's files (host paths, read when put in place) and their provenance.
+
+    A published run: its `task_snapshot/` from the trajectories dataset, plus, for a
+    post-training run, its `final_model/` from the models dataset, checked against the pinned
+    listing (`published_model_files`). A local run folder: `local_run_files`, and its
+    `side_task_evidence/` if it kept one.
+
+    Raises:
+        ReplayError: a missing, incomplete or altered source, conflicting files, or the caps.
     """
     if source.published:
         from researcharena_inspect.monitor.bundle import fetch_workspace
+        from researcharena_inspect.pins import HF_DATASET, HF_REVISION
 
         root = fetch_workspace(source.source)
         if not root.is_dir():
-            raise FileNotFoundError(f"no published task_snapshot for {source.source}")
+            raise ReplayError(f"no published task_snapshot for {source.source}")
         files: dict[str, FileSource] = {
             path.relative_to(root).as_posix(): path
             for path in sorted(root.rglob("*"))
             if path.is_file()
         }
+        provenance: dict[str, Any] = {"workspace": {"dataset": HF_DATASET, "revision": HF_REVISION}}
         if source.setting in MODEL_SETTINGS:
-            files.update(published_model_files(source.source))
-        return files
-    root = Path(source.source) / SNAPSHOT
-    return {p.relative_to(root).as_posix(): p for p in sorted(root.rglob("*")) if p.is_file()}
+            model, provenance["model"] = published_model_files(source.source)
+            clash = sorted(set(files) & set(model))
+            if clash or any(k.startswith(f"{MODEL_FOLDER}/") for k in files):
+                raise ReplayError(f"{source.source}: the trajectories already hold {MODEL_FOLDER}/")
+            files.update(model)
+        _check_caps(files, source.source)
+        return ReplayInput(files, provenance)
+    run_dir = Path(source.source)
+    local, provenance = local_run_files(run_dir)
+    evidence = run_dir / "side_task_evidence"
+    return ReplayInput(dict(local), provenance, evidence if evidence.is_dir() else None)
+
+
+def snapshot_sources(source: "ReplaySource") -> dict[str, "FileSource"]:
+    """The replayed workspace's files (`replay_input(source).files`)."""
+    return replay_input(source).files
 
 
 def _size(value: FileSource) -> int:

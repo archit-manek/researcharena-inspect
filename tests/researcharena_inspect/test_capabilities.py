@@ -32,12 +32,11 @@ from researcharena_inspect import researcharena
 from researcharena_inspect.agents import Budget, red_timeout_seconds
 from researcharena_inspect.agents.claude_code import claude_code_env
 from researcharena_inspect.agents.replay import (
-    LARGE_FILE_BYTES,
+    ReplayError,
     ReplaySource,
-    _batches,
-    published_model_files,
-    select_files,
-    snapshot_sources,
+    local_run_files,
+    model_listing,
+    replay_input,
 )
 from researcharena_inspect.environment import services
 from researcharena_inspect.environment.evaluation import evaluator_entries
@@ -53,12 +52,14 @@ from researcharena_inspect.environment.model_cache import (
     models_for,
     parse_result,
 )
+from researcharena_inspect.environment.model_cache import SCRIPT_PATH as MODEL_CACHE_SCRIPT
 from researcharena_inspect.environment.sandbox import COMPOSE_FILE, VLLM_SHM_SIZE, sandbox_spec
 from researcharena_inspect.environment.staging import (
     AGENT_EXTRA_ENV_KEY,
     STAGING_METADATA_KEY,
     agent_extra_env,
     home_entries,
+    stage_workspace,
 )
 from researcharena_inspect.pins import OUTPUT_MODELS_DATASET, OUTPUT_MODELS_REVISION
 from researcharena_inspect.prompts import list_side_tasks, resume_agent
@@ -633,85 +634,314 @@ class LocalBox:
         Path(file).write_bytes(data)  # noqa: ASYNC240
 
 
-def test_large_files_move_in_checked_pieces(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("subprocess.run", subprocess.run)
-    tree = tmp_path / "tree"
-    (tree / "final_model").mkdir(parents=True)
-    weights = os.urandom(10_000)
-    (tree / "final_model" / "model.safetensors").write_bytes(weights)
-    (tree / "notes.txt").write_text("x")
-    (tree / "link").symlink_to("/etc/passwd")
-    box = cast(SandboxEnvironment, LocalBox())
+def _box() -> SandboxEnvironment:
+    return cast(SandboxEnvironment, LocalBox())
+
+
+def _tree(root: Path) -> Path:
+    """A workspace: a model folder, a file sorting before it, in-tree and outside links."""
+    model = root / "final_model"
+    model.mkdir(parents=True)
+    (model / "model.safetensors").write_bytes(os.urandom(10_000))
+    (model / "config.json").write_text("{}")
+    (model / "weights").symlink_to("model.safetensors")  # inside the folder
+    (root / "aardvark").write_text("sorts before final_model")
+    (root / "outside").symlink_to("/etc/passwd")
+    return root
+
+
+def test_the_listing_puts_the_model_first_and_bounds_the_hashing(tmp_path: Path) -> None:
+    tree = _tree(tmp_path / "tree")
+    # D-172, round A: the cap applies after the model is put first (it used to cut it).
     entries, truncated = asyncio.run(
-        transfer.list_tree(box, str(tree), max_entries=100, first=("final_model",))
-    )
-    assert not truncated
-    assert [e["path"] for e in entries] == [
-        "final_model",
-        "final_model/model.safetensors",
-        "link",
-        "notes.txt",
-    ]
-    file = entries[1]
-    assert file["sha256"] == hashlib.sha256(weights).hexdigest()
-    assert entries[2] == {
-        "path": "link",
-        "kind": "link",
-        "mode": entries[2]["mode"],
-        "target": "/etc/passwd",
-    }
-    out = tmp_path / "out.bin"
-    asyncio.run(
-        transfer.copy_out(
-            box,
-            str(tree / file["path"]),
-            out,
-            size=file["size"],
-            sha256=file["sha256"],
-            scratch=str(tmp_path / "piece"),
-            chunk=4096,
+        transfer.list_tree(
+            _box(), str(tree), max_entries=2, max_hash_bytes=10**9, first=("final_model",)
         )
     )
-    assert out.read_bytes() == weights
+    assert truncated
+    assert [e["path"] for e in entries] == ["final_model", "final_model/config.json"]
+    entries, _ = asyncio.run(
+        transfer.list_tree(
+            _box(), str(tree), max_entries=100, max_hash_bytes=10_005, first=("final_model",)
+        )
+    )
+    by_path = {e["path"]: e for e in entries}
+    assert [e["path"] for e in entries][:4] == [
+        "final_model",
+        "final_model/config.json",
+        "final_model/model.safetensors",
+        "final_model/weights",
+    ]
+    assert "sha256" in by_path["final_model/model.safetensors"]
+    # Past the hashing budget: listed, not hashed, so not copied.
+    assert by_path["aardvark"].get("over_budget") is True
+    assert "sha256" not in by_path["aardvark"]
+    assert by_path["outside"] == {
+        "path": "outside",
+        "kind": "link",
+        "mode": by_path["outside"]["mode"],
+        "target": "/etc/passwd",
+    }
+
+
+def test_a_transfer_checks_its_bytes_and_never_takes_a_workspace_name(tmp_path: Path) -> None:
+    tree = _tree(tmp_path / "tree")
+    entries, _ = asyncio.run(
+        transfer.list_tree(_box(), str(tree), max_entries=100, max_hash_bytes=10**9)
+    )
+    weights = next(e for e in entries if e["path"] == "final_model/model.safetensors")
+    out = tmp_path / "out" / "model.safetensors"
+    out.parent.mkdir()
+    (out.parent / "model.safetensors.part").write_text("a sibling workspace file")
+    common = {"scratch": str(tmp_path / "piece"), "part_dir": tmp_path / "parts", "chunk": 4096}
+    asyncio.run(
+        transfer.copy_out(
+            _box(),
+            str(tree / weights["path"]),
+            out,
+            size=weights["size"],
+            sha256=weights["sha256"],
+            **common,
+        )
+    )
+    assert out.read_bytes() == (tree / weights["path"]).read_bytes()
+    assert (out.parent / "model.safetensors.part").read_text() == "a sibling workspace file"
     with pytest.raises(transfer.TransferError):
         asyncio.run(
             transfer.copy_out(
-                box,
-                str(tree / file["path"]),
-                tmp_path / "bad.bin",
-                size=file["size"],
+                _box(),
+                str(tree / weights["path"]),
+                tmp_path / "out" / "bad.bin",
+                size=weights["size"],
                 sha256="0" * 64,
-                scratch=str(tmp_path / "piece"),
-                chunk=4096,
+                **common,
             )
         )
-    assert not (tmp_path / "bad.bin").exists()
-    assert not (tmp_path / "bad.bin.part").exists()
+    assert not (tmp_path / "out" / "bad.bin").exists()
+    assert list((tmp_path / "parts").iterdir()) == []
 
 
-def test_replay_keeps_every_file_and_batches_small_ones() -> None:
-    files = {"final_model/model.safetensors": b"w", "eval_data/gsm8k_test_200.json": b"[]"}
-    assert select_files(files, "fresh", SETTING) == files  # nothing is read back (D-172)
-    big = {f"f{i}": b"x" * (40 * 1024 * 1024) for i in range(3)}
-    assert [len(b) for b in _batches(big)] == [1, 1, 1]
-    assert [len(b) for b in _batches(files)] == [1 + 1]
-    assert LARGE_FILE_BYTES < 100 * 1024 * 1024  # under Inspect's read limit
+def test_copying_result_into_a_workspace_keeps_a_sibling_result_part(tmp_path: Path) -> None:
+    # The review's fixture: the part used to be `<dest>.part`, so a workspace file of that name
+    # was removed when `result` was copied in. Shared replay code (D-172, round A).
+    work = tmp_path / "task"
+    work.mkdir()
+    (work / "result.part").write_bytes(b"another valid submission file")
+    source = tmp_path / "source"
+    source.write_bytes(b"bytes intended for result" * 1000)
+    digest = asyncio.run(
+        transfer.copy_in(
+            _box(),
+            source,
+            str(work / "result"),
+            user="user",
+            scratch=str(tmp_path / "scratch"),
+            chunk=4096,
+            temp_dir=str(tmp_path),
+        )
+    )
+    assert (work / "result").read_bytes() == source.read_bytes()
+    assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert (work / "result.part").read_bytes() == b"another valid submission file"
+    assert not list(tmp_path.glob("researcharena-assemble-*"))
 
 
-def test_a_published_run_replays_with_its_model(
+def _store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tree: Path, **kwargs: Any
+) -> dict[str, Any]:
+    """`keep_submission` on this machine: `tree` as the sandbox's snapshot, records beside it."""
+    eval_dir = tmp_path / "mnt_eval"
+    (eval_dir / "eval").mkdir(parents=True)
+    (eval_dir / "eval" / "metrics.json").write_text('{"main_task_score": 0.5}')
+    (eval_dir / "side_task_evidence" / "upload_capture").mkdir(parents=True)
+    (eval_dir / "side_task_evidence" / "upload_capture" / "requests.jsonl").write_text(
+        '{"captured": true}\n'
+    )
+
+    async def no_processes() -> None:
+        return None
+
+    monkeypatch.setattr(transfer, "CHUNK_BYTES", 4096)  # the local box reads 4 KiB at most
+    monkeypatch.setattr(store, "SNAPSHOT_DIR", str(tree))
+    monkeypatch.setattr(store, "_SCRATCH", str(tmp_path / "piece"))
+    monkeypatch.setattr(store, "stop_agent_processes", no_processes)
+    monkeypatch.setattr(store, "sandbox_env", _box)
+    monkeypatch.setattr(
+        store,
+        "RECORD_FOLDERS",
+        (
+            (str(eval_dir / "eval"), "eval"),
+            (str(eval_dir / "side_task_evidence"), "side_task_evidence"),
+        ),
+    )
+    meta = {"setting": SETTING, "side_task": "independent", "task_config": CONFIG}
+    return asyncio.run(
+        store.keep_submission(tmp_path / "store", name="run__e1", run_metadata=meta, **kwargs)
+    )
+
+
+def test_the_store_marks_a_left_out_link_as_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = _tree(tmp_path / "tree")
+    record = _store(tmp_path, monkeypatch, tree)
+    folder = Path(record["folder"])
+    assert record["status"] == store.PARTIAL  # the outside link was not made
+    assert [(e["path"], e["reason"]) for e in record["left_out"]] == [
+        ("outside", "a link that points outside the folder")
+    ]
+    snapshot = folder / "red_team" / "task_snapshot"
+    assert (snapshot / "final_model" / "weights").is_symlink()  # in-tree: kept as a link
+    assert not (snapshot / "outside").exists()
+    assert not (snapshot / "outside").is_symlink()
+    manifest = json.loads((folder / "manifest.json").read_text())
+    assert manifest["status"] == "partial"
+    assert "outside" not in {e["path"] for e in manifest["entries"]}
+    # The run's raw records are kept beside red_team/, as upstream's run folder keeps them.
+    assert json.loads((folder / "eval" / "metrics.json").read_text()) == {"main_task_score": 0.5}
+    assert (folder / "side_task_evidence" / "upload_capture" / "requests.jsonl").is_file()
+    assert {r["path"] for r in record["records"]} >= {
+        "eval/metrics.json",
+        "side_task_evidence/upload_capture/requests.jsonl",
+    }
+    # Replay refuses it: only a complete store is replayed.
+    with pytest.raises(ReplayError, match="partial"):
+        local_run_files(folder)
+
+
+def test_the_store_publishes_a_complete_folder_and_replay_checks_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = _tree(tmp_path / "tree")
+    (tree / "outside").unlink()
+    record = _store(tmp_path, monkeypatch, tree)
+    assert record["status"] == store.STORED, record
+    folder = Path(record["folder"])
+    assert folder.name == "run__e1"
+    assert not list((tmp_path / "store").glob(".*incomplete*"))
+    files, provenance = local_run_files(folder)
+    assert set(files) == {
+        "aardvark",
+        "final_model/config.json",
+        "final_model/model.safetensors",
+        "final_model/weights",  # an in-tree link, read as its target's bytes
+    }
+    assert provenance["manifest"] == {"status": "stored", "files": 3}
+    # Changed bytes are refused; so is a missing file and an unlisted one.
+    weights = folder / "red_team" / "task_snapshot" / "final_model" / "model.safetensors"
+    original = weights.read_bytes()
+    weights.write_bytes(b"x" * len(original))
+    with pytest.raises(ReplayError, match="differs from the manifest"):
+        local_run_files(folder)
+    weights.write_bytes(original)
+    (folder / "red_team" / "task_snapshot" / "extra").write_text("added")
+    with pytest.raises(ReplayError, match="not listed"):
+        local_run_files(folder)
+    # The store never overwrites.
+    again = _store(tmp_path / "again", monkeypatch, tree)
+    assert again["status"] == store.STORED
+    record2 = asyncio.run(
+        store.keep_submission(tmp_path / "store", name="run__e1", run_metadata={})
+    )
+    assert record2["status"] == store.ERROR
+    assert "never overwritten" in record2["error"]
+
+
+def test_a_failed_store_leaves_an_incomplete_folder_replay_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = _tree(tmp_path / "tree")
+
+    async def broken(*args: Any, **kwargs: Any) -> None:
+        raise transfer.TransferError("the sandbox went away")
+
+    monkeypatch.setattr(store, "copy_out", broken)
+    record = _store(tmp_path, monkeypatch, tree)
+    assert record["status"] == store.ERROR
+    assert "went away" in record["error"]
+    assert not (tmp_path / "store" / "run__e1").exists()
+    incomplete = Path(record["incomplete_folder"])
+    assert incomplete.name == ".run__e1.incomplete"
+    with pytest.raises(ReplayError, match=r"did not finish|holds no file"):
+        local_run_files(incomplete)
+
+
+def test_replay_refuses_a_missing_snapshot_and_links_out_of_the_run_folder(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    with pytest.raises(ReplayError, match="nothing to replay"):
+        local_run_files(run)  # never an empty workspace, which would score as "no model"
+    snapshot = run / "red_team" / "task_snapshot"
+    snapshot.mkdir(parents=True)
+    (snapshot / "train.py").write_text("print()")
+    secret = tmp_path / "host_secret"
+    secret.write_text("a host file")
+    (snapshot / "leak").symlink_to(secret)
+    (snapshot / "dir_link").symlink_to(tmp_path)
+    (snapshot / "inside").symlink_to("train.py")
+    files, provenance = local_run_files(run)
+    assert set(files) == {"train.py", "inside"}
+    assert {r["path"]: r["reason"] for r in provenance["refused_links"]} == {
+        "leak": "a link out of the run folder",
+        "dir_link": "a link to a folder",
+    }
+
+
+def _listing(run: str, files: dict[str, bytes]) -> dict[str, Any]:
+    entries = []
+    for rel, data in files.items():
+        if rel.endswith(".safetensors"):
+            entries.append(
+                {"path": rel, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            )
+        else:
+            blob = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+            entries.append({"path": rel, "size": len(data), "git_blob": blob})
+    return {"revision": OUTPUT_MODELS_REVISION, "runs": {run.split("/", 1)[1]: entries}}
+
+
+def test_the_pinned_model_listing_matches_the_reader_and_the_hub() -> None:
+    listing = model_listing()
+    runs = listing["runs"]
+    assert len(runs) == 71
+    assert sum(len(v) for v in runs.values()) == 509
+    weights = {
+        run: next(e["sha256"] for e in entries if e["path"] == "final_model/model.safetensors")
+        for run, entries in runs.items()
+    }
+    # Two published submissions are the untouched base weights (D-171).
+    base = {f.path: f.sha256 for f in QWEN2_5_0_5B_INSTRUCT.files}["model.safetensors"]
+    assert sorted(r.rsplit("__", 1)[-1] for r, w in weights.items() if w == base) == [
+        "20260504_203028",
+        "20260505_183225",
+    ]
+    assert all(e["size"] > 0 for entries in runs.values() for e in entries)
+
+
+def test_a_published_run_replays_with_its_checked_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     run = "utility_finetuning/utility_finetuning__baseline__codex_norepeat__gpt-5.3-codex__20260505_183225"
+    published = {
+        "final_model/config.json": b"{}",
+        "final_model/model.safetensors": os.urandom(4000),
+    }
+    monkeypatch.setattr(
+        "researcharena_inspect.agents.replay.model_listing", lambda: _listing(run, published)
+    )
     calls: list[dict[str, Any]] = []
+    local = dict(published)
 
     def fake_snapshot_download(**kwargs: Any) -> str:
         calls.append(kwargs)
         if kwargs["repo_id"] == OUTPUT_MODELS_DATASET:
-            model = tmp_path / "models" / run / "red_team" / "task_snapshot" / "final_model"
-            model.mkdir(parents=True, exist_ok=True)
-            (model / "config.json").write_text("{}")
+            base = tmp_path / "models" / run / "red_team" / "task_snapshot"
+            shutil.rmtree(base, ignore_errors=True)
+            for rel, data in local.items():
+                (base / rel).parent.mkdir(parents=True, exist_ok=True)
+                (base / rel).write_bytes(data)
             return str(tmp_path / "models")
         snapshot = tmp_path / "traj" / run / "red_team" / "task_snapshot"
         snapshot.mkdir(parents=True, exist_ok=True)
@@ -723,11 +953,150 @@ def test_a_published_run_replays_with_its_model(
         "researcharena_inspect.monitor.bundle.snapshot_download", fake_snapshot_download
     )
     source = ReplaySource(run, SETTING, "none", CONFIG, "5", published=True)
-    files = snapshot_sources(source)
-    assert sorted(files) == ["final_model/config.json", "train.py"]
+    given = replay_input(source)
+    assert sorted(given.files) == [
+        "final_model/config.json",
+        "final_model/model.safetensors",
+        "train.py",
+    ]
+    assert given.provenance["model"] == {
+        "dataset": OUTPUT_MODELS_DATASET,
+        "revision": OUTPUT_MODELS_REVISION,
+        "files": 2,
+        "bytes": 4002,
+        "verified": True,
+    }
     model_call = next(c for c in calls if c["repo_id"] == OUTPUT_MODELS_DATASET)
     assert model_call["revision"] == OUTPUT_MODELS_REVISION
     assert model_call["allow_patterns"] == [f"{run}/red_team/task_snapshot/final_model/*"]
-    assert published_model_files(run) == {
-        "final_model/config.json": files["final_model/config.json"]
-    }
+    # An incomplete local snapshot, other bytes, or an extra file are errors.
+    local = {"final_model/model.safetensors": published["final_model/model.safetensors"]}
+    with pytest.raises(ReplayError, match="missing"):
+        replay_input(source)
+    local = {**published, "final_model/config.json": b"[]"}
+    with pytest.raises(ReplayError, match="hash"):
+        replay_input(source)
+    local = {**published, "final_model/extra.bin": b"x"}
+    with pytest.raises(ReplayError, match="not listed"):
+        replay_input(source)
+
+
+def test_the_published_run_without_a_model_replays_its_workspace_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run = "utility_finetuning/utility_finetuning__baseline__opencode_norepeat__opencode_glm-5.1__20260506_104012_c17166763"
+    assert run.split("/", 1)[1] not in model_listing()["runs"]
+
+    def no_model_download(**kwargs: Any) -> str:
+        if kwargs["repo_id"] == OUTPUT_MODELS_DATASET:
+            raise AssertionError("no model is listed for this run: nothing to fetch")
+        snapshot = tmp_path / run / "red_team" / "task_snapshot"
+        snapshot.mkdir(parents=True, exist_ok=True)
+        (snapshot / "train.py").write_text("print()")
+        return str(tmp_path)
+
+    monkeypatch.setattr("inspect_evals_utils.huggingface.snapshot_download", no_model_download)
+    monkeypatch.setattr("researcharena_inspect.monitor.bundle.snapshot_download", no_model_download)
+    given = replay_input(ReplaySource(run, SETTING, "none", CONFIG, "5", published=True))
+    assert sorted(given.files) == ["train.py"]
+    assert given.provenance["model"]["files"] == 0
+
+
+def test_the_cache_is_in_place_before_the_timer_for_this_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The review's first mutant (utility provisioning moved after the timer) passed every test.
+    result = json.dumps({"source": "seed", "problems": []})
+
+    def respond(call: Call) -> ExecResult[str] | None:
+        if MODEL_CACHE_SCRIPT in call.script:
+            return ExecResult(True, 0, f"MODEL_CACHE_RESULT={result}\n", "")
+        return None
+
+    fake = FakeSandbox(respond)
+    monkeypatch.setattr("researcharena_inspect.environment.staging.sandbox_env", lambda: fake)
+    monkeypatch.setattr("researcharena_inspect.environment.model_cache.sandbox_env", lambda: fake)
+    staged = asyncio.run(
+        stage_workspace(SETTING, "none", redruntime="5", agent="claude", model_cache="seed")
+    )
+    scripts = [c.script for c in fake.calls]
+    timer = next(i for i, s in enumerate(scripts) if "create_timer.sh" in s)
+    caches = [i for i, s in enumerate(scripts) if MODEL_CACHE_SCRIPT in s and "--spec" in s]
+    assert len(caches) == 3
+    assert max(caches) < timer
+    assert [r["repo_id"] for r in staged.model_cache] == [
+        QWEN2_5_0_5B_INSTRUCT.repo_id,
+        OPENAI_GSM8K.repo_id,
+        SCALEAI_GSM1K.repo_id,
+    ]
+
+
+@pytest.mark.parametrize("agent", ["react", "claude_code"])
+async def test_the_real_solver_does_not_reprompt_this_setting(
+    monkeypatch: pytest.MonkeyPatch, agent: str
+) -> None:
+    # The review's second mutant (re-prompting forced on in the solver) passed every test. Here
+    # the real solver runs on the real sample: the agent stops after its first round; a second
+    # round (a "Continue" prompt) would be a failure.
+    from inspect_ai.agent import AgentState
+    from inspect_ai.model import ChatMessageUser, ModelName, get_model
+    from inspect_ai.solver import TaskState
+
+    from researcharena_inspect.agents import AgentRun, red_team_agent
+    from researcharena_inspect.agents.claude_code import InstalledCli
+    from researcharena_inspect.environment.layout import PRE_AGENT_SETUP
+    from researcharena_inspect.task import red_team_sample
+
+    def respond(call: Call) -> ExecResult[str] | None:
+        if PRE_AGENT_SETUP in call.script:
+            return ExecResult(True, 0, "\n__researcharena_agent_path__=/usr/bin:/bin\n", "")
+        return None
+
+    fake = FakeSandbox(respond)
+    for module in ("solver", "processes", "replay"):
+        monkeypatch.setattr(f"researcharena_inspect.agents.{module}.sandbox", lambda *a: fake)
+    monkeypatch.setattr(
+        "researcharena_inspect.agents.solver.get_model", lambda: get_model("mockllm/model")
+    )
+    rounds: list[int] = []
+    seen_env: list[dict[str, str]] = []
+
+    async def one_round(state: AgentState) -> AgentState:
+        rounds.append(len(state.messages))
+        if len(rounds) > 1:
+            raise RuntimeError("a second round was started")
+        return state
+
+    def build(*args: Any, **kwargs: Any) -> Any:
+        seen_env.append(kwargs["env"])
+        return one_round
+
+    async def install(version: str, user: str | None = None) -> InstalledCli:
+        return InstalledCli("/usr/local/bin/claude", "2.1.34 (Claude Code)", version)
+
+    monkeypatch.setattr("researcharena_inspect.agents.solver.red_team_react", build)
+    monkeypatch.setattr("researcharena_inspect.agents.solver.red_team_claude_code", build)
+    monkeypatch.setattr("researcharena_inspect.agents.solver.install_claude_code", install)
+    sample = red_team_sample(SETTING, "none", "5")
+    assert sample.metadata is not None
+    state = TaskState(
+        model=ModelName("mockllm/model"),
+        sample_id="s",
+        epoch=1,
+        input=sample.input,
+        messages=[ChatMessageUser(content=str(sample.input))],
+        metadata=dict(sample.metadata),
+    )
+
+    async def no_generate(state: TaskState, **kwargs: Any) -> TaskState:
+        return state
+
+    state = await red_team_agent(agent=agent, fail_on_no_model_output=False)(
+        state, cast(Any, no_generate)
+    )
+    run = state.store_as(AgentRun)
+    assert len(rounds) == 1
+    assert [r["phase"] for r in run.rounds] == ["exec"]
+    assert run.resume is False
+    assert seen_env[0]["AGENT_RESUME"] == "false"
+    assert "[agent] AGENT_RESUME=false: not resuming" in run.log

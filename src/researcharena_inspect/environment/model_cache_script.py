@@ -21,7 +21,7 @@ find it with `HF_HUB_OFFLINE=1`. Sources:
 - `auto`: `seed` if the seed holds the pinned snapshot, else `download`.
 
 Every pinned file is then checked: present in the snapshot, the pinned size, and the pinned
-SHA-256 (from the blob's name where it is one, hashed otherwise). The last line printed is
+SHA-256 of its bytes (always hashed: a blob's name is not trusted, round A of the review). The last line printed is
 `MODEL_CACHE_RESULT=<json>`; the exit status is 0 only when the check passed.
 """
 
@@ -123,8 +123,7 @@ def verify(snapshot: Path, files: list[dict[str, Any]]) -> list[str]:
         if size != entry["size"]:
             problems.append(f"{entry['path']}: {size} bytes, pinned {entry['size']}")
             continue
-        named = path.resolve().name
-        actual = named if named == entry["sha256"] else sha256_of(path)
+        actual = sha256_of(path)
         if actual != entry["sha256"]:
             problems.append(f"{entry['path']}: sha256 {actual}, pinned {entry['sha256']}")
     return problems
