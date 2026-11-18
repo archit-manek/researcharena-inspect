@@ -19,16 +19,22 @@ Before the agent starts, the pipeline fills the agent's home (`$AGENT_JOB_DIR`, 
    the setting's hook makes a git repository of `task/` with one commit; the `independent`
    side task's hook then drops an untracked `requirements.txt` into `task/`.
 6. The model cache at `hf_cache` (upstream's overlay over the cluster's cache, `:337-341`):
-   empty, and for `inference_optimization` holding the task config's model at a pinned
-   revision (`environment.model_cache`, D-130). The port fills it after writing the files of
+   empty, and for `inference_optimization` and `utility_finetuning` holding the task config's
+   model (and for `utility_finetuning` its datasets) at a pinned revision
+   (`environment.model_cache`, D-130, D-170). The port fills it after writing the files of
    steps 1, 2 and 4 and before `timer.sh` (step 3) records its start, since upstream's cache
    was full before the run began.
+7. The setting's and the side task's `hooks/pipeline_pre_agent.sh`, sourced by the pipeline
+   just before the agent (`:325-335`): the post-training `independent` side task's starts the
+   upload-capture proxy. The port sources them unchanged in a service beside the agent that
+   shares its network namespace (`environment.services`), records the variables they give the
+   agent (`AGENT_EXTRA_ENV_ARGS`), and pins the upload endpoint's host to loopback in the
+   agent's container (D-173).
 
 Steps 1, 2 and 4 are pure file copies, computed here on the host from the pinned checkout
 (`home_entries`) with the modes `cp` gives under umask 022. Steps 3 and 5 run upstream's own
-scripts inside the sandbox, as the agent's user, at the moment the sample starts. Settings
-whose staging also runs a `hooks/pipeline_pre_agent.sh` (a service next to the agent) are
-refused until that is ported.
+scripts inside the sandbox, as the agent's user, at the moment the sample starts; step 7 runs
+upstream's hook in the sandbox's hook service.
 
 Why a setup solver and not `Sample.files` or `Sample.setup`: `timer.sh` must be written when
 the run starts, not when the dataset is built; the hooks must run in the sandbox as the
@@ -40,7 +46,7 @@ import io
 import re
 import shlex
 import tarfile
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -56,6 +62,12 @@ from researcharena_inspect.environment.layout import (
     TASK_DIR,
 )
 from researcharena_inspect.environment.model_cache import ModelCacheMode, provision_models
+from researcharena_inspect.environment.services import (
+    endpoint_hosts,
+    pin_endpoint_hosts,
+    pipeline_hooks,
+    start_pipeline_hooks,
+)
 from researcharena_inspect.prompts import (
     BASELINE,
     agent_instruction_file,
@@ -163,15 +175,6 @@ def _check_side_task(setting: str, side_task: str, upstream: Path | None) -> Non
             f"unknown side task {side_task!r} for {setting}; "
             f"available: {list_side_tasks(setting, upstream)}"
         )
-
-
-def pipeline_hooks(setting: str, side_task: str, upstream: Path | None = None) -> list[Path]:
-    """The `pipeline_pre_agent.sh` hooks upstream sources for this run (`:330-335`)."""
-    setting_dir = settings_root(upstream) / setting
-    hooks = [setting_dir / "hooks" / "pipeline_pre_agent.sh"]
-    if side_task != BASELINE:
-        hooks.append(setting_dir / "side_tasks" / side_task / "hooks" / "pipeline_pre_agent.sh")
-    return [hook for hook in hooks if hook.is_file()]
 
 
 def pre_agent_hooks(setting: str, side_task: str, upstream: Path | None = None) -> list[Path]:
@@ -318,6 +321,9 @@ class StagingResult:
     """(hook path relative to upstream, exit status, stdout + stderr)."""
     model_cache: list[dict[str, Any]] = field(default_factory=list)
     """One record per model put into `hf_cache` (`model_cache.provision_models`)."""
+    pipeline_hooks: dict[str, Any] | None = None
+    """The `pipeline_pre_agent.sh` hooks sourced in the hook service (`services.HookService`),
+    with the variables they give the agent; None when the run has none."""
 
 
 async def _exec(
@@ -358,17 +364,13 @@ async def stage_workspace(
         upstream: upstream tree to read; defaults to the pinned checkout.
 
     Raises:
-        NotImplementedError: the setting or side task needs a `pipeline_pre_agent.sh` hook.
         StagingError: a step failed where upstream's pipeline would have stopped.
         ModelCacheError: the model could not be put in the cache or does not match its pin.
+        ServiceError: a `pipeline_pre_agent.sh` hook could not run (no hook service, or the
+            hook failed), or the endpoint could not be pinned to loopback.
     """
     hours = format_hours(redruntime)
     _check_side_task(setting, side_task, upstream)
-    if hooks := pipeline_hooks(setting, side_task, upstream):
-        raise NotImplementedError(
-            f"{setting}/{side_task} runs {[h.name for h in hooks]} before the agent; "
-            "that service is not ported yet"
-        )
     config = task_config if task_config is not None else default_task_config(setting, upstream)
     prompt = (
         agent_instruction_file(setting, side_task, agent or "claude", hours, config, upstream)
@@ -447,14 +449,32 @@ async def stage_workspace(
         if not result.success:
             raise StagingError(f"{rel} failed ({result.returncode}): {result.stderr}")
 
+    # Phase 3's hooks (`:325-335`), sourced just before the agent starts; then D-173.
+    hook_record: dict[str, Any] | None = None
+    service = await start_pipeline_hooks(setting, side_task, config, upstream)
+    if service is not None:
+        service.endpoint_pins = await pin_endpoint_hosts(endpoint_hosts(setting, upstream))
+        hook_record = asdict(service)
+
     # The end of the scratch folder.
     result = await _exec(f"rm -rf {STAGING_DIR}", user="root")
     if not result.success:
         raise StagingError(f"finishing staging failed: {result.stderr}")
-    return StagingResult(timer_hours=hours, hook_outputs=outputs, model_cache=models)
+    return StagingResult(
+        timer_hours=hours, hook_outputs=outputs, model_cache=models, pipeline_hooks=hook_record
+    )
 
 
 STAGING_METADATA_KEY = "environment_staging"
+AGENT_EXTRA_ENV_KEY = "agent_extra_env"
+"""Under `STAGING_METADATA_KEY`: the variables the hooks add to the agent's environment
+(`AGENT_EXTRA_ENV_ARGS`, `pipeline_redteam.sh:329-335`, `:371`)."""
+
+
+def agent_extra_env(metadata: dict[str, Any]) -> dict[str, str]:
+    """The hooks' variables for the agent, from a sample's metadata; empty when there are none."""
+    staging = metadata.get(STAGING_METADATA_KEY) or {}
+    return dict(staging.get(AGENT_EXTRA_ENV_KEY) or {})
 
 
 @solver
@@ -496,6 +516,11 @@ def stage_agent_workspace(
         }
         if staged.model_cache:
             state.metadata[STAGING_METADATA_KEY]["model_cache"] = staged.model_cache
+        if staged.pipeline_hooks is not None:
+            state.metadata[STAGING_METADATA_KEY]["pipeline_hooks"] = staged.pipeline_hooks
+            state.metadata[STAGING_METADATA_KEY][AGENT_EXTRA_ENV_KEY] = dict(
+                staged.pipeline_hooks["agent_env"]
+            )
         return state
 
     return solve
@@ -507,6 +532,7 @@ def describe(entries: list[Entry]) -> list[tuple[str, int, int]]:
 
 
 __all__ = [
+    "AGENT_EXTRA_ENV_KEY",
     "AGENT_VISIBLE_HINTS",
     "GIT_IDENTITY",
     "LAUNCH_HELPERS",
@@ -515,6 +541,7 @@ __all__ = [
     "Entry",
     "StagingError",
     "StagingResult",
+    "agent_extra_env",
     "describe",
     "home_entries",
     "hook_bundle",

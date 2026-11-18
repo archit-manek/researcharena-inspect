@@ -3,9 +3,10 @@
 Stdlib only, Python 3.8+: the scorer copies this file into the sample's sandbox and runs it
 there as root, so it can read every file whatever its mode.
 
-    python3 snapshot_archive.py ROOT ARCNAME OUTPUT MAX_BYTES
+    python3 snapshot_archive.py ROOT ARCNAME OUTPUT MAX_BYTES [EXCLUDE]
 
-prints a JSON report on stdout (see `archive`). Nothing under ROOT is changed or followed:
+prints a JSON report on stdout (see `archive`). EXCLUDE, if given, is a comma-separated list of
+top-level names under ROOT left out with everything below them (the report counts them). Nothing under ROOT is changed or followed:
 symbolic links are archived as links, and FIFOs, sockets and device files are listed in the
 report instead of archived.
 """
@@ -43,10 +44,11 @@ class _LimitedWriter:
         self.handle.flush()
 
 
-def walk(root):
+def walk(root, exclude=()):
     """Every path under `root` as (relative POSIX path, lstat), sorted, each folder first.
 
     The root itself comes first, as "". Symbolic links to folders are not descended into.
+    Top-level names in `exclude` are left out with everything below them.
     """
     out = [("", os.lstat(root))]
 
@@ -54,6 +56,8 @@ def walk(root):
         with os.scandir(folder) as it:
             names = sorted(entry.name for entry in it)
         for name in names:
+            if rel == "" and name in exclude:
+                continue
             full = os.path.join(folder, name)
             child = name if rel == "" else rel + "/" + name
             info = os.lstat(full)
@@ -107,16 +111,36 @@ def _add(tar, root, arcname, rel, info):
             tar.addfile(member, source)
 
 
-def archive(root, arcname, output, max_bytes):
+def _excluded(root, exclude):
+    """[name, files, bytes] for each excluded top-level name that exists."""
+    out = []
+    for name in sorted(exclude):
+        full = os.path.join(root, name)
+        if not os.path.lexists(full):
+            continue
+        files = size = 0
+        if os.path.isdir(full) and not os.path.islink(full):
+            for _rel, info in walk(full):
+                if stat.S_ISREG(info.st_mode):
+                    files += 1
+                    size += info.st_size
+        elif stat.S_ISREG(os.lstat(full).st_mode):
+            files, size = 1, os.lstat(full).st_size
+        out.append([name, files, size])
+    return out
+
+
+def archive(root, arcname, output, max_bytes, exclude=()):
     """Write `root` to `output` as `arcname/...` in a gzipped PAX tar of at most `max_bytes`.
 
     Returns:
         The report: `status` ("kept" or "too_large"), `archive_bytes` (None when too large),
         counts of `files`, `dirs` and `links`, `raw_bytes` (the regular files' total size),
         `largest` (the largest files as [path, size]) and `skipped` (entries not archived,
-        as [path, kind]). When too large, `output` is removed.
+        as [path, kind]), and with `exclude`, `excluded` (as [name, files, bytes]). When too
+        large, `output` is removed.
     """
-    entries = walk(root)
+    entries = walk(root, exclude)
     report = {
         "status": None,
         "archive_bytes": None,
@@ -128,6 +152,8 @@ def archive(root, arcname, output, max_bytes):
         "largest": [],
         "skipped": [],
     }
+    if exclude:
+        report["excluded"] = _excluded(root, exclude)
     sizes = []
     for rel, info in entries:
         kind = _kind(info.st_mode)
@@ -163,10 +189,11 @@ def archive(root, arcname, output, max_bytes):
 
 def main(argv):
     root, arcname, output, max_bytes = argv[1], argv[2], argv[3], int(argv[4])
+    exclude = tuple(n for n in argv[5].split(",") if n) if len(argv) > 5 else ()
     if not os.path.isdir(root) or os.path.islink(root):
         print(json.dumps({"status": "error", "error": "not a folder: " + root}))
         return 1
-    print(json.dumps(archive(root, arcname, output, max_bytes)))
+    print(json.dumps(archive(root, arcname, output, max_bytes, exclude)))
     return 0
 
 

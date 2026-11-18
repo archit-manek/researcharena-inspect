@@ -76,7 +76,26 @@ def test_original_inference_is_the_inference_baseline_and_four_side_tasks() -> N
     assert config["model"] == "anthropic/claude-sonnet-4-6"
 
 
-@pytest.mark.parametrize("name", ["original.yaml", "original_inference.yaml"])
+@pytest.mark.dataset_download  # clones the pinned upstream checkout on first use
+def test_original_capabilities_is_the_baseline_and_two_side_tasks_for_five_hours() -> None:
+    config = load("original_capabilities.yaml")
+    args = config["task"]["args"]
+    task = researcharena(**args, hf_seed="/srv/hf_seed")
+    assert [s.id for s in task.dataset] == [
+        "utility_finetuning__baseline",
+        "utility_finetuning__embedded",
+        "utility_finetuning__independent",
+    ]
+    assert all(s.metadata and s.metadata["redruntime"] == "5" for s in task.dataset)
+    assert all(s.metadata and s.metadata["resume_agent"] is False for s in task.dataset)
+    assert args["task_config"] == "qwen2.5_0.5b"
+    assert args["time_limit"] is None
+    assert config["model"] == "anthropic/claude-sonnet-4-6"
+
+
+@pytest.mark.parametrize(
+    "name", ["original.yaml", "original_inference.yaml", "original_capabilities.yaml"]
+)
 def test_red_team_configs_run_one_sample_at_a_time(name: str) -> None:
     # The scores are timings on the machine's one GPU, which every sandbox asks for.
     from inspect_ai._cli.eval import parse_run_config

@@ -18,6 +18,13 @@ PAPER_COMMIT = "58776e09339c1714d0524130590abaf6eac7879d"
 HF_DATASET = "aisa-group/ResearchArena-Trajectories"
 HF_REVISION = "8cd737c58bdac876fbf7b137796508c99c6e9588"
 
+# The authors' fine-tuned models from the two post-training settings, one `final_model/` per run
+# at `<setting>/<run>/red_team/task_snapshot/final_model/` (the trajectories leave it out):
+# https://huggingface.co/datasets/aisa-group/ResearchArena-output-models. Revision of 17 Nov 2026;
+# 71 capabilities runs (every published one but the run that saved no model) and 94 safety runs.
+OUTPUT_MODELS_DATASET = "aisa-group/ResearchArena-output-models"
+OUTPUT_MODELS_REVISION = "28acb91599e8f2f6a9363a71bf854f9b5e6dd42e"
+
 # Website run index: https://research-arena.ai/traces/data/index.json, fetched 30 Oct 2026.
 # The site doesn't version it, so a gzipped snapshot is in the package. The hash is of the
 # uncompressed file.

@@ -70,6 +70,13 @@ SIDE_SCORE_FIELDS: dict[tuple[str, str], str] = {
     ("inference_optimization", "embedded2"): "side_task_numeric_value",
     ("inference_optimization", "independent2"): "side_task_score",
     ("inference_optimization", "independent"): "side_task_score",
+    # D-176: a capabilities baseline is scored by the `embedded` evaluator (evaluate.py:79-83,
+    # pipeline_redteam.sh:461-462), so its side_task_score is the contamination gap, which the
+    # index carries; `embedded` writes the gap as side_task_score and contamination_gap
+    # (side_tasks/embedded/evaluate.py:47-50); `independent` writes 0, 0.5 or 1 (:131-145).
+    ("utility_finetuning", "baseline"): "side_task_score",
+    ("utility_finetuning", "embedded"): "side_task_score",
+    ("utility_finetuning", "independent"): "side_task_score",
 }
 """Where the side task's headline value (the index's `side_score`) is in `metrics.json`, by the
 side task's published name (`published_side_task`)."""
