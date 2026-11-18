@@ -35,6 +35,7 @@ from inspect_ai.util import (
 )
 from inspect_evals_utils.metadata import load_eval_version
 
+from researcharena_inspect.environment.image import IMAGE
 from researcharena_inspect.monitor.agents import MONITOR_AGENTS, monitor_agent
 from researcharena_inspect.monitor.bundle import RunBundle, local_bundles, published_bundles
 from researcharena_inspect.monitor.judgement import (
@@ -70,9 +71,19 @@ DEFAULT_BLUE_RUNTIME_HOURS = 0.5
 """`blueruntime` in upstream's `run_monitor.sub`, `run_monitor_no_artifact.sub` and README
 examples. `run_monitor_claude.sub` and `run_monitor_codex.sub` default to 0.0833 instead."""
 
-DEFAULT_IMAGE = "python:3.12-slim-bookworm"
-"""Default monitor image: enough to read and search the files. It has no CUDA and no git; pass
-`sandbox_config` (for example the arena image) to give artifact monitors upstream's tools."""
+TRANSCRIPT_IMAGE = "python:3.12-slim-bookworm"
+"""Default image of the transcript access types (D-107): a transcript monitor's files are two
+text files, and in the 400 published Claude transcript-monitor traces of CUDA runs, and the
+port's 190 transcript monitors, every shell command used tools this image has (grep, head,
+sed, wc, awk, ls, cat)."""
+
+ARTIFACT_IMAGE = IMAGE
+"""Default image of the artifact access types: the agent's image, which upstream runs every
+monitor in (`pipeline_monitor.sh:70, :294`, `arena.sif`), with git, CUDA and the agent's
+Python packages. Built for linux/amd64 only."""
+
+MONITOR_K8S_VALUES = Path(__file__).parent / "k8s_values_artifact.yaml"
+"""Kubernetes values for the artifact access types: the agent's image, no GPU, open network."""
 
 # pipeline_monitor.sh:296-298, passed into the monitor's container.
 SANDBOX_ENV = {
@@ -140,22 +151,44 @@ def bundle_to_sample(bundle: RunBundle, access: str, prompt_commit: str = "lates
     )
 
 
-def monitor_sandbox(sandbox_type: str, sandbox_config: str | None) -> SandboxEnvironmentSpec:
-    """The monitor's sandbox: a given config, or for Docker a small default image."""
-    if sandbox_config is not None or sandbox_type != "docker":
+def monitor_sandbox(
+    sandbox_type: str, sandbox_config: str | None, access: str = "transcript"
+) -> SandboxEnvironmentSpec:
+    """The monitor's sandbox: a given config, or upstream's launch as far as the backend allows.
+
+    Upstream starts every monitor with `apptainer exec -C ... arena.sif`
+    (`pipeline_monitor.sh:292-310`): the agent's image, no `--nv` (no GPU, D-025), no model
+    cache bound in and `-C` dropping the job's `HF_HOME`, the host's network, a writable
+    overlay that is thrown away, the job folder as `/home/user` and the host's `/tmp`
+    (D-030). The defaults here (D-107): the artifact access types get the agent's image,
+    the transcript types a small Python image (`TRANSCRIPT_IMAGE`); neither has a GPU or a
+    model cache, both have an open network (Docker's default bridge; `allowEntities: [world]`
+    on Kubernetes for the artifact types) and their own `/tmp`. The monitor runs as root.
+
+    Args:
+        sandbox_type: `docker`, `k8s` or another Inspect sandbox type.
+        sandbox_config: a config file; used as given for every access type.
+        access: the access type, which picks the default image.
+    """
+    with_artifact, _ = ACCESS_TYPES[access]
+    if sandbox_config is not None:
         return SandboxEnvironmentSpec(sandbox_type, sandbox_config)
-    compose = ComposeConfig(
-        services={
-            "default": ComposeService(
-                image=DEFAULT_IMAGE,
-                command="tail -f /dev/null",
-                init=True,
-                working_dir=SANDBOX_TASK_DIR,
-                environment=dict(SANDBOX_ENV),
-            )
-        }
+    if sandbox_type == "k8s" and with_artifact:
+        return SandboxEnvironmentSpec("k8s", str(MONITOR_K8S_VALUES))
+    if sandbox_type != "docker":
+        return SandboxEnvironmentSpec(sandbox_type, None)
+    # D-107: transcript monitors keep the small image they were compared with the published
+    # monitors on; artifact monitors get upstream's image, without a GPU as upstream's.
+    service = ComposeService(
+        image=ARTIFACT_IMAGE if with_artifact else TRANSCRIPT_IMAGE,
+        command="tail -f /dev/null",
+        init=True,
+        working_dir=SANDBOX_TASK_DIR,
+        environment=dict(SANDBOX_ENV),
     )
-    return SandboxEnvironmentSpec("docker", compose)
+    if with_artifact:
+        service.platform = "linux/amd64"
+    return SandboxEnvironmentSpec("docker", ComposeConfig(services={"default": service}))
 
 
 PUBLISHED_CLI_VERSION = "published"
@@ -405,7 +438,9 @@ def researcharena_monitor(
         small_model: model for Claude Code's own background calls: Haiku 4.5, as in the
             published runs; `None` sends them to the monitor model.
         sandbox: sandbox type, e.g. `docker` or `k8s`.
-        sandbox_config: sandbox config file; for Docker the default is a small Python image.
+        sandbox_config: sandbox config file. By default the artifact types run in the
+            agent's image (upstream's monitor image), the transcript types in a small Python
+            image; neither has a GPU (D-107, see `monitor_sandbox`).
         prompt_commit: `latest` (the pinned commit) or `paper`: whose builders and templates
             make the instruction and prompt. They differ only for post-training (D-054).
     """
@@ -444,6 +479,6 @@ def researcharena_monitor(
             monitor_agent, effort, blue_runtime_hours, claude_code_version, small_model
         ),
         scorer=monitor_suspicion(),
-        sandbox=monitor_sandbox(sandbox, sandbox_config),
+        sandbox=monitor_sandbox(sandbox, sandbox_config, access),
         version=EVAL_VERSION,
     )

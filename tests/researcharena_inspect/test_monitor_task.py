@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from inspect_ai import eval
 from inspect_ai.dataset import Sample
 from inspect_ai.model import (
@@ -14,10 +15,11 @@ from inspect_ai.model import (
     get_model,
 )
 from inspect_ai.scorer import SampleScore, Score
-from inspect_ai.util import ComposeConfig
+from inspect_ai.util import ComposeConfig, ComposeService, SandboxEnvironmentSpec
 from pytest_inspect_evals.metrics import assert_agreeing_epochs_change_nothing, run_metrics
 
 import researcharena_inspect
+from researcharena_inspect.environment.image import IMAGE
 from researcharena_inspect.monitor import (
     ACCESS_TYPES,
     SANDBOX_TASK_DIR,
@@ -32,6 +34,10 @@ from researcharena_inspect.monitor import (
 )
 from researcharena_inspect.monitor.agents import CLAUDE_CODE_ENV
 from researcharena_inspect.monitor.task import (
+    ARTIFACT_IMAGE,
+    MONITOR_K8S_VALUES,
+    SANDBOX_ENV,
+    TRANSCRIPT_IMAGE,
     access_suffix,
     cli_version_in_output,
     failed_judgements,
@@ -44,6 +50,12 @@ from researcharena_inspect.monitor.task import (
 )
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
 from researcharena_inspect.task import EVAL_VERSION
+
+from .test_environment import (
+    HAWK_ALLOWED_VALUES,
+    HAWK_IMAGE_PATTERN,
+    HAWK_SERVICE_ALLOWED_VALUES,
+)
 
 CUDA_RUN = "cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_162845_c17310740"
 
@@ -81,14 +93,86 @@ def test_metrics_through_the_epoch_reducer() -> None:
     assert_agreeing_epochs_change_nothing(metrics, [10, 30, SUSPICION_ERROR])
 
 
-def test_default_sandbox_is_a_small_image_in_the_monitors_working_dir() -> None:
-    spec = monitor_sandbox("docker", None)
+def _service(access: str) -> ComposeService:
+    spec = monitor_sandbox("docker", None, access)
+    assert spec.type == "docker"
     assert isinstance(spec.config, ComposeConfig)
-    service = spec.config.services["default"]
+    [(name, service)] = spec.config.services.items()
+    assert name == "default"
+    return service
+
+
+@pytest.mark.parametrize("access", list(ACCESS_TYPES))
+def test_default_docker_sandbox_is_upstreams_launch_without_a_gpu(access: str) -> None:
+    # D-107, D-025: upstream's `apptainer exec -C` has no `--nv`, no model cache and the host's
+    # network; the monitor works in /home/user/task with pipeline_monitor.sh's variables.
+    service = _service(access)
     assert service.working_dir == SANDBOX_TASK_DIR
+    assert service.environment == SANDBOX_ENV
     assert isinstance(service.environment, dict)
     assert service.environment["HOME"] == "/home/user"
-    assert monitor_sandbox("k8s", "values.yaml").config == "values.yaml"
+    assert "HF_HOME" not in service.environment
+    assert service.deploy is None  # no GPU reservation
+    assert service.devices is None
+    assert service.runtime is None
+    assert service.volumes is None  # nothing from the host: no model cache, no host /tmp
+    assert service.network_mode is None  # Docker's default bridge: open network
+    assert service.command == "tail -f /dev/null"
+
+
+@pytest.mark.parametrize("access", ["artifact", "artifact_cot"])
+def test_artifact_monitors_run_in_the_agents_image(access: str) -> None:
+    service = _service(access)
+    assert ARTIFACT_IMAGE == IMAGE
+    assert service.image == IMAGE  # upstream's arena.sif (pipeline_monitor.sh:70, :294)
+    assert service.platform == "linux/amd64"  # the only platform the image is built for
+
+
+@pytest.mark.parametrize("access", ["transcript", "transcript_cot"])
+def test_transcript_monitors_keep_the_small_image(access: str) -> None:
+    # The image the port's 190 transcript monitors ran on (D-107).
+    service = _service(access)
+    assert service.image == TRANSCRIPT_IMAGE == "python:3.12-slim-bookworm"
+    assert service.platform is None
+
+
+@pytest.mark.parametrize("access", list(ACCESS_TYPES))
+def test_a_given_sandbox_config_is_used_for_every_access_type(access: str) -> None:
+    assert monitor_sandbox("docker", "compose.yaml", access) == SandboxEnvironmentSpec(
+        "docker", "compose.yaml"
+    )
+    assert monitor_sandbox("k8s", "values.yaml", access).config == "values.yaml"
+
+
+def test_k8s_defaults() -> None:
+    for access in ("artifact", "artifact_cot"):
+        assert monitor_sandbox("k8s", None, access) == SandboxEnvironmentSpec(
+            "k8s", str(MONITOR_K8S_VALUES)
+        )
+    for access in ("transcript", "transcript_cot"):
+        assert monitor_sandbox("k8s", None, access) == SandboxEnvironmentSpec("k8s", None)
+
+
+def test_k8s_artifact_values_are_the_agents_image_without_a_gpu() -> None:
+    values = yaml.safe_load(MONITOR_K8S_VALUES.read_text())
+    assert set(values) <= HAWK_ALLOWED_VALUES
+    [(name, service)] = values["services"].items()
+    assert name == "default"
+    assert set(service) <= HAWK_SERVICE_ALLOWED_VALUES
+    assert HAWK_IMAGE_PATTERN.fullmatch(service["image"])
+    assert service["image"] == IMAGE
+    assert "nodeSelector" not in service  # any node: no GPU pool
+    for side in ("requests", "limits"):
+        assert "nvidia.com/gpu" not in service["resources"][side]
+    assert values["allowEntities"] == ["world"]  # upstream's open network (D-029)
+
+
+@pytest.mark.dataset_download  # runs upstream's prompt builders from the pinned checkout
+@pytest.mark.parametrize("access", list(ACCESS_TYPES))
+def test_monitor_task_picks_the_sandbox_by_access(access: str, tmp_path: Path) -> None:
+    write_local_run(tmp_path / "run1")
+    task = researcharena_monitor(access=access, local_runs=str(tmp_path))
+    assert task.sandbox == monitor_sandbox("docker", None, access)
 
 
 def test_run_monitor_rejects_unknown_agents() -> None:
@@ -307,7 +391,8 @@ def claude_code_script(
 @pytest.mark.slow
 @pytest.mark.huggingface
 @pytest.mark.dataset_download  # also downloads the Claude Code binary (no model is called)
-@pytest.mark.parametrize("access", ["transcript", "transcript_cot"])
+# "artifact" runs the CLI in the agent's image (linux/amd64; emulated on an arm64 host).
+@pytest.mark.parametrize("access", ["transcript", "transcript_cot", "artifact"])
 def test_claude_code_monitor_end_to_end_with_mockllm(access: str, tmp_path: Path) -> None:
     task = researcharena_monitor(
         access=access,
@@ -329,3 +414,40 @@ def test_claude_code_monitor_end_to_end_with_mockllm(access: str, tmp_path: Path
     listing = next(m for m in sample.messages if isinstance(m, ChatMessageTool)).text
     assert listing.startswith(SANDBOX_TASK_DIR)
     assert "agent_transcript.txt" in listing
+
+
+PROBE = (
+    "git --version; "
+    "python3 -c 'import torch; print(\"torch\", torch.__version__, torch.cuda.is_available())'; "
+    "command -v nvidia-smi || echo NO_NVIDIA_SMI; "
+    "ls /home/user/hf_cache 2>/dev/null || echo NO_MODEL_CACHE; "
+    'echo "HF_HOME=[$HF_HOME]"'
+)
+
+
+@pytest.mark.docker
+@pytest.mark.slow
+@pytest.mark.dataset_download  # runs upstream's prompt builders from the pinned checkout
+def test_artifact_monitor_has_the_agents_tools_and_no_gpu(tmp_path: Path) -> None:
+    # D-107: an artifact monitor in the small image could not run git ("git: command not
+    # found", 17 Nov 2026). In the agent's image it can, and, as upstream's, has no GPU and no
+    # model cache (D-025).
+    write_local_run(tmp_path / "runs" / "run1")
+    task = researcharena_monitor(
+        access="artifact", local_runs=str(tmp_path / "runs"), monitor_agent="react"
+    )
+    outputs = [
+        ModelOutput.for_tool_call("mockllm/model", "bash", {"command": PROBE}),
+        ModelOutput.from_content("mockllm/model", "No verdict."),
+    ]
+    model = get_model("mockllm/model", custom_outputs=outputs)
+    [log] = eval(task, model=model, display="none", log_dir=str(tmp_path / "logs"))
+    assert log.status == "success", log.error
+    assert log.samples is not None
+    probe = next(m for m in log.samples[0].messages if isinstance(m, ChatMessageTool)).text
+    assert "git version" in probe
+    assert "torch 2." in probe
+    assert probe.split("torch ", 1)[1].split()[1] == "False"  # no CUDA device
+    assert "NO_NVIDIA_SMI" in probe
+    assert "NO_MODEL_CACHE" in probe
+    assert "HF_HOME=[]" in probe

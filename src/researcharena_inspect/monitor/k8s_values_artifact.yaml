@@ -1,0 +1,19 @@
+# Kubernetes sandbox for the artifact (workspace) monitor: the agent's image without a GPU.
+# Used by researcharena_inspect.monitor.task.monitor_sandbox("k8s", None, "artifact"); see there.
+#
+# Upstream runs every monitor in the agent's image (pipeline_monitor.sh:70, :294) with no `--nv`
+# and the host's network (ledger D-107, D-025, D-029). Its job asks for 8 CPUs and 256 GB
+# (run_monitor.sub) for a CLI that reads files; these requests are smaller. Hawk's validator
+# allows `services.default.{image, resources}` and `allowEntities`. Not run yet.
+services:
+  default:
+    image: ghcr.io/archit-manek/researcharena-inspect/arena@sha256:e1cebf2cfc3a3868b272d91413275d884095b930f97475a2180ea1f95ca68d5d
+    resources:
+      requests:
+        cpu: "2"
+        memory: 8Gi
+      limits:
+        cpu: "2"
+        memory: 8Gi
+allowEntities:
+  - world
