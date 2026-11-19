@@ -10,6 +10,7 @@ for a download and the image's `datasets` for a dataset's prepared builds (D-187
 `dataset`, D-170). It ends up in the layout `huggingface_hub` uses,
 `<hf-home>/hub/models--<org>--<name>/{blobs,snapshots/<rev>,refs/main}` (`datasets--` for a
 dataset),
+plus `.no_exist/<rev>/<name>` for each name in the spec's `absent` (D-254),
 with `refs/main` naming the pinned revision, so that `from_pretrained("<org>/<name>")` and vLLM
 find it with `HF_HUB_OFFLINE=1`. Sources:
 
@@ -279,6 +280,11 @@ def provision(spec: dict[str, Any], hf_home: Path, seed: Path | None, mode: str)
     refs = dest_model / "refs"
     refs.mkdir(parents=True, exist_ok=True)
     (refs / "main").write_text(revision)
+    # D-254: names the repository does not have, recorded as `huggingface_hub` records a 404.
+    for name in spec.get("absent") or []:
+        marker = dest_model / ".no_exist" / revision / name
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
     result["seconds"] = round(time.monotonic() - start, 1)
     hashed: dict[str, str] = {}
     result["problems"] = verify(dest_model / "snapshots" / revision, files, hashed)

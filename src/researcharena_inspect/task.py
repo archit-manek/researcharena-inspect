@@ -233,13 +233,20 @@ def check_hook_backend(dataset: MemoryDataset, backend: Backend, sandbox: object
         )
 
 
-def check_offline_run(agent: str, model_cache: str, backend: str, sandbox: object = None) -> None:
+def check_offline_run(
+    agent: str,
+    model_cache: str,
+    backend: str,
+    sandbox: object = None,
+    settings: frozenset[str] = frozenset(),
+) -> None:
     """Refuse `check_offline` where it would not be a scorer check with every input staged.
 
     Raises:
         ValueError: a model agent (it needs its provider), a cache that may download, a backend
-            other than Docker, a `sandbox` given (it would replace the network-off sandbox), or
-            a host Hugging Face client that is not offline.
+            other than Docker, a `sandbox` given (it would replace the network-off sandbox), a
+            host Hugging Face client that is not offline, or a replayed `safety_finetuning`
+            model (its judges load only while the Hub answers, D-254).
     """
     from huggingface_hub import constants as hub_constants
 
@@ -255,6 +262,11 @@ def check_offline_run(agent: str, model_cache: str, backend: str, sandbox: objec
         raise ValueError(
             "check_offline needs HF_HUB_OFFLINE=1 in the environment before Inspect starts, so "
             "that replay reads only what was staged"
+        )
+    if agent == "replay" and "safety_finetuning" in settings:
+        raise ValueError(
+            "check_offline cannot score a safety_finetuning model: the scorer's judges load "
+            "only while the Hub answers (D-254); run the check without it"
         )
 
 
@@ -408,7 +420,8 @@ def researcharena(
         check_baseline_process(dataset, scorer)
     check_hook_backend(dataset, backend, sandbox)
     if check_offline:  # D-185
-        check_offline_run(agent, model_cache, backend, sandbox)
+        settings = frozenset((s.metadata or {}).get("setting", "") for s in dataset)
+        check_offline_run(agent, model_cache, backend, sandbox, settings)
     return Task(
         dataset=dataset,
         setup=(

@@ -152,6 +152,20 @@ def test_the_gated_repositories_are_pinned_by_git_object_id() -> None:
         assert all(f.sha256 for f in pin.files if f.path.endswith(".safetensors"))
 
 
+def test_only_llama_guard_records_absent_names_and_none_of_them_is_a_pinned_file() -> None:
+    # D-254: the names its tokenizer asks for that the repository lacks. The scorer loads no
+    # tokenizer from the other gated repository (`strong_reject`'s comes from its public adapter).
+    assert LLAMA_GUARD_3_8B.absent == (
+        "added_tokens.json",
+        "chat_template.jinja",
+        "tokenizer.model",
+    )
+    assert not set(LLAMA_GUARD_3_8B.absent) & {f.path for f in LLAMA_GUARD_3_8B.files}
+    assert json.loads(LLAMA_GUARD_3_8B.to_json())["absent"] == list(LLAMA_GUARD_3_8B.absent)
+    for pin in (GEMMA_2B, STRONGREJECT_15K_V1, HUIHUI_QWEN3_1_7B_ABLITERATED_V2):
+        assert pin.absent == ()
+
+
 def _script() -> Any:
     spec = importlib.util.spec_from_file_location("model_cache_script", SCRIPT_SOURCE)
     assert spec is not None
