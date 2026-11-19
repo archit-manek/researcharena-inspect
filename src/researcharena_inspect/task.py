@@ -399,7 +399,8 @@ def researcharena(
             cache comes from `hf_seed` or is not filled (`model_cache` `seed` or `none`), no
             `sandbox` override is given, and the host's Hugging Face client is offline (`HF_HUB_OFFLINE=1` in the environment
             before Inspect starts), so that nothing calls the Hub during the run: every input
-            must be staged first.
+            must be staged first. Refused for a replayed `safety_finetuning` model: its judges
+            load only while the Hub answers (D-254).
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
