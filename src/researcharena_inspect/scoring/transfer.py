@@ -9,8 +9,9 @@ symbolic link.
 
 Partly written files never take a name a workspace file could have (D-172, round A): on the
 host they go in a transfer folder the caller gives, outside the copied tree; in the sandbox they
-are assembled under `/var/tmp` and moved into place once their hash matches. (Before, the part
-was `<file>.part` beside its destination, so copying `result` removed a sibling `result.part`.)
+are assembled under `/var/tmp`, written only by their owner (D-253), and moved into place once
+their hash matches. (Before, the part was `<file>.part` beside its destination, so copying
+`result` removed a sibling `result.part`.)
 
 Used by the submission store (`submission_store`, sandbox to host) and the replay agent
 (`agents.replay`, host to sandbox).
@@ -249,9 +250,13 @@ async def copy_in(
 ) -> str:
     """Copy one host file into the sandbox as `user`, piece by piece; return its SHA-256.
 
-    The pieces are appended, as root, to a uniquely named file `user` creates in `temp_dir`
-    (outside every workspace), which `user` moves to `dest` once the sandbox's hash of the
-    whole file equals the host's. `dest`'s folder must exist and be writable by `user`.
+    `user` creates a uniquely named file in `temp_dir` (outside every workspace), appends each
+    piece to it, and moves it to `dest` once the sandbox's hash of the whole file equals the
+    host's. `dest`'s folder must exist and be writable by `user`.
+
+    Only the file's owner writes to it (D-253): where the kernel's `fs.protected_regular` is on
+    (Ubuntu's default), nobody else, root included, may open for writing a file in a sticky
+    world-writable folder such as `/var/tmp`, and a container gets its host's setting.
 
     Raises:
         TransferError: a piece failed or the file in the sandbox does not match.
@@ -268,9 +273,14 @@ async def copy_in(
             while block := handle.read(chunk):
                 digest.update(block)
                 await box.write_file(scratch, block)
+                readable = await box.exec(
+                    ["chmod", "644", scratch], user="root", timeout=EXEC_TIMEOUT_S
+                )
+                if not readable.success:
+                    raise TransferError(f"preparing {scratch} failed: {readable.stderr}")
                 appended = await box.exec(
-                    ["bash", "-c", f"chmod 644 {q_scratch} && cat {q_scratch} >> {q_part}"],
-                    user="root",
+                    ["bash", "-c", f"cat {q_scratch} >> {q_part}"],
+                    user=user,
                     timeout=EXEC_TIMEOUT_S,
                 )
                 if not appended.success:
