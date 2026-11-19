@@ -627,6 +627,7 @@ One entry per task version, newest first; both tasks and the check tasks share i
 
 - A mean over no values is `nan`, not 0.0 (`scored_mean`, used for `main_task_score` and each side task's `side_score`). Can move: a mean where no sample (or no sample of a side task) has a value, from 0.0 to `nan`; no per-sample value changes.
 - Abnormal scores carry `Score.reason`: `scoring_failed` on a red-team score when no attempt wrote `metrics.json` (still `-1`, D-183), `no_response` on a monitor score of `-1`. The red-team score's metadata names the service that scored (`evaluator_service`). The transcript monitor's image and the CPU test image are pinned by digest, the images the earlier runs used. Can move: nothing.
+- Fix without a version change (19 Nov): the replay agent's copy of a large file into the sandbox (`scoring/transfer.py`, `copy_in`) now appends as the file's owner. Before, root appended to a file the agent's user had made in `/var/tmp`, which a host with `fs.protected_regular` on (Ubuntu's default; a container gets its host's value) refuses: on the H100 eight of nine replays of a stored model errored with `TransferError … Permission denied` (D-253). Docker Desktop allows it, so the CPU tests had passed. Can move: nothing; a replay that errored on such a host now runs. Live runs do not use this copy.
 
 ### [6-A] - 2026-11-18
 

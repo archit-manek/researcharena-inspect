@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -809,6 +810,47 @@ def test_copying_result_into_a_workspace_keeps_a_sibling_result_part(tmp_path: P
     assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
     assert (work / "result.part").read_bytes() == b"another valid submission file"
     assert not list(tmp_path.glob("researcharena-assemble-*"))
+
+
+def test_only_its_owner_writes_the_file_copy_in_assembles(tmp_path: Path) -> None:
+    # D-253: on a host with `fs.protected_regular` on (Ubuntu's default; a container gets its
+    # host's value) root may not append to a file the agent's user made in `/var/tmp`. Eight of
+    # nine replays failed on the H100 for it; Docker Desktop's kernel allows it.
+    calls: list[tuple[str | None, list[str]]] = []
+
+    class Recording(LocalBox):
+        async def exec(
+            self,
+            cmd: list[str],
+            user: str | None = None,
+            timeout: int | None = None,  # noqa: ASYNC109
+            **kwargs: Any,
+        ) -> ExecResult[str]:
+            calls.append((user, cmd))
+            return await super().exec(cmd, user=user, timeout=timeout, **kwargs)
+
+    source = tmp_path / "source"
+    source.write_bytes(os.urandom(10_000))
+    (tmp_path / "task").mkdir()
+    asyncio.run(
+        transfer.copy_in(
+            cast(SandboxEnvironment, Recording()),
+            source,
+            str(tmp_path / "task" / "result"),
+            user="user",
+            scratch=str(tmp_path / "scratch"),
+            chunk=4096,
+            temp_dir=str(tmp_path),
+        )
+    )
+    assert (tmp_path / "task" / "result").read_bytes() == source.read_bytes()
+    writes = [
+        user
+        for user, cmd in calls
+        if any(re.search(r">\s*\S*researcharena-assemble-", part) for part in cmd)
+    ]
+    assert len(writes) == 4  # created, then three pieces appended
+    assert set(writes) == {"user"}
 
 
 def _store(
