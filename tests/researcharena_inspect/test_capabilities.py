@@ -69,6 +69,7 @@ from researcharena_inspect.prompts.settings import load_config
 from researcharena_inspect.published import load_index
 from researcharena_inspect.scoring import read_metrics, transfer
 from researcharena_inspect.scoring import submission_store as store
+from researcharena_inspect.task import check_offline_run
 from researcharena_inspect.upstream import upstream_dir
 from tests.researcharena_inspect.fake_sandbox import Call, FakeSandbox
 from tests.researcharena_inspect.solve_sh_oracle import run_solve_sh
@@ -422,6 +423,10 @@ def test_check_offline_builds_a_network_off_sandbox_and_refuses_what_would_not_b
     ):
         with pytest.raises(ValueError, match=r"check_offline|backend='docker'"):
             researcharena(**{**ok, **bad})
+    # D-254: a replayed safety model cannot be scored with no network (its judges' loader).
+    with pytest.raises(ValueError, match="D-254"):
+        check_offline_run("replay", "seed", "docker", None, frozenset({"safety_finetuning"}))
+    check_offline_run("null", "seed", "docker", None, frozenset({"safety_finetuning"}))
     monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", False)
     with pytest.raises(ValueError, match="HF_HUB_OFFLINE"):
         researcharena(**ok)

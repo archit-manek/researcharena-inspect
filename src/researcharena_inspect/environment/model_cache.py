@@ -45,6 +45,13 @@ with their prepared builds. The two judges' base repositories are gated on the H
 seed filled with the user's token can hold them (`model_cache="seed"`); a download in the sandbox
 has no token and fails. The Hub shows a gated repository's git object ids but not its files'
 SHA-256, so those files are pinned by git object id (D-211).
+
+The scorer has no token either (D-213), and its judges load only while the Hub answers
+(D-254): `strong_reject`'s adapter repository is public and has no `config.json`, which the
+loader accepts from a 404 and not from a missing network or the offline flag; and for
+`Llama-Guard-3-8B` the cache records the three names its tokenizer asks for that the repository
+does not have (`PinnedModel.absent`), which a 401 would otherwise turn into a failed load. So
+this setting cannot be scored with the sandbox's network off (`check_offline`).
 """
 
 import json
@@ -103,6 +110,11 @@ class PinnedModel:
     `resources.json`'s configs and splits, so that a load by name works with no network
     (D-187). A setting with more datasets adds its pins, with their builds, to
     `SETTING_DATASETS`."""
+    absent: tuple[str, ...] = ()
+    """Names the repository does not have at this revision that a loader asks for anyway,
+    recorded in the cache as `huggingface_hub` records a 404 (`.no_exist/<revision>/<name>`), so
+    that the loader does not ask the Hub. Needed for a gated repository read without a token
+    (D-254): the Hub answers 401 for every name there, and `transformers` stops on it."""
 
     @property
     def total_bytes(self) -> int:
@@ -459,6 +471,11 @@ LLAMA_GUARD_3_8B: Final = PinnedModel(
             "tokenizer_config.json", 51967, git_oid="2c7389eb390e538cee452e5049fb65f440d49d86"
         ),
     ),
+    # D-254: the three names `AutoTokenizer` asks this repository for that it does not have
+    # (the Hub's listing at this revision, read 19 Nov 2026). Upstream's evaluator, with the
+    # host's token, gets a 404 for each; without a token the answer is 401 and the judge does
+    # not load.
+    absent=("added_tokens.json", "chat_template.jinja", "tokenizer.model"),
 )
 
 ADVBENCH_ORIG: Final = PinnedModel(

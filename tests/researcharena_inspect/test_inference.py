@@ -6,6 +6,7 @@ whole setting are in `test_inference_docker.py`.
 """
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import subprocess
@@ -154,6 +155,21 @@ def test_the_script_copies_the_pinned_snapshot_from_a_seed(tmp_path: Path, layou
     code, again = _run(pin, hf_home, seed, "seed")
     assert code == 0
     assert again["bytes_copied"] == 0
+
+
+def test_the_script_records_the_names_a_pin_says_are_absent(tmp_path: Path) -> None:
+    # D-254: as `huggingface_hub` records a 404, so a loader does not ask the Hub for them (a
+    # gated repository answers 401 to a caller with no token, which `transformers` stops on).
+    pin = dataclasses.replace(_tiny_pin(), absent=("added_tokens.json", "chat_template.jinja"))
+    seed = _seed(tmp_path / "seed", pin, TINY_FILES)
+    code, result = _run(pin, tmp_path / "hf_cache", seed, "seed")
+    assert code == 0, result
+    markers = tmp_path / "hf_cache" / "hub" / "models--org--tiny" / ".no_exist" / pin.revision
+    assert sorted(m.name for m in markers.iterdir()) == ["added_tokens.json", "chat_template.jinja"]
+    assert all(m.stat().st_size == 0 for m in markers.iterdir())
+    code, _ = _run(_tiny_pin(), tmp_path / "other", seed, "seed")  # no `absent`: no markers
+    assert code == 0
+    assert not (tmp_path / "other" / "hub" / "models--org--tiny" / ".no_exist").exists()
 
 
 def test_the_script_refuses_a_seed_that_does_not_match_the_pin(tmp_path: Path) -> None:
