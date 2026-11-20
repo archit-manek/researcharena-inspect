@@ -100,7 +100,8 @@ def red_team_claude_code(
     # D-077: `--effort` and `--thinking-display summarized` (solve.sh:99) are not CLI flags
     # here; the effort is set on the served model and the bridge drops the CLI's own
     # generation settings. D-078: the prompt goes in as an argument, not on stdin, and later
-    # rounds use `--resume <session id>` for `--continue`. D-105: Inspect SWE resumes only once
+    # rounds use `--resume <session id>` for `--continue`. D-257: so `ps` in the sandbox shows
+    # the whole prompt, which upstream's stdin does not (README, Known limitations). D-105: Inspect SWE resumes only once
     # the conversation has an assistant message; after a round with none, the next round gets
     # a new agent and so a new session (`solver.AgentRounds`), since the same `--session-id`
     # again would be refused ("Session ID ... is already in use").

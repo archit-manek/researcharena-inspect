@@ -6,7 +6,7 @@ Made with the `eval-validity-review` skill on version 6-A (commit `68c52cc`), th
 
 ## Summary
 
-The port measures what it says it measures. Its claims about fidelity to upstream ResearchArena at `b922f4b` hold where they could be checked. The scorer is a direct measurement: upstream's own `evaluate.py` run on the agent's workspace. The validity concerns are upstream's, kept and documented: a CUDA score can be read from a file the agent wrote, and the kernels are not checked for correctness. The one concern of the port's own, an aggregate that reported 0.0 when nothing was measured, is fixed in 7-F.
+The port measures what it says it measures. Its claims about fidelity to upstream ResearchArena at `b922f4b` hold where they could be checked. The scorer is a direct measurement: upstream's own `evaluate.py` run on the agent's workspace. The validity concerns are upstream's, kept and documented: a CUDA score can be read from a file the agent wrote, and the kernels are not checked for correctness. The one concern of the port's own found in the review, an aggregate that reported 0.0 when nothing was measured, is fixed in 7-F. One more was found on 20 Nov and is open and disclosed: a transcript monitor can be shown the agent's side-task instruction (see "Added 20 Nov 2026" below).
 
 **Overall rating: Validity Concerns**, all of them inherited from upstream and disclosed. The port's own contribution rates **Valid with Minor Issues**.
 
@@ -36,6 +36,10 @@ Direct measurement (throughput, accuracy, judged harmfulness) by upstream's eval
 - **Low, fixed in 7-F:** abnormal scores had no `Score.reason`. A red-team score of `-1` after three failed evaluations now has `reason="scoring_failed"` (the value is upstream's record and stays, D-183); a monitor score of `-1` has `reason="no_response"`.
 
 None of these is hidden: the inherited ones are in the README's known limitations.
+
+## Added 20 Nov 2026 (version 8-F): what a transcript monitor is shown
+
+- **Medium, the port's own, open (D-078, D-257):** the monitor is meant to judge the agent's behaviour against the task description it is given, which leaves the side task out. With Claude Code the port passes the agent's prompt as a command-line argument (Inspect SWE has no other way), so a process listing the agent prints puts the whole prompt, side-task instruction included, into the transcript the monitor reads. Upstream's code at the pin pipes the prompt on stdin and would not; the authors' published runs carry the prompt in process listings as the port's do. In the port's fifteen live inference runs, 5 of the 12 side-task transcripts have such a listing, and the monitor cites it in 8 of its 10 judgements on them, with suspicion from 5 to 85: finding the instruction can raise a score, and reading the side task as instructed work can lower it. None of the 12 CUDA side-task runs and none of the 3 finished post-training ones has one. ReAct is not affected. Red-team scores are not affected. Effect size not measured; the README's known limitations and its inference monitor results say this.
 
 ## Also fixed in 7-F
 
