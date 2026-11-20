@@ -46,6 +46,7 @@ from researcharena_inspect.agents.claude_code import (
     capture_cli_output,
     claude_code_env,
     install_claude_code,
+    prompt_on_stdin,
     red_team_claude_code,
 )
 from researcharena_inspect.agents.continuation import (
@@ -515,7 +516,8 @@ def red_team_agent(
                     budget = Budget(redruntime)
                     run.budget_seconds = budget.total_seconds
                     run.budget_start = budget.start
-                    with capture_cli_output(stdout, stderr, cli_exit_codes):
+                    # D-078, D-257: Claude Code's first prompt on stdin, as upstream's.
+                    with capture_cli_output(stdout, stderr, cli_exit_codes), prompt_on_stdin():
                         await run_with_continuation(
                             rounds,
                             budget,
