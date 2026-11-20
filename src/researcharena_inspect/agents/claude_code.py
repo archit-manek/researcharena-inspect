@@ -233,8 +233,14 @@ def capture_cli_output(
 _SWE_SHELL = ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
 """How Inspect SWE (0.2.x) starts the CLI: `bash -c 'exec 0</dev/null; "$@"' bash <cli> ...`."""
 
-_STDIN_SHELL = ["bash", "-c", '"$@"', "bash"]
-"""The same shell without closing stdin, so the CLI reads the prompt from it."""
+_STDIN_SHELL = ["bash", "-c", 'PROMPT=$(cat); printf \'%s\' "$PROMPT" | "$@"', "bash"]
+"""A shell that reads the prompt from its stdin and pipes it to the CLI, with upstream's own
+line (`printf '%s' "$PROMPT" | ...`, `solve.sh:104`). It reads all of stdin before the CLI
+starts, so the sandbox's write of the prompt completes whether or not the CLI reads it (a CLI
+that exits at once still has its stderr and exit code reported). `$(cat)` drops trailing
+newlines, as upstream's `$(cat prompt.txt)` does (the prompt has none). `PROMPT` is not
+exported and `printf` is a builtin, so no process has the prompt in its arguments or
+environment. The pipeline's exit status is the CLI's."""
 
 _prompt_on_stdin: ContextVar[bool] = ContextVar("researcharena_prompt_on_stdin", default=False)
 _STDIN_ATTRIBUTE = "_researcharena_stdin"
@@ -246,8 +252,8 @@ def stdin_launch(cmd: list[str]) -> tuple[list[str], str] | None:
     Inspect SWE starts a new session as `bash -c 'exec 0</dev/null; "$@"' bash <cli>
     --session-id <id> <flags> -- <prompt>`, so the shell's and the CLI's command lines, which
     `ps` shows, both hold the prompt. Upstream pipes it in: `printf '%s' "$PROMPT" | claude
-    <flags>` (`solve.sh:104`). For a new session this returns `bash -c '"$@"' bash <cli>
-    --session-id <id> <flags>` and the prompt, for the caller to send on stdin. A resumed
+    <flags>` (`solve.sh:104`). For a new session this returns `_STDIN_SHELL <cli> --session-id
+    <id> <flags>` and the prompt, for the caller to send on stdin. A resumed
     session (`--resume <id> <flags> -- <prompt>`) gets None and is run as it is: upstream passes
     its continuation prompt as an argument too (`--continue "<prompt>"`, `solve.sh:121`).
 
@@ -255,7 +261,9 @@ def stdin_launch(cmd: list[str]) -> tuple[list[str], str] | None:
         RuntimeError: a command of any other shape, so that a change in Inspect SWE cannot put
             the prompt back on the command line unnoticed.
     """
-    shape_ok = len(cmd) >= 8 and cmd[:4] == _SWE_SHELL and cmd[-2] == "--"
+    shape_ok = (
+        len(cmd) >= 8 and cmd[:4] == _SWE_SHELL and cmd[-2] == "--" and cmd[4:-1].count("--") == 1
+    )
     if shape_ok and cmd[5] == "--resume":
         return None
     if not shape_ok or cmd[5] != "--session-id":
@@ -268,7 +276,7 @@ class _StdinSandbox:
 
     Everything passes through, except that the CLI's launch (the only `exec_remote` call that
     `claude_code()` makes) of a new session is changed by `stdin_launch`, and the prompt is
-    given to the process as its stdin, which the sandbox closes once it is written.
+    given to the launching shell as its stdin, which the sandbox closes once it is written.
     """
 
     def __init__(self, inner: Any) -> None:
@@ -290,8 +298,11 @@ def prompt_on_stdin() -> Iterator[None]:
     """While open, Claude Code runs started by Inspect SWE get a new session's prompt on stdin.
 
     No process in the sandbox then has the prompt on its command line: Inspect sends it with
-    the launch request, outside the sandbox's process table, and the CLI reads it from stdin
-    as upstream's does. No file, variable or process is added. Inspect SWE looks up the
+    the launch request, outside the sandbox's process table, and the shell that starts the CLI
+    pipes it in as upstream's `solve.sh` does. No file or environment variable is added; that
+    shell stays as the CLI's parent while it runs (`ps` shows its one-line script, the line
+    `agent_solve.sh` in the agent's home also has), where Inspect SWE's own shell used to
+    `exec` the CLI. Inspect SWE looks up the
     sandbox through `sandbox_env` in its module each time it launches the CLI; the replacement
     installed here returns `_StdinSandbox` inside this context and the sandbox itself outside
     it (the monitor's own Claude Code, other tasks).

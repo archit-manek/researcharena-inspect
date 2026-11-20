@@ -8,7 +8,8 @@ Upstream runs the monitor CLI as (`monitors/claude/monitor.sh` at the pinned com
 in `/home/user/task`, with every tool, `BASH_MAX_TIMEOUT_MS=36000000` and
 `BASH_DEFAULT_TIMEOUT_MS=3600000`, after installing the latest Claude Code release. Inspect SWE's
 `claude_code()` runs the same flags (`--print --output-format stream-json --verbose
---dangerously-skip-permissions --model`), passes the prompt as an argument instead of on stdin,
+--dangerously-skip-permissions --model`), passes the prompt as an argument instead of on stdin
+(D-078; left as it is, unlike the red-team agent's, `agents.claude_code.prompt_on_stdin`),
 and routes the model calls through Inspect's bridge, so the effort is set on the served model
 (`GenerateConfig.reasoning_effort`) rather than by `--effort`.
 

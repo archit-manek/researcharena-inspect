@@ -6,6 +6,8 @@ recorder. `test_prompt_stdin_docker.py` runs the real CLI.
 
 import importlib
 import inspect
+import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,6 +18,8 @@ from researcharena_inspect.agents.claude_code import prompt_on_stdin, stdin_laun
 
 SWE = importlib.import_module("inspect_swe._claude_code.claude_code")
 SHELL = ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+STDIN_SHELL = ["bash", "-c", 'PROMPT=$(cat); printf \'%s\' "$PROMPT" | "$@"', "bash"]
+"""Upstream's line (`solve.sh:104`): the shell reads the prompt, then pipes it to the CLI."""
 FLAGS = ["--dangerously-skip-permissions", "--model", "m", "--print", "--output-format"]
 FLAGS += ["stream-json", "--verbose"]
 PROMPT = "# Task\n\n--print -- 'quoted' $HOME `x`\n\nSide task: do Y."
@@ -28,7 +32,7 @@ def launch(session_flag: str, prompt: str = PROMPT) -> list[str]:
 def test_new_session_prompt_moves_to_stdin() -> None:
     cmd, prompt = stdin_launch(launch("--session-id")) or ([], "")
     assert prompt == PROMPT
-    assert cmd[:4] == ["bash", "-c", '"$@"', "bash"]  # stdin no longer closed
+    assert cmd[:4] == STDIN_SHELL
     # Nothing of the prompt is left on the command line, and no `--` either (as upstream's
     # `claude <flags>` reading stdin).
     assert all(PROMPT not in a and "Side task" not in a for a in cmd)
@@ -56,7 +60,8 @@ def test_resumed_session_is_left_as_upstream_runs_it() -> None:
     "cmd",
     [
         ["claude", "--session-id", "sid", "--print", "--", PROMPT],  # no shell
-        ["bash", "-c", '"$@"', "bash", "claude", "--session-id", "sid", "--", PROMPT],
+        [*STDIN_SHELL, "claude", "--session-id", "sid", "--", PROMPT],
+        [*SHELL, "claude", "--session-id", "sid", "--", "extra", "--", PROMPT],  # two `--`
         [*SHELL, "claude", "--session-id", "sid", *FLAGS, PROMPT],  # no `--`
         [*SHELL, "claude", "--continue", *FLAGS, "--", PROMPT],
         [*SHELL, "claude", "--", PROMPT],
@@ -97,7 +102,7 @@ async def test_the_sandbox_sends_a_new_session_prompt_as_stdin() -> None:
     assert await sbox.exec_remote(cmd=launch("--session-id"), options=options) == "process"
     [(cmd, sent, stream)] = inner.calls
     assert stream is True
-    assert cmd[:4] == ["bash", "-c", '"$@"', "bash"]
+    assert cmd[:4] == STDIN_SHELL
     assert cmd[-1] == "--verbose"
     assert sent.input == PROMPT
     assert (sent.cwd, sent.env, sent.user, sent.stdin_open) == (
@@ -128,3 +133,28 @@ def test_only_inside_the_context() -> None:
         assert cc._prompt_on_stdin.get()
     assert not cc._prompt_on_stdin.get()
     assert getattr(SWE.sandbox_env, cc._STDIN_ATTRIBUTE, False)
+
+
+BIG_PROMPT = ("Ünïcode 'quotes' \"dq\" $HOME `cmd` \\ -- %s %%\n" * 4000).rstrip("\n")
+"""Over 200 KB, more than a pipe holds (65,536 bytes), with shell and printf specials."""
+
+
+@pytest.mark.parametrize("prompt", [PROMPT, BIG_PROMPT])
+def test_the_shell_pipes_the_prompt_exactly(prompt: str, tmp_path: Path) -> None:
+    out = tmp_path / "stdin"
+    cli = ["sh", "-c", f"cat > {out}; exit 3"]  # a CLI that reads all of stdin
+    result = subprocess.run(
+        [*STDIN_SHELL, *cli], input=prompt.encode(), capture_output=True, check=False
+    )
+    assert result.returncode == 3  # the CLI's status, not the shell's
+    assert out.read_bytes() == prompt.encode()
+
+
+@pytest.mark.parametrize("prompt", [PROMPT, BIG_PROMPT])
+def test_a_cli_that_exits_without_reading_keeps_its_stderr_and_code(prompt: str) -> None:
+    cli = ["sh", "-c", "echo early >&2; exit 42"]
+    result = subprocess.run(
+        [*STDIN_SHELL, *cli], input=prompt.encode(), capture_output=True, check=False
+    )
+    assert result.returncode == 42  # the writer's SIGPIPE does not change it
+    assert result.stderr == b"early\n"
