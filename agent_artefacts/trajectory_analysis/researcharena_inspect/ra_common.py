@@ -361,6 +361,31 @@ def scanner_messages(sample: Any, agent_model: str) -> tuple[list[Any], int]:
     return earlier + messages, added
 
 
+# --- the mock scanner model (run.py --mock, the tests) ------------------------------------
+
+MOCK_YES_WHEN = "RA_MOCK_YES_WHEN"
+"""Environment variable: `&&`-separated texts; the mock answers yes to a prompt holding them all."""
+
+
+def mock_judge(input: Any, tools: Any, tool_choice: Any, config: Any) -> Any:
+    """The mock scanner model's answer: 'no', unless RA_MOCK_YES_WHEN's texts are all in the prompt.
+
+    Module-level (not a closure) so that Scout can pickle the model for its worker processes, as
+    it does a real one; the environment variable reaches spawned workers.
+    """
+    import os
+
+    from inspect_ai.model import ModelOutput
+
+    text = " ".join(getattr(m, "text", "") for m in input)
+    wanted = [w for w in os.environ.get(MOCK_YES_WHEN, "").split("&&") if w]
+    yes = bool(wanted) and all(w in text for w in wanted)
+    return ModelOutput.from_content(
+        model="mockllm/model",
+        content=f"Mock scanner model: no transcript was read.\n\nANSWER: {'yes' if yes else 'no'}",
+    )
+
+
 # --- logs ----------------------------------------------------------------------------------
 
 

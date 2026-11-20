@@ -114,12 +114,33 @@ def log_groups(entries: list[rc.LogEntry]) -> dict[str, list[rc.LogEntry]]:
 
 
 def load_scanners() -> list[Any]:
-    """The template's scanner collection for this eval, with VALIDITY_OVERRIDES applied."""
+    """The template's scanner collection for this eval, importable in Scout's workers.
+
+    `collect_scanners` (the template's) gives the defaults, then this eval's scanners, skipping
+    a name a default already has. It execs `eval_scanners.py` under a made-up module name,
+    `eval_scanners_<eval>`. Scout runs a scan in worker processes started with `spawn` (on every
+    platform, whenever it uses more than one process) and sends them the scanners with
+    cloudpickle, which refers to a function by its module's name; a worker cannot import the
+    made-up name, and dies with ModuleNotFoundError (the 20 Nov pilot). So each scanner the
+    template loaded from that module is replaced by the same scanner from `eval_scanners`,
+    imported under its file's name, which a worker can import (spawn passes `sys.path` on).
+    Then `VALIDITY_OVERRIDES` is applied.
+    """
+    import eval_scanners
     from run_all_scanners import collect_scanners
 
-    scanners = collect_scanners(rc.EVAL_NAME, [])
-    module = sys.modules.get(f"eval_scanners_{rc.EVAL_NAME}")
-    overrides: dict[str, dict[str, bool]] = getattr(module, "VALIDITY_OVERRIDES", {})
+    collected = collect_scanners(rc.EVAL_NAME, [])
+    template_module = f"eval_scanners_{rc.EVAL_NAME}"
+    own = {s.name: s for s in eval_scanners.SCANNERS}
+    scanners = []
+    for s in collected:
+        if getattr(s.scanner_factory, "__module__", None) == template_module:
+            s = own[s.name]
+        scanners.append(s)
+    stray = [s.name for s in scanners if s.scanner_factory.__module__ == template_module]
+    if stray:
+        raise SystemExit(f"scanners not importable in Scout's workers: {stray}")
+    overrides: dict[str, dict[str, bool]] = eval_scanners.VALIDITY_OVERRIDES
     unknown = set(overrides) - {s.name for s in scanners}
     if unknown:
         raise SystemExit(f"VALIDITY_OVERRIDES names unknown scanners: {sorted(unknown)}")
@@ -280,16 +301,13 @@ def print_dry_run(plan: dict) -> None:
 
 
 def mock_model() -> Any:
-    """A scanner model that answers every question with 'no', for a run with no spend."""
-    from inspect_ai.model import ModelOutput, get_model
+    """A scanner model that answers 'no' (see `ra_common.mock_judge`), for a run with no spend.
 
-    def judge(input: Any, tools: Any, tool_choice: Any, config: Any) -> ModelOutput:
-        return ModelOutput.from_content(
-            model="mockllm/model",
-            content="Mock scanner model: no transcript was read.\n\nANSWER: no",
-        )
+    The scan runs in Scout's worker processes exactly as with a real model.
+    """
+    from inspect_ai.model import get_model
 
-    return get_model("mockllm/model", custom_outputs=judge)
+    return get_model("mockllm/model", custom_outputs=rc.mock_judge)
 
 
 def run_scan(group_dir: Path, entries: list[rc.LogEntry], scanners: list[Any], model: Any,
@@ -305,10 +323,35 @@ def run_scan(group_dir: Path, entries: list[rc.LogEntry], scanners: list[Any], m
         transcripts=transcripts_from([str(e.path) for e in entries]),
         model=model,
         scans=str(group_dir),
-        max_processes=1 if mock else None,
         display="none" if mock else None,
     )
     print(f"Scan of {len(entries)} logs complete: {status.complete}")
+    if not status.complete:
+        raise SystemExit(incomplete_message(group_dir, status))
+
+
+def incomplete_message(group_dir: Path, status: Any) -> str:
+    """Why `run.py` stops: the scan is incomplete, so nothing after it would be right."""
+    lines = [
+        f"Scout reports the scan in {group_dir} incomplete; stopping before the steps that read it.",
+    ]
+    for error in list(getattr(status, "errors", None) or [])[:5]:
+        lines.append(f"  scan error: {getattr(error, 'error', error)!s}"[:400])
+    summary_path = next(iter(sorted(group_dir.glob("scan_id=*/_summary.json"))), None)
+    if summary_path is not None:
+        summary = json.loads(summary_path.read_text())
+        scanners = summary.get("scanners") or {}
+        scans = sum(int(v.get("scans") or 0) for v in scanners.values())
+        tokens = sum(int(v.get("tokens") or 0) for v in scanners.values())
+        lines.append(
+            f"  {summary_path.parent.name}: {scans} scanner results recorded, {tokens:,} scanner "
+            f"model tokens used (Scout's _summary.json)."
+        )
+    lines.append(
+        "  Worker errors, if any, are printed above. Fix the cause, then rerun with a new "
+        "--label (a folder holding a scan is refused)."
+    )
+    return "\n".join(lines)
 
 
 def run_template_script(name: str, results_dir: Path) -> None:

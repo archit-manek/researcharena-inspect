@@ -367,7 +367,6 @@ def test_end_to_end_with_a_mock_scanner_model(
     """A real .eval log, scanned by Scout with a mock model, through to the analysis file."""
     from inspect_ai import Task, eval
     from inspect_ai.dataset import Sample
-    from inspect_ai.model import ModelOutput, get_model
     from inspect_ai.scorer import Target, mean, scorer
     from inspect_ai.solver import TaskState, generate
 
@@ -428,15 +427,10 @@ def test_end_to_end_with_a_mock_scanner_model(
     manifest.write_text("e2e-run/*.eval\n")
 
     run = _load("run")
-
-    def judge(input: Any, *args: Any) -> ModelOutput:
-        text = " ".join(getattr(m, "text", "") for m in input)
-        yes = "READ BACK from a results file" in text and "speedup=1.500x" in text
-        return ModelOutput.from_content(
-            "mockllm/model", f"mock\n\nANSWER: {'yes' if yes else 'no'}"
-        )
-
-    monkeypatch.setattr(run, "mock_model", lambda: get_model("mockllm/model", custom_outputs=judge))
+    rc = _load("ra_common")
+    # The scan has two transcripts, so Scout runs it in spawned worker processes, as a real scan
+    # does: the scanners and the mock model must reach them (the 20 Nov pilot died there).
+    monkeypatch.setenv(rc.MOCK_YES_WHEN, "READ BACK from a results file&&speedup=1.500x")
     runs = tmp_path / "runs"
     run.main(
         [
@@ -466,4 +460,71 @@ def test_end_to_end_with_a_mock_scanner_model(
     analysis = (group / "researcharena_inspect_model_ANALYSIS.md").read_text()
     assert "**Mock run.**" in analysis
     assert "1 of 2 are invalid (50.0%" in analysis
-    assert '`score_read_back`: "mock' in analysis
+    assert '`score_read_back`: "Mock scanner model' in analysis
+    usage = json.loads((group / "usage.json").read_text())
+    assert usage["complete"] is True
+    assert usage["scanners"]["score_read_back"]["scans"] == 2
+
+
+def test_scanners_and_mock_model_load_in_a_fresh_interpreter(tmp_path: Path) -> None:
+    """What a Scout worker does: unpickle the scanners and the model with only `sys.path`."""
+    import os
+    import pickle
+    import subprocess
+
+    import cloudpickle
+
+    run = _load("run")
+    scanners = run.load_scanners()
+    assert all(
+        s.scanner_factory.__module__ != "eval_scanners_researcharena_inspect" for s in scanners
+    )
+    (tmp_path / "scanners.pkl").write_bytes(
+        cloudpickle.dumps({s.name: s.create_scanner() for s in scanners})
+    )
+    (tmp_path / "model.pkl").write_bytes(pickle.dumps(run.mock_model()))
+    code = (
+        "import pickle, sys, cloudpickle\n"
+        "s = cloudpickle.loads(open(sys.argv[1], 'rb').read())\n"
+        "m = pickle.loads(open(sys.argv[2], 'rb').read())\n"
+        "print(len(s))\n"
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path / "scanners.pkl"), str(tmp_path / "model.pkl")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip() == str(len(scanners))
+
+
+def test_an_incomplete_scan_stops_before_post_processing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import inspect_scout
+
+    run = _load("run")
+
+    class Status:
+        complete = False
+        errors = ()
+
+    def fake_scan(**kwargs: Any) -> Status:
+        return Status()
+
+    monkeypatch.setattr(inspect_scout, "scan", fake_scan)
+    group = tmp_path / "group"
+    group.mkdir()
+    (group / "scan_id=x").mkdir()
+    (group / "scan_id=x" / "_summary.json").write_text(
+        json.dumps({"complete": False, "scanners": {"a": {"scans": 0, "tokens": 0}}})
+    )
+    # run_scan stops on Scout's status; the message reads the scan folder's summary.
+    with pytest.raises(SystemExit, match="incomplete; stopping before the steps that read it"):
+        run.run_scan(tmp_path / "fresh", [], [], "mockllm/model", True)
+    message = run.incomplete_message(group, Status())
+    assert "0 scanner results recorded, 0 scanner model tokens used" in message
