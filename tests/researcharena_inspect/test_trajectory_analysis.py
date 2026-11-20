@@ -139,8 +139,10 @@ def test_manifest_globs_and_empty_patterns(rc: ModuleType, tmp_path: Path) -> No
     (tmp_path / "a" / "run-1").mkdir(parents=True)
     (tmp_path / "a" / "run-1" / "x.eval").write_text("")
     (tmp_path / "a" / "run-1" / "notes.txt").write_text("")
+    (tmp_path / "a" / "run-x-smoke").mkdir()
+    (tmp_path / "a" / "run-x-smoke" / "y.eval").write_text("")
     manifest = tmp_path / "m.txt"
-    manifest.write_text("# comment\na/run-*/*.eval  # live runs\nb/none-*/*.eval\n")
+    manifest.write_text("# comment\na/run-*/*.eval  # live runs\nb/none-*/*.eval\n!*-smoke/*\n")
     entries, empty = rc.resolve_logs(rc.read_manifest(manifest), tmp_path)
     assert [(e.rel, e.run) for e in entries] == [("a/run-1/x.eval", "run-1")]
     assert empty == ["b/none-*/*.eval"]

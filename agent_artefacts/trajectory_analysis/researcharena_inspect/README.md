@@ -60,6 +60,6 @@ uv run python $RUN --manifest full --logs-root $ROOT --model openai/gpt-5-nano -
 uv run python $RUN --manifest full --logs-root $ROOT --model openai/gpt-5-nano --analysis
 ```
 
-Results go to `runs/<manifest>-<model>/<evaluated model>/`; `--label` names the folder, `--post-only` redoes the steps after a scan, `--group` limits the run to one evaluated model. The analysis files are written here, named by the workflow's rule: `researcharena_inspect_claude-sonnet-4-6_ANALYSIS.md`, and one per other evaluated model or agent (`..._claude-sonnet-4-6-react_ANALYSIS.md`, `..._gpt-5.5_ANALYSIS.md`). Known answers alone: `uv run python agent_artefacts/trajectory_analysis/researcharena_inspect/known_answers.py --manifest full --logs-root $ROOT --out known_answers.csv`.
+Results go to `runs/<manifest>-<model>/<evaluated model>/`; `--label` names the folder, `--post-only` redoes the steps after a scan, `--group` limits the run to one evaluated model. The analysis files are written here, named by the workflow's rule: `researcharena_inspect_claude-sonnet-4-6_ANALYSIS.md`, and one per other evaluated model or agent (`..._claude-sonnet-4-6-react_ANALYSIS.md`, `..._gpt-5.5-react_ANALYSIS.md`). Known answers alone: `uv run python agent_artefacts/trajectory_analysis/researcharena_inspect/known_answers.py --manifest full --logs-root $ROOT --out known_answers.csv`.
 
-Add new log folders as lines in `manifests/full.txt`; a line that matches nothing is reported and skipped.
+Add new log folders as lines in `manifests/full.txt`; a line that matches nothing is reported and skipped, and a line starting with `!` leaves out what it matches (the few-minute smoke runs, `!*-smoke/*`).

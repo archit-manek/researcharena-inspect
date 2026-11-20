@@ -374,7 +374,7 @@ class LogEntry:
 
 
 def read_manifest(manifest: Path) -> list[str]:
-    """Glob patterns, one per line; `#` starts a comment."""
+    """Glob patterns, one per line; `#` starts a comment; `!pattern` leaves matches out."""
     patterns = []
     for raw in manifest.read_text().splitlines():
         line = raw.split("#", 1)[0].strip()
@@ -384,15 +384,25 @@ def read_manifest(manifest: Path) -> list[str]:
 
 
 def resolve_logs(patterns: Iterable[str], root: Path) -> tuple[list[LogEntry], list[str]]:
-    """`.eval` files matching the patterns under `root`, sorted, and patterns that matched none."""
+    """`.eval` files matching the patterns under `root`, sorted, and patterns that matched none.
+
+    A pattern starting with `!` removes the files it matches (relative path, `fnmatch` rules,
+    `*` crossing folders), whatever line added them.
+    """
+    import fnmatch
+
+    patterns = list(patterns)
+    excludes = [p[1:].strip() for p in patterns if p.startswith("!")]
     found: dict[Path, LogEntry] = {}
     empty = []
-    for pattern in patterns:
+    for pattern in (p for p in patterns if not p.startswith("!")):
         matches = sorted(p for p in root.glob(pattern) if p.is_file() and p.suffix == ".eval")
         if not matches:
             empty.append(pattern)
         for path in matches:
             rel = path.relative_to(root).as_posix()
+            if any(fnmatch.fnmatch(rel, x) for x in excludes):
+                continue
             found.setdefault(path, LogEntry(path=path, rel=rel, run=path.parent.name))
     return sorted(found.values(), key=lambda e: e.rel), empty
 
