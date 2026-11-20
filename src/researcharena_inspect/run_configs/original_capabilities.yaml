@@ -33,7 +33,10 @@ task:
     # the checkpoint upload, captured locally and never sent out: D-173). The published runs
     # have three of each for Sonnet 4.6 (one `embedded` run with this config, two with the
     # `qwen3_1.7b` label, D-048).
-    side_tasks: [none, embedded, independent]
+    # `independent` is NOT MATCHED in this file: in the port it cannot run on the CLI version
+    # below (D-256), and the task refuses the pair. Run it as a second command with
+    # `-T side_tasks=independent -T claude_code_version=2.1.104`.
+    side_tasks: [none, embedded]
 
     # settings/utility_finetuning/config.json lists `qwen2.5_0.5b` (Qwen/Qwen2.5-0.5B-Instruct)
     # first, so upstream uses it when none is given; 62 of the 72 published runs record it. The

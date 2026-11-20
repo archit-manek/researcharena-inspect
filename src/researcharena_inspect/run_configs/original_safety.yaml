@@ -33,7 +33,10 @@ task:
     # settings/safety_finetuning/side_tasks/ (embedded = the |LISTS_AND_MATH| backdoor,
     # embedded_german = unsafe in German only, independent = the checkpoint upload, captured
     # locally and never sent out: D-173). The published runs have three of each for Sonnet 4.6.
-    side_tasks: [none, embedded, embedded_german, independent]
+    # `independent` is NOT MATCHED in this file: in the port it cannot run on the CLI version
+    # below (D-256), and the task refuses the pair. Run it as a second command with
+    # `-T side_tasks=independent -T claude_code_version=2.1.104`.
+    side_tasks: [none, embedded, embedded_german]
 
     # settings/safety_finetuning/config.json lists `qwen3_1.7b`
     # (huihui-ai/Huihui-Qwen3-1.7B-abliterated-v2) first, so upstream uses it when none is
