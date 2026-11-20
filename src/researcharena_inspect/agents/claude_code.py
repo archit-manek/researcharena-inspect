@@ -233,14 +233,17 @@ def capture_cli_output(
 _SWE_SHELL = ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
 """How Inspect SWE (0.2.x) starts the CLI: `bash -c 'exec 0</dev/null; "$@"' bash <cli> ...`."""
 
-_STDIN_SHELL = ["bash", "-c", 'PROMPT=$(cat); printf \'%s\' "$PROMPT" | "$@"', "bash"]
-"""A shell that reads the prompt from its stdin and pipes it to the CLI, with upstream's own
-line (`printf '%s' "$PROMPT" | ...`, `solve.sh:104`). It reads all of stdin before the CLI
-starts, so the sandbox's write of the prompt completes whether or not the CLI reads it (a CLI
-that exits at once still has its stderr and exit code reported). `$(cat)` drops trailing
-newlines, as upstream's `$(cat prompt.txt)` does (the prompt has none). `PROMPT` is not
-exported and `printf` is a builtin, so no process has the prompt in its arguments or
-environment. The pipeline's exit status is the CLI's."""
+_STDIN_SHELL = ["bash", "-c", 'set +o pipefail; printf \'%s\' "$(cat)" | "$@"', "bash"]
+"""A shell that pipes its stdin, the prompt, to the CLI, as upstream's `printf '%s' "$PROMPT" |
+claude ...` (`solve.sh:104`) does; the line differs from upstream's in reading the prompt from
+stdin rather than from a variable. `$(cat)` reads all of stdin whether or not the CLI does, so
+the sandbox's write of the prompt completes and a CLI that exits at once still has its stderr
+and exit code reported; like upstream's `$(cat prompt.txt)` it drops trailing newlines (the
+prompt has none). No variable holds the prompt, so no inherited `export` or `allexport` can put
+it in an environment, and `printf` is a builtin, so it is in no process's arguments either.
+`set +o pipefail` keeps the pipeline's status the CLI's even if the shell inherits `pipefail`
+(`SHELLOPTS`): otherwise a CLI that exits 0 before reading all of a large prompt would be
+reported as the writer's SIGPIPE, 141."""
 
 _prompt_on_stdin: ContextVar[bool] = ContextVar("researcharena_prompt_on_stdin", default=False)
 _STDIN_ATTRIBUTE = "_researcharena_stdin"
@@ -261,9 +264,9 @@ def stdin_launch(cmd: list[str]) -> tuple[list[str], str] | None:
         RuntimeError: a command of any other shape, so that a change in Inspect SWE cannot put
             the prompt back on the command line unnoticed.
     """
-    shape_ok = (
-        len(cmd) >= 8 and cmd[:4] == _SWE_SHELL and cmd[-2] == "--" and cmd[4:-1].count("--") == 1
-    )
+    # The separator is found by position: a flag's value can itself be `--` (a system message
+    # passed as `--append-system-prompt --`, say).
+    shape_ok = len(cmd) >= 8 and cmd[:4] == _SWE_SHELL and cmd[-2] == "--"
     if shape_ok and cmd[5] == "--resume":
         return None
     if not shape_ok or cmd[5] != "--session-id":
@@ -299,10 +302,9 @@ def prompt_on_stdin() -> Iterator[None]:
 
     No process in the sandbox then has the prompt on its command line: Inspect sends it with
     the launch request, outside the sandbox's process table, and the shell that starts the CLI
-    pipes it in as upstream's `solve.sh` does. No file or environment variable is added; that
-    shell stays as the CLI's parent while it runs (`ps` shows its one-line script, the line
-    `agent_solve.sh` in the agent's home also has), where Inspect SWE's own shell used to
-    `exec` the CLI. Inspect SWE looks up the
+    pipes it in as upstream's `solve.sh` does (`_STDIN_SHELL`). No file or environment variable
+    is added; that shell stays as the CLI's parent while it runs (`ps` shows its one-line
+    script), where Inspect SWE's own shell used to `exec` the CLI. Inspect SWE looks up the
     sandbox through `sandbox_env` in its module each time it launches the CLI; the replacement
     installed here returns `_StdinSandbox` inside this context and the sandbox itself outside
     it (the monitor's own Claude Code, other tasks).

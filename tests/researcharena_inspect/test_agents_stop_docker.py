@@ -53,7 +53,7 @@ wait
 CLI_WRAPPER = f'#!/bin/bash\nexec -a {CLI} bash {FAKE_CLI} "$@"\n'
 SWE_SHELL = ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
 STDIN_FLAGS = ["--session-id", "sid", "--print", "--output-format", "stream-json", "--verbose"]
-STDIN_SHELL_MARK = "PROMPT=$(cat)"
+STDIN_SHELL_MARK = '"$(cat)" | "$@"'
 LAUNCHES = ("swe", "stdin")
 
 # Started before the agent, so in `keep`: never signalled, though it looks like the CLI.

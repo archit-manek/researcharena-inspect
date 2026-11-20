@@ -6,6 +6,7 @@ recorder. `test_prompt_stdin_docker.py` runs the real CLI.
 
 import importlib
 import inspect
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,8 @@ from researcharena_inspect.agents.claude_code import prompt_on_stdin, stdin_laun
 
 SWE = importlib.import_module("inspect_swe._claude_code.claude_code")
 SHELL = ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-STDIN_SHELL = ["bash", "-c", 'PROMPT=$(cat); printf \'%s\' "$PROMPT" | "$@"', "bash"]
-"""Upstream's line (`solve.sh:104`): the shell reads the prompt, then pipes it to the CLI."""
+STDIN_SHELL = ["bash", "-c", 'set +o pipefail; printf \'%s\' "$(cat)" | "$@"', "bash"]
+"""As upstream's `printf '%s' "$PROMPT" | claude` (`solve.sh:104`), reading the prompt from stdin."""
 FLAGS = ["--dangerously-skip-permissions", "--model", "m", "--print", "--output-format"]
 FLAGS += ["stream-json", "--verbose"]
 PROMPT = "# Task\n\n--print -- 'quoted' $HOME `x`\n\nSide task: do Y."
@@ -51,6 +52,17 @@ def test_a_prompt_that_looks_like_flags_is_still_the_prompt() -> None:
         assert moved[0][-1] == "--verbose"
 
 
+def test_a_flag_whose_value_is_a_double_dash_is_kept() -> None:
+    # Inspect SWE passes a system message as `--append-system-prompt <text>`; the text can be
+    # `--`. Only the last element, after the last `--`, is the prompt.
+    flags = [*FLAGS, "--append-system-prompt", "--"]
+    cmd = [*SHELL, "/usr/local/bin/claude", "--session-id", "sid", *flags, "--", PROMPT]
+    moved = stdin_launch(cmd)
+    assert moved is not None
+    assert moved[1] == PROMPT
+    assert moved[0][4:] == ["/usr/local/bin/claude", "--session-id", "sid", *flags]
+
+
 def test_resumed_session_is_left_as_upstream_runs_it() -> None:
     # Upstream passes the continuation prompt as an argument (`--continue "<prompt>"`).
     assert stdin_launch(launch("--resume", "Continue where you left off")) is None
@@ -61,7 +73,6 @@ def test_resumed_session_is_left_as_upstream_runs_it() -> None:
     [
         ["claude", "--session-id", "sid", "--print", "--", PROMPT],  # no shell
         [*STDIN_SHELL, "claude", "--session-id", "sid", "--", PROMPT],
-        [*SHELL, "claude", "--session-id", "sid", "--", "extra", "--", PROMPT],  # two `--`
         [*SHELL, "claude", "--session-id", "sid", *FLAGS, PROMPT],  # no `--`
         [*SHELL, "claude", "--continue", *FLAGS, "--", PROMPT],
         [*SHELL, "claude", "--", PROMPT],
@@ -158,3 +169,34 @@ def test_a_cli_that_exits_without_reading_keeps_its_stderr_and_code(prompt: str)
     )
     assert result.returncode == 42  # the writer's SIGPIPE does not change it
     assert result.stderr == b"early\n"
+
+
+ENV_CLI = "cat > /dev/null; env"
+"""A CLI that reads its stdin and prints its environment."""
+
+
+@pytest.mark.parametrize(
+    "inherited", [{"PROMPT": "placeholder"}, {"SHELLOPTS": "allexport"}, {"p": "x"}]
+)
+def test_the_prompt_is_in_no_environment(inherited: dict[str, str]) -> None:
+    env = {"PATH": os.environ["PATH"], **inherited}
+    result = subprocess.run(
+        [*STDIN_SHELL, "sh", "-c", ENV_CLI],
+        input=PROMPT.encode(),
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert b"Side task" not in result.stdout
+    if "PROMPT" in inherited:
+        assert b"PROMPT=placeholder\n" in result.stdout  # passed on unchanged
+
+
+def test_inherited_pipefail_does_not_change_the_cli_status() -> None:
+    env = {"PATH": os.environ["PATH"], "SHELLOPTS": "pipefail"}
+    cli = ["sh", "-c", "head -c 13 > /dev/null; exit 0"]
+    result = subprocess.run(
+        [*STDIN_SHELL, *cli], input=BIG_PROMPT.encode(), capture_output=True, check=False, env=env
+    )
+    assert result.returncode == 0

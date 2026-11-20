@@ -192,9 +192,21 @@ def test_the_model_gets_the_prompt_byte_for_byte(marked_run) -> None:
 
 EARLY_EXIT_CLI = "/tmp/early_exit_cli"
 READING_CLI = "/tmp/reading_cli"
+ENV_CLI = "/tmp/env_cli"
+PARTIAL_CLI = "/tmp/partial_cli"
+ENV_MARKER = "QX7-ENV-MARKER-77D1"
 STAND_INS = {
     EARLY_EXIT_CLI: "#!/bin/sh\necho early-stderr >&2\nexit 42\n",
     READING_CLI: "#!/bin/sh\nsha256sum\n",
+    # Its stdin's digest, its own PROMPT and whether the prompt is in its environment.
+    ENV_CLI: (
+        "#!/bin/sh\n"
+        "echo \"$(sha256sum | cut -d' ' -f1)\"\n"
+        'echo "PROMPT=${PROMPT-unset}"\n'
+        f"if tr '\\0' '\\n' < /proc/$$/environ | grep -q {ENV_MARKER}; "
+        "then echo leaked; else echo clean; fi\n"
+    ),
+    PARTIAL_CLI: "#!/bin/sh\nhead -c 13 > /dev/null\nexit 0\n",
 }
 SWE_SHELL = ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
 PAYLOADS = {
@@ -203,15 +215,18 @@ PAYLOADS = {
 }
 """A prompt-sized payload, and one over the 65,536 bytes a pipe holds."""
 REPEATS = 3
+ENV_PAYLOAD = f"{ENV_MARKER}\n" + "y" * 204_800
+INHERITED = {"exported_prompt": {"PROMPT": "placeholder"}, "allexport": {"SHELLOPTS": "allexport"}}
+"""Launch environments that would export a shell variable holding the prompt."""
 
 
-async def _launch(cli: str, prompt: str) -> dict[str, Any]:
+async def _launch(cli: str, prompt: str, env: dict[str, str] | None = None) -> dict[str, Any]:
     """Start `cli` as Inspect SWE starts a new session, through the port's stdin sandbox."""
     cmd = [*SWE_SHELL, cli, "--session-id", "sid", "--print", "--verbose", "--", prompt]
     out, err, code = "", "", None
     try:
         proc = await _StdinSandbox(sandbox()).exec_remote(
-            cmd=cmd, options=ExecRemoteStreamingOptions(), stream=True
+            cmd=cmd, options=ExecRemoteStreamingOptions(env=env), stream=True
         )
         async for event in proc:
             if isinstance(event, ExecStdout):
@@ -237,6 +252,12 @@ def launch_scenarios():
                 await _launch(EARLY_EXIT_CLI, payload) for _ in range(REPEATS)
             ]
             results[f"read_{name}"] = [await _launch(READING_CLI, payload)]
+        for name, env in INHERITED.items():
+            results[f"env_{name}"] = [await _launch(ENV_CLI, ENV_PAYLOAD, env)]
+        results["pipefail"] = [
+            await _launch(PARTIAL_CLI, PAYLOADS["over_pipe"], {"SHELLOPTS": "pipefail"})
+            for _ in range(REPEATS)
+        ]
         state.metadata["launches"] = results
         return state
 
@@ -268,6 +289,24 @@ def test_the_cli_reads_the_prompt_exactly(launches, payload) -> None:
     [result] = launches[f"read_{payload}"]
     digest = hashlib.sha256(PAYLOADS[payload].encode()).hexdigest()
     assert result == {"stdout": f"{digest}  -\n", "stderr": "", "code": 0}
+
+
+@pytest.mark.parametrize("inherited", list(INHERITED))
+def test_the_prompt_is_in_no_environment_whatever_is_inherited(launches, inherited) -> None:
+    [result] = launches[f"env_{inherited}"]
+    digest = hashlib.sha256(ENV_PAYLOAD.encode()).hexdigest()
+    prompt_var = INHERITED[inherited].get("PROMPT", "unset")
+    assert result == {
+        "stdout": f"{digest}\nPROMPT={prompt_var}\nclean\n",  # an inherited PROMPT unchanged
+        "stderr": "",
+        "code": 0,
+    }
+
+
+def test_inherited_pipefail_does_not_change_the_cli_status(launches) -> None:
+    # The CLI reads 13 bytes of the prompt and exits 0; the writer then gets SIGPIPE.
+    for result in launches["pipefail"]:
+        assert result == {"stdout": "", "stderr": "", "code": 0}
 
 
 # --- A first round that runs into the budget ----------------------------------------------
@@ -315,7 +354,7 @@ def test_a_first_round_at_the_budget_is_stopped_as_before(budget_run: EvalSample
     [stop] = run.deadline_stops
     # SIGTERM went to the CLI (and its own children), not to the shell that launched it.
     assert any("/usr/local/bin/claude --session-id" in line for line in stop["terminated"])
-    assert not any("PROMPT=$(cat)" in line for line in stop["terminated"])
+    assert not any('"$(cat)" | "$@"' in line for line in stop["terminated"])
     assert not stop["killed_after_grace"]
     # The CLI's own exit code came back through the shell (it exits on SIGTERM).
     assert stop["cli_exit_code"] in (0, 143)
@@ -324,5 +363,5 @@ def test_a_first_round_at_the_budget_is_stopped_as_before(budget_run: EvalSample
     assert score.metadata is not None
     left = "\n".join(score.metadata["processes"])
     assert "claude" not in left
-    assert "PROMPT=$(cat)" not in left
+    assert '"$(cat)" | "$@"' not in left
     assert "sleep 300" not in left
