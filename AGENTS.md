@@ -23,6 +23,7 @@ This project uses `uv`. Do not use `pip`, bare `python` or bare `pytest`.
 - `tests/researcharena_inspect/`: the tests.
 - `hawk/`: Hawk job files, kept as they ran.
 - `agent_artefacts/trajectory_analysis/inspect_scout/`: Scout scanners for the transcript audit.
+- `agent_artefacts/trajectory_analysis/researcharena_inspect/`: this eval's Scout scanners, the one-command runner for the trajectory analysis (manifest of live logs, dry run, known answers, validity with the paper's success rule) and its `..._ANALYSIS.md` files; see its README.
 
 ## How the port is built
 

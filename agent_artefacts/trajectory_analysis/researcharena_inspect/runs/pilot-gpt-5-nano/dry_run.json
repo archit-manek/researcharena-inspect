@@ -1,0 +1,129 @@
+{
+  "model": "openai/gpt-5-nano",
+  "context_window": 272000,
+  "chars_per_token": 4.04,
+  "scanners": [
+    "outcome_summary",
+    "external_failure",
+    "formatting_failure",
+    "reward_hacking_success",
+    "ethical_refusal",
+    "broken_env",
+    "filtered_refusal",
+    "grader_score_mismatch",
+    "side_task_carried_out",
+    "score_read_back",
+    "scorer_failed_on_working_submission",
+    "submission_not_loadable",
+    "uninstructed_reward_hacking"
+  ],
+  "samples": [
+    {
+      "group": "claude-sonnet-4-6",
+      "run": "full-independent-1",
+      "log": "2026-11-17-lambda-h100/full-independent-1/2026-11-17T15-38-31-00-00_researcharena_mwdox9C9Smg8A8wEUczQdh.eval",
+      "setting": "cuda_kernel",
+      "side_task": "independent",
+      "messages": 83,
+      "rendered_chars": 244693,
+      "est_tokens": 60568,
+      "segments": 1,
+      "earlier_conversations_added": 0,
+      "own_view_chars": 244693,
+      "own_view_tokens": 60568,
+      "own_segments": 1,
+      "own_scanners": [
+        "side_task_carried_out",
+        "score_read_back",
+        "scorer_failed_on_working_submission",
+        "uninstructed_reward_hacking"
+      ],
+      "llm_calls": 10,
+      "est_input_tokens": 619280,
+      "uncached_input_tokens": 70568
+    },
+    {
+      "group": "claude-sonnet-4-6",
+      "run": "full-none-1",
+      "log": "2026-11-17-lambda-h100/full-none-1/2026-11-17T13-25-19-00-00_researcharena_Jg6RuEqiHphBixcKRt5fVN.eval",
+      "setting": "cuda_kernel",
+      "side_task": "none",
+      "messages": 63,
+      "rendered_chars": 161291,
+      "est_tokens": 39924,
+      "segments": 1,
+      "earlier_conversations_added": 0,
+      "own_view_chars": 161291,
+      "own_view_tokens": 39924,
+      "own_segments": 1,
+      "own_scanners": [
+        "score_read_back",
+        "scorer_failed_on_working_submission",
+        "uninstructed_reward_hacking"
+      ],
+      "llm_calls": 9,
+      "est_input_tokens": 370416,
+      "uncached_input_tokens": 47424
+    },
+    {
+      "group": "claude-sonnet-4-6",
+      "run": "full-none-2",
+      "log": "2026-11-17-lambda-h100/full-none-2/2026-11-17T18-56-20-00-00_researcharena_RrE3LU7j4zNxbknuAXg4yZ.eval",
+      "setting": "cuda_kernel",
+      "side_task": "none",
+      "messages": 119,
+      "rendered_chars": 221494,
+      "est_tokens": 54826,
+      "segments": 1,
+      "earlier_conversations_added": 0,
+      "own_view_chars": 221494,
+      "own_view_tokens": 54826,
+      "own_segments": 1,
+      "own_scanners": [
+        "score_read_back",
+        "scorer_failed_on_working_submission",
+        "uninstructed_reward_hacking"
+      ],
+      "llm_calls": 9,
+      "est_input_tokens": 504534,
+      "uncached_input_tokens": 62326
+    },
+    {
+      "group": "claude-sonnet-4-6",
+      "run": "full-none-3",
+      "log": "2026-11-17-lambda-h100/full-none-3/2026-11-18T00-20-47-00-00_researcharena_dcotU8bxXrHsnSGy5zSkeX.eval",
+      "setting": "cuda_kernel",
+      "side_task": "none",
+      "messages": 16,
+      "rendered_chars": 51642,
+      "est_tokens": 12783,
+      "segments": 1,
+      "earlier_conversations_added": 1,
+      "own_view_chars": 305921,
+      "own_view_tokens": 75724,
+      "own_segments": 1,
+      "own_scanners": [
+        "score_read_back",
+        "scorer_failed_on_working_submission",
+        "uninstructed_reward_hacking"
+      ],
+      "llm_calls": 9,
+      "est_input_tokens": 314970,
+      "uncached_input_tokens": 96007
+    }
+  ],
+  "totals": {
+    "logs": 4,
+    "samples": 4,
+    "llm_calls": 37,
+    "est_input_tokens": 1809200,
+    "est_uncached_input_tokens": 276325,
+    "est_output_tokens": 122100,
+    "multi_segment_samples": 0,
+    "samples_with_earlier_conversations": 1,
+    "est_cost": {
+      "low_usd": 0.07,
+      "high_usd": 0.14
+    }
+  }
+}
