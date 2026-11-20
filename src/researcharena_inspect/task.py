@@ -26,6 +26,7 @@ agent's work; one sample per replayed run).
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
 
 import os
+import re
 from pathlib import PurePosixPath
 
 from inspect_ai import Epochs, Task, task
@@ -221,15 +222,53 @@ def check_hook_backend(dataset: MemoryDataset, backend: Backend, sandbox: object
     """
     if backend != "k8s" or sandbox is not None:
         return
-    needing = sorted(
-        str(s.id)
-        for s in dataset
-        if pipeline_hooks(str((s.metadata or {})["setting"]), str((s.metadata or {})["side_task"]))
-    )
+    needing = _hook_samples(dataset)
     if needing:
         raise ValueError(
             f"{needing} source upstream's pipeline_pre_agent.sh (the upload capture), whose "
             "service must share the agent's network namespace: use backend='docker'"
+        )
+
+
+def _hook_samples(dataset: MemoryDataset) -> list[str]:
+    """The samples whose side task has a `pipeline_pre_agent.sh` hook (the upload capture)."""
+    return sorted(
+        str(s.id)
+        for s in dataset
+        if pipeline_hooks(str((s.metadata or {})["setting"]), str((s.metadata or {})["side_task"]))
+    )
+
+
+HOOK_CLI_MINIMUM = (2, 1, 104)
+"""The lowest Claude Code version measured to honour `no_proxy` (D-256); 2.1.34 does not."""
+
+
+def check_hook_cli(dataset: MemoryDataset, agent: str, claude_code_version: str) -> None:
+    """Refuse a Claude Code version that sends its own model call to the upload capture (D-256).
+
+    The hook gives the agent `http_proxy` and `no_proxy=localhost,127.0.0.1`. Inspect SWE's
+    bridge is on `http://localhost`, and Claude Code 2.1.34 ignores `no_proxy`, so its first
+    model call gets the capture proxy's 403 and the run ends with no model output. Upstream's
+    CLI talks HTTPS to the API, which `http_proxy` does not touch. A version given by name
+    (`latest`, `stable`) is not checked.
+
+    Raises:
+        ValueError: `agent` is `claude_code`, a sample sources the hook, and
+            `claude_code_version` is a version number below `HOOK_CLI_MINIMUM`.
+    """
+    numbered = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", claude_code_version)
+    if agent != "claude_code" or numbered is None:
+        return
+    if tuple(int(part) for part in numbered.groups()) >= HOOK_CLI_MINIMUM:
+        return
+    needing = _hook_samples(dataset)
+    if needing:
+        lowest = ".".join(str(part) for part in HOOK_CLI_MINIMUM)
+        raise ValueError(
+            f"{needing} run with upstream's upload capture (http_proxy), and Claude Code "
+            f"{claude_code_version} would send its own model call to it: versions before "
+            f"{lowest} are not known to honour no_proxy (2.1.34 does not, D-256). Run these "
+            f"side tasks with claude_code_version={lowest} or later, or the others without them"
         )
 
 
@@ -335,7 +374,9 @@ def researcharena(
         effort: the agent's reasoning effort; `auto` reads upstream's `effort.json`
             (`xhigh`), `default` sets none.
         claude_code_version: Claude Code version (`latest`, `stable`, or e.g. `2.1.162`).
-            Upstream installs the latest release at the start of each run.
+            Upstream installs the latest release at the start of each run. The post-training
+            `independent` side task (the upload capture) is refused with a version number
+            below 2.1.104 (D-256).
         small_model: model for Claude Code's own background calls: Haiku 4.5, as in the
             published runs; `None` sends them to the task's model.
         react_compaction: let the ReAct agent summarise its conversation near the context limit.
@@ -420,6 +461,7 @@ def researcharena(
     if cuda_baseline_process:  # D-160
         check_baseline_process(dataset, scorer)
     check_hook_backend(dataset, backend, sandbox)
+    check_hook_cli(dataset, agent, claude_code_version)  # D-256
     if check_offline:  # D-185
         settings = frozenset((s.metadata or {}).get("setting", "") for s in dataset)
         check_offline_run(agent, model_cache, backend, sandbox, settings)

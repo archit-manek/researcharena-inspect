@@ -77,14 +77,13 @@ def test_original_inference_is_the_inference_baseline_and_four_side_tasks() -> N
 
 
 @pytest.mark.dataset_download  # clones the pinned upstream checkout on first use
-def test_original_capabilities_is_the_baseline_and_two_side_tasks_for_five_hours() -> None:
+def test_original_capabilities_is_the_baseline_and_embedded_for_five_hours() -> None:
     config = load("original_capabilities.yaml")
     args = config["task"]["args"]
     task = researcharena(**args, hf_seed="/srv/hf_seed")
-    assert [s.id for s in task.dataset] == [
+    assert [s.id for s in task.dataset] == [  # `independent` runs on a later CLI (D-256)
         "utility_finetuning__baseline",
         "utility_finetuning__embedded",
-        "utility_finetuning__independent",
     ]
     assert all(s.metadata and s.metadata["redruntime"] == "5" for s in task.dataset)
     assert all(s.metadata and s.metadata["resume_agent"] is False for s in task.dataset)
@@ -94,15 +93,14 @@ def test_original_capabilities_is_the_baseline_and_two_side_tasks_for_five_hours
 
 
 @pytest.mark.dataset_download
-def test_original_safety_is_the_baseline_and_three_side_tasks_for_five_hours() -> None:
+def test_original_safety_is_the_baseline_and_two_side_tasks_for_five_hours() -> None:
     config = load("original_safety.yaml")
     args = config["task"]["args"]
     task = researcharena(**args, hf_seed="/srv/hf_seed")
-    assert [s.id for s in task.dataset] == [
+    assert [s.id for s in task.dataset] == [  # `independent` runs on a later CLI (D-256)
         "safety_finetuning__baseline",
         "safety_finetuning__embedded",
         "safety_finetuning__embedded_german",
-        "safety_finetuning__independent",
     ]
     assert all(s.metadata and s.metadata["redruntime"] == "5" for s in task.dataset)
     assert all(s.metadata and s.metadata["resume_agent"] is False for s in task.dataset)
@@ -131,3 +129,24 @@ def test_red_team_configs_run_one_sample_at_a_time(name: str) -> None:
     assert config["eval_config"] == {"max_samples": 1}
     params = parse_run_config(str(RUN_CONFIGS / name))
     assert params["max_samples"] == 1
+
+
+@pytest.mark.dataset_download
+@pytest.mark.parametrize("name", ["original_capabilities.yaml", "original_safety.yaml"])
+def test_the_upload_side_task_is_refused_on_the_published_cli_version(name: str) -> None:
+    """D-256: Claude Code 2.1.34 sends its model call to the upload capture's proxy."""
+    args = {**load(name)["task"]["args"], "hf_seed": "/srv/hf_seed", "side_tasks": "independent"}
+    assert args["claude_code_version"] == "2.1.34"
+    with pytest.raises(ValueError, match="D-256"):
+        researcharena(**args)
+    # A version measured to honour `no_proxy`, a version by name, and ReAct are not refused.
+    assert researcharena(**{**args, "claude_code_version": "2.1.104"}).dataset
+    assert researcharena(**{**args, "claude_code_version": "latest"}).dataset
+    assert researcharena(**{**args, "agent": "react"}).dataset
+
+
+@pytest.mark.dataset_download
+def test_settings_without_the_upload_capture_run_on_any_cli_version() -> None:
+    """The CUDA `independent` side task has no hook, so no proxy reaches the agent (D-256)."""
+    args = {**load("original.yaml")["task"]["args"], "side_tasks": "independent"}
+    assert researcharena(**{**args, "claude_code_version": "2.1.34"}).dataset
