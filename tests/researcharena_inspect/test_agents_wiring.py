@@ -11,16 +11,26 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from inspect_ai.agent import AgentState
-from inspect_ai.model import ModelName, get_model
+from inspect_ai import Task, eval
+from inspect_ai.agent import AgentState, as_solver
+from inspect_ai.dataset import Sample
+from inspect_ai.event import ModelEvent
+from inspect_ai.log import resolve_sample_attachments
+from inspect_ai.model import ModelName, ModelOutput, get_model
 from inspect_ai.solver import Generate, TaskState
 
 from researcharena_inspect.agents import AgentRun, red_team_agent
 from researcharena_inspect.agents.claude_code import InstalledCli, claude_code_env
-from researcharena_inspect.agents.react import agent_bash, red_team_react
+from researcharena_inspect.agents.react import (
+    REACT_BASH_TIMEOUT_S,
+    agent_bash,
+    react_bash_description,
+    red_team_react,
+)
 from researcharena_inspect.environment.layout import (
     AGENT_PATH,
     AGENT_USER,
+    BASH_TIMEOUT_MS,
     PRE_AGENT_SETUP,
     TASK_DIR,
     agent_env,
@@ -218,11 +228,62 @@ async def test_react_bash_tool_gets_user_environment_and_workspace(
     assert (call.user, call.cwd, call.env, call.timeout) == (AGENT_USER, TASK_DIR, env, 3600)
 
 
+def test_react_tools_name_the_workspace_and_the_time_limit(tmp_path: Path) -> None:
+    # What the model is sent, read from the log; the model answers without a tool call.
+    model = get_model(
+        "mockllm/model", custom_outputs=[ModelOutput.from_content("mockllm/model", "Done.")]
+    )
+    agent = red_team_react(model, "default", user=AGENT_USER, env={}, cwd=TASK_DIR)
+    task = Task(dataset=[Sample(input="the task")], solver=as_solver(agent))
+    [log] = eval(task, model=model, display="none", log_dir=str(tmp_path))
+    assert log.status == "success", log.error
+    assert log.samples is not None
+    sample = resolve_sample_attachments(log.samples[0], "full")
+    [event] = [e for e in sample.events if isinstance(e, ModelEvent)]
+    assert [m.text for m in event.input] == ["the task"]  # no system message
+    tools = {t.name: t for t in event.tools}
+    bash = tools["bash"]
+    assert bash.description == react_bash_description(TASK_DIR)
+    assert f"starts in {TASK_DIR}, the working directory, so relative paths start" in (
+        bash.description
+    )
+    assert f"absolute paths for workspace files in the file editor, such as {TASK_DIR}/" in (
+        bash.description
+    )
+    assert "it resolves relative paths from /." in bash.description
+    # The limit stated is the one `red_team_react` gives the tool: Claude Code's default in
+    # upstream's agent (`BASH_DEFAULT_TIMEOUT_MS`).
+    assert int(BASH_TIMEOUT_MS) == REACT_BASH_TIMEOUT_S * 1000
+    assert f"stopped after at most {REACT_BASH_TIMEOUT_S} seconds (60 minutes)" in (
+        bash.description
+    )
+    assert list(bash.parameters.properties) == ["command"]
+    # The editor is Inspect's, unchanged: its own description and parameters.
+    assert tools["text_editor"].description == "Use this function to execute text editing commands."
+    assert sorted(tools["text_editor"].parameters.properties) == [
+        "command",
+        "file_text",
+        "insert_line",
+        "insert_text",
+        "new_str",
+        "old_str",
+        "path",
+        "view_range",
+    ]
+
+
 def test_react_agent_builds_with_the_agent_user() -> None:
     agent = red_team_react(
         get_model("mockllm/model"), "xhigh", user=AGENT_USER, env={}, cwd=TASK_DIR
     )
     assert callable(agent)
+
+
+def test_react_bash_description_names_the_cwd_it_is_given() -> None:
+    text = react_bash_description("/elsewhere")
+    assert "starts in /elsewhere, the working directory" in text
+    assert "such as /elsewhere/file.py" in text
+    assert TASK_DIR not in text
 
 
 def test_claude_code_gets_the_user_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
