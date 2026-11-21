@@ -10,8 +10,9 @@ tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
   # baseline). Other settings: inference_optimization 5, safety_finetuning 4,
-  # utility_finetuning 3. All four settings have had live runs on a GPU (cuda_kernel and
-  # inference_optimization 17 to 19 Nov 2026, the post-training settings 19 and 20 Nov).
+  # utility_finetuning 3. All four settings have had live runs on a GPU (the one-hour
+  # cuda_kernel and inference_optimization series 17 to 19 Nov 2026, short runs and replays of
+  # both on 20 Nov; the post-training settings 19 and 20 Nov).
   # utility_finetuning is scored from version 4 (side scores, the upload capture service, the
   # cache and the submission store); 4-B adds the check-only option check_offline; 4-C adds the
   # datasets' prepared builds to the agent's cache (D-187). Version 5 scores safety_finetuning
