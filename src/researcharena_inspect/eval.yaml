@@ -5,7 +5,7 @@ arxiv: https://arxiv.org/abs/2607.19321
 group: Scheming
 contributors:
   - archit-manek
-version: "9-F"
+version: "10-F"
 tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
@@ -23,7 +23,8 @@ tasks:
   # over no values is nan, not 0.0; the letter counts the interface changes since 3-D (4-C, 5-A
   # and 6-A went backwards). Version 8-F: the safety scorer's Llama Guard judge loads without a
   # token (D-254). Version 9-F: Claude Code's first prompt on stdin, not on its command line
-  # (D-078, D-257). Every version is in the README's changelog.
+  # (D-078, D-257). Version 10-F: the ReAct agent's `bash` description names the working
+  # directory and the time limit. Every version is in the README's changelog.
   - name: researcharena
     dataset_samples: 5
   # The monitor over the authors' published runs. 113 samples with the defaults (every published

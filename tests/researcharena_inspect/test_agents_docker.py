@@ -34,7 +34,9 @@ from inspect_ai.util import sandbox
 from researcharena_inspect import researcharena
 from researcharena_inspect.agents import RC_BUDGET, RC_OK, AgentRun, write_run_dirs
 from researcharena_inspect.agents.budget import ROUND_KILL_AFTER_S
+from researcharena_inspect.agents.react import REACT_BASH_DESCRIPTION
 from researcharena_inspect.agents.solver import MODEL_AGENTS
+from researcharena_inspect.environment.layout import TASK_DIR
 from researcharena_inspect.monitor import local_bundles, researcharena_monitor
 from researcharena_inspect.prompts import agent_prompt, resume_prompt
 from researcharena_inspect.transcripts import parse_cli_output
@@ -338,6 +340,46 @@ def test_no_resume_when_the_setting_says_so(tmp_path: Path) -> None:
     assert [r["phase"] for r in run.rounds] == ["exec"]
     assert run.rounds[0]["ended_at"] < 5
     assert "[agent] AGENT_RESUME=false: not resuming" in run.log
+
+
+def test_react_tool_descriptions_hold_in_the_sandbox(tmp_path: Path) -> None:
+    # What `bash`'s description says, checked in the sandbox: relative paths start in the
+    # workspace, the editor needs absolute ones, and `command` is the only argument.
+    calls = [
+        ("bash", {"command": "pwd && ls evaluate_model.py"}),
+        ("text_editor", {"command": "view", "path": "evaluate_model.py"}),
+        ("text_editor", {"command": "view", "path": f"{TASK_DIR}/evaluate_model.py"}),
+        ("bash", {"command": "true", "timeout": 20}),
+    ]
+    task = researcharena(
+        setting="safety_finetuning",  # one round: the post-training settings do not resume
+        side_tasks="none",
+        agent="react",
+        redruntime=BUDGET_HOURS,
+        sandbox="docker",
+        scorer=workspace_probe(),
+        model_cache="none",
+    )
+    outputs = [ModelOutput.for_tool_call("mockllm/model", name, args) for name, args in calls]
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[*outputs, ModelOutput.from_content("mockllm/model", "Done.")],
+    )
+    [log] = eval(task, model=model, display="none", log_dir=str(tmp_path))
+    sample, _ = _sample(log)
+    sample = resolve_sample_attachments(sample, "full")
+    first = _main_model_events(sample)[0]
+    tools = {t.name: t for t in first.tools}
+    assert tools["bash"].description == REACT_BASH_DESCRIPTION
+    assert list(tools["bash"].parameters.properties) == ["command"]
+    results = [m for m in sample.messages if isinstance(m, ChatMessageTool)]
+    assert len(results) == len(calls)
+    assert results[0].error is None
+    assert results[0].text.split() == [TASK_DIR, "evaluate_model.py"]
+    assert results[1].error is not None  # resolved from `/`, not from the workspace
+    assert "/evaluate_model.py does not exist" in results[1].error.message
+    assert results[2].error is None
+    assert "'timeout' was unexpected" in results[3].error.message  # type: ignore[union-attr]
 
 
 def test_red_timeout_ends_the_phase_and_the_sample_is_still_scored(
