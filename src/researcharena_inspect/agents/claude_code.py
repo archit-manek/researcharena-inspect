@@ -12,9 +12,10 @@ with the first prompt on stdin, in `/home/user/task`, after installing the CLI. 
 --print --output-format stream-json --verbose -- <prompt>` and, when called again on the same
 state with a new user message, `claude --resume <id> ... -- <message>`: the same session
 continued, as `--continue` does with the only session in the folder (upstream's runs keep one
-session id across all rounds too). The model calls go through Inspect's bridge to the task's
-model. What cannot be passed as upstream passes it is marked below with its deviation id:
-the login (D-076), the effort and thinking flags (D-077), stdin and `--continue`
+session id across all rounds too). `prompt_on_stdin` takes a new session's prompt off that
+command line and sends it on stdin, as upstream does. The model calls go through Inspect's
+bridge to the task's model. What cannot be passed as upstream passes it is marked below with
+its deviation id: the login (D-076), the effort and thinking flags (D-077), `--continue`
 (D-078), the CLI build (D-079) and Inspect SWE's own settings (D-080).
 
 Inspect SWE keeps none of the CLI's stdout, which upstream saves as `red_team/solve_out.json`
@@ -27,11 +28,11 @@ import importlib
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from inspect_ai.agent import Agent
-from inspect_ai.util import sandbox
+from inspect_ai.util import ExecRemoteStreamingOptions, sandbox
 
 from researcharena_inspect.environment.layout import TASK_DIR
 
@@ -99,12 +100,12 @@ def red_team_claude_code(
 
     # D-077: `--effort` and `--thinking-display summarized` (solve.sh:99) are not CLI flags
     # here; the effort is set on the served model and the bridge drops the CLI's own
-    # generation settings. D-078: the prompt goes in as an argument, not on stdin, and later
-    # rounds use `--resume <session id>` for `--continue`. D-257: so `ps` in the sandbox shows
-    # the whole prompt, which upstream's stdin does not (README, Known limitations). D-105: Inspect SWE resumes only once
-    # the conversation has an assistant message; after a round with none, the next round gets
-    # a new agent and so a new session (`solver.AgentRounds`), since the same `--session-id`
-    # again would be refused ("Session ID ... is already in use").
+    # generation settings. D-078: later rounds use `--resume <session id>` for `--continue`;
+    # the first prompt goes on stdin as upstream's does only inside `prompt_on_stdin`, which
+    # the solver opens (D-257: otherwise `ps` in the sandbox shows the whole prompt). D-105:
+    # Inspect SWE resumes only once the conversation has an assistant message; after a round
+    # with none, the next round gets a new agent and so a new session (`solver.AgentRounds`),
+    # since the same `--session-id` again would be refused ("Session ID ... is already in use").
     # D-080: Inspect SWE adds its own environment (IS_SANDBOX,
     # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
     # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, MCP settings, the bridge's URL and model names).
@@ -225,3 +226,101 @@ def capture_cli_output(
         _stdout_sink.reset(out_token)
         _stderr_sink.reset(err_token)
         _exit_sink.reset(exit_token)
+
+
+# --- The first prompt on stdin (D-078, D-257) -----------------------------------------------
+
+_SWE_SHELL = ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+"""How Inspect SWE (0.2.x) starts the CLI: `bash -c 'exec 0</dev/null; "$@"' bash <cli> ...`."""
+
+_STDIN_SHELL = ["bash", "-c", 'set +o pipefail; printf \'%s\' "$(cat)" | "$@"', "bash"]
+"""A shell that pipes its stdin, the prompt, to the CLI, as upstream's `printf '%s' "$PROMPT" |
+claude ...` (`solve.sh:104`) does; the line differs from upstream's in reading the prompt from
+stdin rather than from a variable. `$(cat)` reads all of stdin whether or not the CLI does, so
+the sandbox's write of the prompt completes and a CLI that exits at once still has its stderr
+and exit code reported; like upstream's `$(cat prompt.txt)` it drops trailing newlines (the
+prompt has none). No variable holds the prompt, so no inherited `export` or `allexport` can put
+it in an environment, and `printf` is a builtin, so it is in no process's arguments either.
+`set +o pipefail` keeps the pipeline's status the CLI's even if the shell inherits `pipefail`
+(`SHELLOPTS`): otherwise a CLI that exits 0 before reading all of a large prompt would be
+reported as the writer's SIGPIPE, 141."""
+
+_prompt_on_stdin: ContextVar[bool] = ContextVar("researcharena_prompt_on_stdin", default=False)
+_STDIN_ATTRIBUTE = "_researcharena_stdin"
+
+
+def stdin_launch(cmd: list[str]) -> tuple[list[str], str] | None:
+    """Inspect SWE's CLI command for a new session, with the prompt moved off the command line.
+
+    Inspect SWE starts a new session as `bash -c 'exec 0</dev/null; "$@"' bash <cli>
+    --session-id <id> <flags> -- <prompt>`, so the shell's and the CLI's command lines, which
+    `ps` shows, both hold the prompt. Upstream pipes it in: `printf '%s' "$PROMPT" | claude
+    <flags>` (`solve.sh:104`). For a new session this returns `_STDIN_SHELL <cli> --session-id
+    <id> <flags>` and the prompt, for the caller to send on stdin. A resumed
+    session (`--resume <id> <flags> -- <prompt>`) gets None and is run as it is: upstream passes
+    its continuation prompt as an argument too (`--continue "<prompt>"`, `solve.sh:121`).
+
+    Raises:
+        RuntimeError: a command of any other shape, so that a change in Inspect SWE cannot put
+            the prompt back on the command line unnoticed.
+    """
+    # The separator is found by position: a flag's value can itself be `--` (a system message
+    # passed as `--append-system-prompt --`, say).
+    shape_ok = len(cmd) >= 8 and cmd[:4] == _SWE_SHELL and cmd[-2] == "--"
+    if shape_ok and cmd[5] == "--resume":
+        return None
+    if not shape_ok or cmd[5] != "--session-id":
+        raise RuntimeError(f"unexpected Claude Code launch from Inspect SWE: {cmd[:6]!r}")
+    return [*_STDIN_SHELL, *cmd[4:-2]], cmd[-1]
+
+
+class _StdinSandbox:
+    """The sandbox as Inspect SWE's `claude_code()` gets it inside `prompt_on_stdin`.
+
+    Everything passes through, except that the CLI's launch (the only `exec_remote` call that
+    `claude_code()` makes) of a new session is changed by `stdin_launch`, and the prompt is
+    given to the launching shell as its stdin, which the sandbox closes once it is written.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def exec_remote(self, cmd: list[str], options: Any = None, *, stream: bool = True) -> Any:
+        launch = stdin_launch(cmd)
+        if launch is not None:
+            cmd, prompt = launch
+            options = replace(options or ExecRemoteStreamingOptions(), input=prompt)
+        return await self._inner.exec_remote(cmd, options, stream=stream)
+
+
+@contextmanager
+def prompt_on_stdin() -> Iterator[None]:
+    """While open, Claude Code runs started by Inspect SWE get a new session's prompt on stdin.
+
+    No process in the sandbox then has the prompt on its command line: Inspect sends it with
+    the launch request, outside the sandbox's process table, and the shell that starts the CLI
+    pipes it in as upstream's `solve.sh` does (`_STDIN_SHELL`). No file or environment variable
+    is added; that shell stays as the CLI's parent while it runs (`ps` shows its one-line
+    script), where Inspect SWE's own shell used to `exec` the CLI. Inspect SWE looks up the
+    sandbox through `sandbox_env` in its module each time it launches the CLI; the replacement
+    installed here returns `_StdinSandbox` inside this context and the sandbox itself outside
+    it (the monitor's own Claude Code, other tasks).
+    """
+    module = importlib.import_module(_SWE_MODULE)
+    original = module.sandbox_env
+    if not getattr(original, _STDIN_ATTRIBUTE, False):
+
+        def sandbox_env(name: str | None = None) -> Any:
+            inner = original(name)
+            return _StdinSandbox(inner) if _prompt_on_stdin.get() else inner
+
+        setattr(sandbox_env, _STDIN_ATTRIBUTE, True)
+        setattr(module, "sandbox_env", sandbox_env)  # noqa: B010
+    token = _prompt_on_stdin.set(True)
+    try:
+        yield
+    finally:
+        _prompt_on_stdin.reset(token)
