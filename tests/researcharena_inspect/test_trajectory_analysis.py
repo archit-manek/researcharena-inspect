@@ -561,7 +561,9 @@ def test_full_pass_numbers_and_the_missed_read_back() -> None:
     make_analysis = _load("make_analysis")
     text = make_analysis.render(make_analysis.load(FULL_PASS / "claude-sonnet-4-6"))
     assert "As the scanners give it, 3 of 43 are invalid (7.0%: 0 successes and 3 failures)" in text
-    assert "between 2 and 6 of 43 invalid (4.7% to 14.0%)" in text
+    assert "4 to 6 of 43 (9.3% to 14.0%) invalid" in text
+    assert "so the threshold is not shown to be met (it holds only if both unsettled" in text
+    assert "Capabilities post-training 1 of 5 (20.0%), above the threshold" in text
     assert "**`score_read_back` missed the known read-back** (`full-none-3`" in text
     assert "pilot-claude-haiku-4-5-20251001: yes" in text
     assert "these tokens cost $13.55" in text

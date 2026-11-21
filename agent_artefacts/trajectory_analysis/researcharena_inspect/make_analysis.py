@@ -39,6 +39,15 @@ GUIDANCE_SAMPLES = 100  # Inspect Evals' guidance: analyse at least 100 samples
 THRESHOLD = 0.10  # EVALUATION_CHECKLIST: logs have a 10% or lower rate of invalid samples
 EXCERPT = 350
 TEXT_SCANNERS = {"outcome_summary"}  # answers in words, flags nothing
+SCANNER_ERROR_KEY = review_notes.SCANNER_ERROR
+# The agreement table's key, where compare.py's note says less than it should.
+KEY_NOTES = {
+    "broken_env": (
+        "default scanner, transcript only; `scoring_fault` is a comparison signal from the "
+        "scorer's record, outside what `broken_env` can see, so the two answer different "
+        "questions"
+    ),
+}
 EVAL_YAML = rc.HERE.parents[2] / "src" / rc.EVAL_NAME / "eval.yaml"
 
 
@@ -114,6 +123,7 @@ def load(group_dir: Path) -> dict[str, Any]:
     if missing:
         raise SystemExit(f"{group_dir}: missing {missing}; run run.py (or --post-only) first")
     review = review_for(data["usage"].get("label"))
+    data["siblings"] = {}
     if review is not None:
         for ref in review.REFERENCE_LABELS:
             path = group_dir.parent.parent / ref / group_dir.name / "scanner_results.csv"
@@ -121,6 +131,11 @@ def load(group_dir: Path) -> dict[str, Any]:
                 data["references"][ref] = {
                     (r["scanner"], r["transcript_id"]): r["value"] for r in _csv(path)
                 }
+        # The other groups of the same scan, for the checklist line that covers them all.
+        for other in sorted(group_dir.parent.iterdir()):
+            table = other / "validity_per_sample.csv"
+            if other != group_dir and table.exists():
+                data["siblings"][other.name] = _csv(table)
     return data
 
 
@@ -199,8 +214,13 @@ def render(data: dict[str, Any]) -> str:
         f"{_n(int(validity['successful']), 'is a success', 'are successes')} and "
         f"{_n(int(validity['failed']), 'failure')}. As the scanners give it, "
         f"{invalid} of {n} are invalid ({_pct(invalid, n)}: {validity['invalid_success']} "
-        f"successes and {validity['invalid_failure']} failures), {verdict} the checklist's "
-        f"{THRESHOLD:.0%}.\n"
+        f"successes and {validity['invalid_failure']} failures)"
+        + (
+            ": the scanners' count, not the checklist determination, which follows the checks by "
+            "hand below.\n"
+            if checks
+            else f", {verdict} the checklist's {THRESHOLD:.0%}.\n"
+        )
     )
     readback = _read_back_rows(known)
     missed = [k for k in readback if values.get(("score_read_back", k["transcript_id"])) != "true"]
@@ -215,14 +235,24 @@ def render(data: dict[str, Any]) -> str:
     if checks:
         add(
             f"**After the checks by hand** ([Checks by hand](#checks-by-hand)): "
-            f"{_n(len(checks['confirmed']), 'invalid sample')} confirmed, "
-            f"{_n(len(checks['errors']), 'scanner error')}, and "
+            f"{_n(len(checks['invalid']), 'sample')} invalid on checking "
+            f"({_runs(checks['invalid']) or 'none'}), "
+            f"{_n(len(checks['errors']), 'scanner error')} set aside, and "
             f"{_n(len(checks['unsettled']), 'failure')} counted valid whose cause is not settled: "
-            f"between {checks['low']} and {checks['high']} of {n} invalid "
-            f"({_pct(checks['low'], n)} to {_pct(checks['high'], n)}). "
-            + _threshold_sentence(checks, n)
-            + "\n"
+            f"{_span(checks['low'], checks['high'], n)} invalid.\n"
         )
+        add(
+            "**The checklist (at most 10% invalid samples):** "
+            + _checklist_lines(review, group, per_sample, data.get("siblings") or {})
+            + f" {review.UPSTREAM_NOTE.get(group, '')}\n"
+        )
+        caveats = [r for r in review.REPLAY_CAVEATS if ps_by_run.get(r, {}).get("outcome") == "success"]
+        if caveats:
+            add(
+                f"**{_n(len(caveats), 'success', 'successes')} not confirmed by replay** (D-255; "
+                f"[below](#successes-not-confirmed-by-replay-d-255)): {_runs(caveats)}. Kept as "
+                f"successes, and not part of the range above.\n"
+            )
     elif not usage.get("mock"):
         add("No check by hand was made against this scan's answers (`review.py`).\n")
 
@@ -431,13 +461,13 @@ def render(data: dict[str, Any]) -> str:
         add("\n## Checks by hand\n")
         add(
             f"Read in the logs and the eval README on {review.CHECKED}; the notes are in "
-            f"`review.py`. Verdicts: *{review_notes.CONFIRMED}* (the flag holds), "
-            f"*{review_notes.SCANNER_ERROR}* (the answer is wrong by the scanner's own question), "
-            f"*{review_notes.UNSETTLED}* (a failure counted valid whose cause is not settled).\n"
+            f"`review.py`. Verdicts on a sample: {review.VERDICT_KEY}.\n"
         )
+        add(f"The rule for CUDA failures, applied to each: {review.ATTRIBUTION_RULE}\n")
         add("| Sample | Setting | Length | Main score | Scanners' verdict | Check |")
         add("| --- | --- | --- | --- | --- | --- |")
-        for run in sorted(checks["invalid_runs"]) + sorted(checks["unsettled"]):
+        listed = sorted(checks["invalid_runs"]) + sorted(checks["added"]) + sorted(checks["unsettled"])
+        for run in listed:
             p = ps_by_run[run]
             k = by_id[p["transcript_id"]]
             scanners_say = (
@@ -445,21 +475,18 @@ def render(data: dict[str, Any]) -> str:
                 if p["valid"] == "no"
                 else "valid"
             )
-            check = (
-                review.INVALID[run][0]
-                if run in review.INVALID
-                else review_notes.UNSETTLED
-                if run in checks["unsettled"]
-                else "not checked"
-            )
             add(
                 f"| `{run}` | {_label(p['setting'])} | {_duration(k['redruntime'])} | "
-                f"{p['main_task_score']} ({p['outcome']}) | {scanners_say} | {check} |"
+                f"{p['main_task_score']} ({p['outcome']}) | {scanners_say} | "
+                f"{_check_verdict(review, checks, run)} |"
             )
         add("")
         for run in sorted(checks["invalid_runs"]):
             if run in review.INVALID:
                 add(f"- `{run}` ({review.INVALID[run][0]}): {review.INVALID[run][1]}")
+        for run in sorted(checks["added"]):
+            add(f"- `{run}` ({review_notes.INVALID_ON_CHECK}; the scanners counted it valid): "
+                f"{review.ADDED_INVALID[run]}")
         for run in sorted(checks["unsettled"]):
             add(f"- `{run}` ({review_notes.UNSETTLED}): {review.UNSETTLED_FAILURES[run]}")
         for run in checks["unchecked_invalid"]:
@@ -471,13 +498,16 @@ def render(data: dict[str, Any]) -> str:
             if p["outcome"] == "failure"
             and p["valid"] == "yes"
             and p["run"] not in review.UNSETTLED_FAILURES
+            and p["run"] not in review.ADDED_INVALID
         )
+        for run in unchecked_failures:
+            warnings.append(f"failure {run} counted valid has no note in review.py")
         add(
-            f"\nValidity after the checks: {_n(len(checks['confirmed']), 'invalid sample')} "
-            f"confirmed ({_runs(checks['confirmed']) or 'none'}) and "
+            f"\nValidity after the checks: {_n(len(checks['invalid']), 'sample')} invalid on "
+            f"checking ({_runs(checks['invalid']) or 'none'}) and "
             f"{len(checks['unchecked_invalid'])} unchecked, so at least {checks['low']} of {n} "
             f"({_pct(checks['low'], n)}); with every unsettled failure invalid, {checks['high']} "
-            f"of {n} ({_pct(checks['high'], n)}). {_threshold_sentence(checks, n)} "
+            f"of {n} ({_pct(checks['high'], n)}). "
             + (
                 f"The other failures counted valid ({_runs(unchecked_failures)}) were not checked "
                 f"by hand. "
@@ -487,6 +517,20 @@ def render(data: dict[str, Any]) -> str:
             + f"The {_n(int(validity['successful']), 'success', 'successes')} were checked only "
             f"through the flags above and, for CUDA, the file-based read-back check.\n"
         )
+        add(
+            "Checklist determination: "
+            + _checklist_lines(review, group, per_sample, data.get("siblings") or {})
+            + f" {review.UPSTREAM_NOTE.get(group, '')}\n"
+        )
+        caveats = [r for r in review.REPLAY_CAVEATS if ps_by_run.get(r, {}).get("outcome") == "success"]
+        if caveats:
+            add("### Successes not confirmed by replay (D-255)\n")
+            add(
+                f"{_n(len(caveats), 'inference success', 'inference successes')} counted above by "
+                f"their live score: "
+                + "; ".join(f"`{r}` ({review.REPLAY_CAVEATS[r]})" for r in sorted(caveats))
+                + f". {review.REPLAY_NOTE}\n"
+            )
 
     add("\n## Agreement with the known answers\n")
     add(
@@ -510,7 +554,22 @@ def render(data: dict[str, Any]) -> str:
         )
     add("")
     for t in data["agreement"]:
-        add(f"- `{t['scanner']}`: {t['note']}.")
+        add(f"- `{t['scanner']}`: {KEY_NOTES.get(t['scanner'], t['note'])}.")
+    unscored = sorted(
+        d["run"]
+        for t in data["agreement"]
+        if t["scanner"] == "side_task_carried_out"
+        for d in t["disagreements"]
+        if _side_not_scored(d, by_id, id_of)
+    )
+    if unscored:
+        add(
+            f"\nA \"fact no\" is a verdict computed by the paper's rule, and it includes a "
+            f"measurement that is absent: for `side_task_carried_out`, {_n(len(unscored), 'run')} "
+            f"({_runs(unscored)}) had no side score at all, shown below as \"not scored\". "
+            f"Agreement is with the chosen signal; where the questions differ it is not an "
+            f"estimate of the scanner's accuracy."
+        )
     kinds: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for t in data["agreement"]:
         if t["scanner"] == "reward_hacking_success":
@@ -526,7 +585,19 @@ def render(data: dict[str, Any]) -> str:
             note = review.KINDS_BY_GROUP.get(group, {}).get((scanner, direction)) if review else None
             head = f"- `{scanner}`, {direction}: {_n(len(ds), 'sample')} ({_runs(d['run'] for d in ds)})"
             if note:
-                add(f"{head}. **{note[0].capitalize()}.** {note[1]}")
+                runs_by_verdict: dict[str, list[str]] = defaultdict(list)
+                for d in ds:
+                    runs_by_verdict[_run_verdict(review, scanner, d["run"], note[0])].append(d["run"])
+                tally = "; ".join(
+                    f"{len(rs)} {v}" + (f" ({_runs(rs)})" if len(runs_by_verdict) > 1 else "")
+                    for v, rs in sorted(runs_by_verdict.items(), key=lambda x: x[0] != SCANNER_ERROR_KEY)
+                )
+                text = f"{head}. **{tally[0].upper()}{tally[1:]}.** {note[1]}"
+                for d in ds:
+                    own = review.RUN_VERDICTS.get((scanner, d["run"]))
+                    if own:
+                        text += f" `{d['run']}` ({own[0]}): {own[1]}"
+                add(text)
             else:
                 if review:
                     warnings.append(f"no note in review.py for {scanner}, {direction}")
@@ -536,12 +607,17 @@ def render(data: dict[str, Any]) -> str:
         add("\n### Every disagreement\n")
         for t, d in disagreements:
             detail = f" ({_one_line(d['fact_detail'], 120)})" if d["fact_detail"] else ""
+            fact = d["fact"]
+            if t["scanner"] == "side_task_carried_out" and _side_not_scored(d, by_id, id_of):
+                fact, detail = "not scored", ""
             tid = id_of.get(d["run"], "")
+            own = review.RUN_VERDICTS.get((t["scanner"], d["run"])) if review else None
             add(
                 f"- `{t['scanner']}` on `{d['run']}` ({d['setting']}, side task "
-                f"{d['side_task']}): scanner {d['scanner']}, fact {d['fact']}{detail}"
-                f"{_reference_answers(references, t['scanner'], tid, values)}. "
-                f"Scanner: \"{_one_line(d['explanation'], 250)}\""
+                f"{d['side_task']}): scanner {d['scanner']}, fact {fact}{detail}"
+                f"{_reference_answers(references, t['scanner'], tid, values)}"
+                + (f"; checked by hand: {own[0]}" if own else "")
+                + f". Scanner: \"{_one_line(d['explanation'], 250)}\""
             )
 
     if review and review.NOT_COVERED.get(group):
@@ -563,16 +639,19 @@ def render(data: dict[str, Any]) -> str:
 
     add("## Limits\n")
     limits = [
-        f"{n} transcripts, fewer than the {GUIDANCE_SAMPLES} the Inspect Evals guidance asks for: "
-        f"every live run of the port that exists, one sample a log, at most a few per cell "
-        f"(setting by side task).",
+        _sample_limit(n, group, data.get("dry_run"), review),
         f"One scanner model (`{usage.get('scanner_model', '?')}`); its answers are judgements, "
         f"checked against facts from the files only where such a fact exists (the agreement "
         f"table). The uninstructed-gaming, refusal, formatting and environment questions have "
         f"no file-based check.",
-        "The scanners set no temperature, so the scanner model samples at its API's default and "
-        "a second scan of the same logs can answer differently"
-        + (" (the known read-back did)." if missed and references else "."),
+        "The scanners set no temperature, so the scanner model may sample, and a second scan of "
+        "the same logs could answer differently; no scan was repeated to measure it"
+        + (
+            " (for the known read-back the two saved extracts, pilot and full pass, disagree; the "
+            "raw request of the full pass was not kept)."
+            if missed and references
+            else "."
+        ),
         "The default scanners are not told the score or the side task: they judge success and "
         "failure from the transcript alone, and an instructed side task can look like a "
         "failure or a hack to them. Their flags count only where they match the outcome the "
@@ -656,10 +735,9 @@ def _read_back_rows(known: list[dict[str, str]]) -> list[dict[str, str]]:
 
 def _setting_after_checks(checks: dict[str, Any], setting: str, per_sample: list[dict[str, str]]) -> str:
     runs = {p["run"] for p in per_sample if p["setting"] == setting}
-    low = len(runs & set(checks["confirmed"])) + len(runs & set(checks["unchecked_invalid"]))
+    low = len(runs & set(checks["invalid"])) + len(runs & set(checks["unchecked_invalid"]))
     high = low + len(runs & set(checks["unsettled"]))
-    span = f"{low} of {len(runs)}" if low == high else f"{low} to {high} of {len(runs)}"
-    return f" After the checks by hand: {span}."
+    return f" After the checks by hand: {_span(low, high, len(runs))}."
 
 
 def _read_back_consequence(
@@ -683,16 +761,18 @@ def _read_back_consequence(
             f"short by {len(changes)}."
         )
     outcomes = ", ".join(f"`{k['run']}` is a {ps_by_run[k['run']]['outcome']}" for k in missed)
-    found = (
-        "finds no read-back among the successes"
-        if not rb_success
-        else f"finds {_n(len(rb_success), 'success')} read back ({_runs(rb_success)})"
-    )
+    cuda_success = [
+        k for k in known if k["setting"] in rc.READ_BACK_SETTINGS and k.get("main_success") == "yes"
+    ]
     return (
         f"It does not change the counts here: {outcomes} by the paper's rule, and "
         f"`score_read_back` invalidates a success only. A read-back that gave a success would "
-        f"be an invalid success; the file-based check {found}, so what the counts say about "
-        f"read-back successes rests on that check, not on this scanner."
+        f"be an invalid success. The count of scanner flags that invalidate a success is zero; "
+        f"separately, the file-based check shows "
+        f"{'no' if not rb_success else len(rb_success)} read-back among the "
+        f"{_n(len(cuda_success), 'CUDA success', 'CUDA successes')}"
+        + (f" ({_runs(rb_success)})" if rb_success else "")
+        + ". The second statement rests on that check, not on this scanner."
     )
 
 
@@ -714,18 +794,20 @@ def _reference_answers(
 
 def _checks(review: ModuleType, per_sample: list[dict[str, str]], n: int) -> dict[str, Any]:
     invalid_runs = [p["run"] for p in per_sample if p["valid"] == "no"]
-    confirmed = [r for r in invalid_runs if review.INVALID.get(r, ("",))[0] == review_notes.CONFIRMED]
+    on_check = [r for r in invalid_runs if review.INVALID.get(r, ("",))[0] == review_notes.INVALID_ON_CHECK]
     errors = [r for r in invalid_runs if review.INVALID.get(r, ("",))[0] == review_notes.SCANNER_ERROR]
     unchecked = [r for r in invalid_runs if r not in review.INVALID]
-    unsettled = [
-        p["run"]
-        for p in per_sample
-        if p["run"] in review.UNSETTLED_FAILURES and p["valid"] == "yes" and p["outcome"] == "failure"
-    ]
-    low = len(confirmed) + len(unchecked)
+    counted_valid_failures = {
+        p["run"] for p in per_sample if p["valid"] == "yes" and p["outcome"] == "failure"
+    }
+    added = sorted(r for r in review.ADDED_INVALID if r in counted_valid_failures)
+    unsettled = sorted(r for r in review.UNSETTLED_FAILURES if r in counted_valid_failures)
+    invalid = sorted(on_check + added)
+    low = len(invalid) + len(unchecked)
     return {
         "invalid_runs": invalid_runs,
-        "confirmed": confirmed,
+        "invalid": invalid,
+        "added": added,
         "errors": errors,
         "unchecked_invalid": unchecked,
         "unsettled": unsettled,
@@ -734,25 +816,100 @@ def _checks(review: ModuleType, per_sample: list[dict[str, str]], n: int) -> dic
     }
 
 
-def _threshold_sentence(checks: dict[str, Any], n: int) -> str:
-    room = math.floor(THRESHOLD * n + 1e-9) - checks["low"]
-    k = len(checks["unsettled"])
-    if checks["high"] <= THRESHOLD * n:
-        return f"Within the checklist's {THRESHOLD:.0%} either way."
-    if room < 0:
-        return f"Above the checklist's {THRESHOLD:.0%} even at the low end."
+def _check_verdict(review: ModuleType, checks: dict[str, Any], run: str) -> str:
+    if run in review.INVALID:
+        return review.INVALID[run][0]
+    if run in checks["added"]:
+        return review_notes.INVALID_ON_CHECK
+    if run in checks["unsettled"]:
+        return review_notes.UNSETTLED
+    return "not checked"
+
+
+def _run_verdict(review: ModuleType, scanner: str, run: str, default: str) -> str:
+    own = review.RUN_VERDICTS.get((scanner, run))
+    return own[0] if own else default
+
+
+def _side_not_scored(d: dict[str, Any], by_id: dict[str, dict[str, str]], id_of: dict[str, str]) -> bool:
+    """A side-task 'fact no' whose side score is absent: the probe was not scored."""
+    k = by_id.get(id_of.get(d["run"], ""), {})
+    return d["fact"] == "no" and k.get("side_score", "x") == ""
+
+
+def _span(low: int, high: int, n: int) -> str:
+    if low == high:
+        return f"{low} of {n} ({_pct(low, n)})"
+    return f"{low} to {high} of {n} ({_pct(low, n)} to {_pct(high, n)})"
+
+
+def _determination(low: int, high: int, n: int, unsettled: int) -> str:
+    """Whether the checklist's threshold is met, stated as far as the counts allow."""
+    if high <= THRESHOLD * n:
+        return "within the threshold"
+    if low > THRESHOLD * n:
+        return f"above the threshold on {_n(n, 'sample')}"
+    room = math.floor(THRESHOLD * n + 1e-9) - low
     if room == 0:
-        which = (
-            "only if the unsettled failure is valid"
-            if k == 1
-            else f"only if none of the {k} unsettled failures is invalid"
+        cond = (
+            "the unsettled failure is valid"
+            if unsettled == 1
+            else f"all {unsettled} unsettled failures are valid"
+            if unsettled != 2
+            else "both unsettled failures are valid"
         )
     else:
-        which = f"if at most {room} of the {k} unsettled failures are invalid"
-    return (
-        f"The checklist's {THRESHOLD:.0%} holds {which}, which is open (eval README, "
-        f"\"The zero scores\")."
+        cond = f"at most {room} of the {unsettled} unsettled failures are invalid"
+    return f"so the threshold is not shown to be met (it holds only if {cond})"
+
+
+def _checklist_lines(
+    review: ModuleType,
+    group: str,
+    per_sample: list[dict[str, str]],
+    siblings: dict[str, list[dict[str, str]]],
+) -> str:
+    """The checklist determination: this group pooled, its settings, the other groups."""
+    c = _checks(review, per_sample, len(per_sample))
+    n = len(per_sample)
+    parts = [
+        f"`{group}` pooled, {_span(c['low'], c['high'], n)}, "
+        + _determination(c["low"], c["high"], n, len(c["unsettled"]))
+        + "."
+    ]
+    by_setting = []
+    for s in _setting_order({p["setting"] for p in per_sample}):
+        rows = [p for p in per_sample if p["setting"] == s]
+        runs = {p["run"] for p in rows}
+        low = len(runs & set(c["invalid"])) + len(runs & set(c["unchecked_invalid"]))
+        high = low + len(runs & set(c["unsettled"]))
+        if high == 0:
+            by_setting.append(f"{_label(s)} 0 of {len(rows)}")
+            continue
+        text = f"{_label(s)} {_span(low, high, len(rows))}"
+        if low > THRESHOLD * len(rows):
+            text += f", above the threshold on {_n(len(rows), 'sample')}"
+        by_setting.append(text)
+    parts.append("By setting: " + "; ".join(by_setting) + ".")
+    for other, rows in siblings.items():
+        oc = _checks(review, rows, len(rows))
+        parts.append(f"`{other}`: {_span(oc['low'], oc['high'], len(rows))}.")
+    return " ".join(parts)
+
+
+def _sample_limit(n: int, group: str, plan: Any, review: ModuleType | None) -> str:
+    groups = Counter(str(s.get("group")) for s in ((plan or {}).get("samples") or []))
+    total = sum(groups.values())
+    sizes = ", ".join(f"`{g}` {c}" for g, c in sorted(groups.items()))
+    text = (
+        f"{n} transcripts, fewer than the {GUIDANCE_SAMPLES} the Inspect Evals guidance asks for, "
+        f"one sample a log, at most a few per cell (setting by side task)"
     )
+    if total:
+        text += f": this group's share of the {total} selected report trajectories ({sizes})"
+    if review:
+        text += f"; {review.MANIFEST_EXCLUDES}"
+    return text + "."
 
 
 def _cost_sentence(usage: dict[str, Any]) -> str:
