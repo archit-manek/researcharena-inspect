@@ -22,9 +22,9 @@ from inspect_ai.solver import Generate, TaskState
 from researcharena_inspect.agents import AgentRun, red_team_agent
 from researcharena_inspect.agents.claude_code import InstalledCli, claude_code_env
 from researcharena_inspect.agents.react import (
-    REACT_BASH_DESCRIPTION,
     REACT_BASH_TIMEOUT_S,
     agent_bash,
+    react_bash_description,
     red_team_react,
 )
 from researcharena_inspect.environment.layout import (
@@ -243,17 +243,23 @@ def test_react_tools_name_the_workspace_and_the_time_limit(tmp_path: Path) -> No
     assert [m.text for m in event.input] == ["the task"]  # no system message
     tools = {t.name: t for t in event.tools}
     bash = tools["bash"]
-    assert bash.description == REACT_BASH_DESCRIPTION
+    assert bash.description == react_bash_description(TASK_DIR)
     assert f"starts in {TASK_DIR}, the working directory, so relative paths start" in (
         bash.description
     )
-    assert f"must be absolute, such as {TASK_DIR}/file.py" in bash.description
+    assert f"absolute paths for workspace files in the file editor, such as {TASK_DIR}/" in (
+        bash.description
+    )
+    assert "it resolves relative paths from /." in bash.description
     # The limit stated is the one `red_team_react` gives the tool: Claude Code's default in
     # upstream's agent (`BASH_DEFAULT_TIMEOUT_MS`).
     assert int(BASH_TIMEOUT_MS) == REACT_BASH_TIMEOUT_S * 1000
-    assert f"fixed time limit of {REACT_BASH_TIMEOUT_S} seconds (60 minutes)" in bash.description
+    assert f"stopped after at most {REACT_BASH_TIMEOUT_S} seconds (60 minutes)" in (
+        bash.description
+    )
     assert list(bash.parameters.properties) == ["command"]
-    # The editor keeps Inspect's parameters, so Anthropic still sends it as Claude's own editor.
+    # The editor is Inspect's, unchanged: its own description and parameters.
+    assert tools["text_editor"].description == "Use this function to execute text editing commands."
     assert sorted(tools["text_editor"].parameters.properties) == [
         "command",
         "file_text",
@@ -271,6 +277,13 @@ def test_react_agent_builds_with_the_agent_user() -> None:
         get_model("mockllm/model"), "xhigh", user=AGENT_USER, env={}, cwd=TASK_DIR
     )
     assert callable(agent)
+
+
+def test_react_bash_description_names_the_cwd_it_is_given() -> None:
+    text = react_bash_description("/elsewhere")
+    assert "starts in /elsewhere, the working directory" in text
+    assert "such as /elsewhere/file.py" in text
+    assert TASK_DIR not in text
 
 
 def test_claude_code_gets_the_user_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
