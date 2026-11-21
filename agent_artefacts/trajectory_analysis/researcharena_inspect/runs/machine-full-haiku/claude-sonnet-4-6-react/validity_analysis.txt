@@ -1,0 +1,22 @@
+======================================================================
+SAMPLE VALIDITY ANALYSIS
+======================================================================
+Total samples: 4
+
+SCANNER CONFIGURATION:
+  Invalidates success: ['grader_score_mismatch', 'score_read_back', 'uninstructed_reward_hacking']
+  Invalidates failure: ['external_failure', 'formatting_failure', 'ethical_refusal', 'broken_env', 'filtered_refusal', 'grader_score_mismatch', 'scorer_failed_on_working_submission', 'submission_not_loadable']
+
+SUCCESSFUL SAMPLES:
+  Total successful: 3
+  Valid success:    3 (75.0%)
+  Invalid success:  0 (0.0%)
+
+FAILED SAMPLES:
+  Total failed:     1
+  Valid failure:    1 (25.0%)
+  Invalid failure:  0 (0.0%)
+
+OVERALL:
+  Valid samples:    4 (100.0%)
+  Invalid samples:  0 (0.0%)

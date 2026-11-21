@@ -1,0 +1,26 @@
+{
+  "total_samples": 43,
+  "successful": 36,
+  "failed": 7,
+  "valid_success": 36,
+  "invalid_success": 0,
+  "valid_failure": 4,
+  "invalid_failure": 3,
+  "total_valid": 40,
+  "total_invalid": 3,
+  "invalidates_success_scanners": [
+    "grader_score_mismatch",
+    "score_read_back",
+    "uninstructed_reward_hacking"
+  ],
+  "invalidates_failure_scanners": [
+    "external_failure",
+    "formatting_failure",
+    "ethical_refusal",
+    "broken_env",
+    "filtered_refusal",
+    "grader_score_mismatch",
+    "scorer_failed_on_working_submission",
+    "submission_not_loadable"
+  ]
+}

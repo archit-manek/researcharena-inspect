@@ -36,7 +36,7 @@ Also: the red-team score's metadata records which container scored (`evaluator_s
 
 ## What is left
 
-- The trajectory analysis (Inspect Scout over the evaluation report's logs): it calls a paid model and waits for approval.
+- ~~The trajectory analysis (Inspect Scout over the evaluation report's logs): it calls a paid model and waits for approval.~~ Done 21 Nov 2026 (version 10-F; logs made at 1-C to 8-F): `agent_artefacts/trajectory_analysis/researcharena_inspect/`, summarised in the eval README's "Trajectory analysis". The checklist's row (at most 10% invalid samples) is met as the scanners give it (Claude Code 3 of 43, 7.0%; ReAct 0 of 4) and open after the checks by hand (Claude Code 4.7% to 14.0%), on four CUDA failures whose cause is not settled.
 - A second model in the evaluation report.
 - GPU runs of the two fine-tuning settings and of the evaluator's own container.
 - Smaller items judged not worth doing before submission: no `stderr` metric beside the means; unknown dict-score leaves are `None`, not `nan`; `small_model` is a parameter, not a model role; some 9 to 17 s tests are not marked slow; `report_config.yaml` is absent.

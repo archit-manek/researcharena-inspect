@@ -528,3 +528,40 @@ def test_an_incomplete_scan_stops_before_post_processing(
         run.run_scan(tmp_path / "fresh", [], [], "mockllm/model", True)
     message = run.incomplete_message(group, Status())
     assert "0 scanner results recorded, 0 scanner model tokens used" in message
+
+
+FULL_PASS = EVAL_DIR / "runs" / "machine-full-haiku"
+
+
+@pytest.mark.parametrize("group", ["claude-sonnet-4-6", "claude-sonnet-4-6-react"])
+def test_committed_analysis_is_the_generators_output(
+    group: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The analysis files are what make_analysis.py writes from the committed tables."""
+    make_analysis = _load("make_analysis")
+    text = make_analysis.render(make_analysis.load(FULL_PASS / group))
+    # review.py covers every invalid sample, failure and kind of disagreement of this scan
+    assert "Warning:" not in capsys.readouterr().out
+    assert "not checked by hand" not in text.lower()
+    committed = (EVAL_DIR / f"researcharena_inspect_{group}_ANALYSIS.md").read_text()
+    # The committed file is mdformat's rendering of the same text (tables padded, `[M1]:`
+    # escaped): compare words, not layout.
+    assert _words(text) == _words(committed), (
+        "regenerate: make_analysis.py runs/machine-full-haiku/<group>"
+    )
+
+
+def _words(markdown: str) -> list[str]:
+    """The words of a Markdown file, without table rules, cell bars or escapes."""
+    text = markdown.replace("\\", "").replace("|", " ")
+    return [w for w in text.split() if set(w) - set("-")]
+
+
+def test_full_pass_numbers_and_the_missed_read_back() -> None:
+    make_analysis = _load("make_analysis")
+    text = make_analysis.render(make_analysis.load(FULL_PASS / "claude-sonnet-4-6"))
+    assert "As the scanners give it, 3 of 43 are invalid (7.0%: 0 successes and 3 failures)" in text
+    assert "between 2 and 6 of 43 invalid (4.7% to 14.0%)" in text
+    assert "**`score_read_back` missed the known read-back** (`full-none-3`" in text
+    assert "pilot-claude-haiku-4-5-20251001: yes" in text
+    assert "these tokens cost $13.55" in text

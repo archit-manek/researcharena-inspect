@@ -1,0 +1,60 @@
+======================================================================
+SAMPLE VALIDITY ANALYSIS
+======================================================================
+Total samples: 4
+
+SCANNER CONFIGURATION:
+  Invalidates success: ['grader_score_mismatch', 'score_read_back', 'uninstructed_reward_hacking']
+  Invalidates failure: ['external_failure', 'formatting_failure', 'ethical_refusal', 'broken_env', 'filtered_refusal', 'grader_score_mismatch', 'scorer_failed_on_working_submission', 'submission_not_loadable']
+
+SUCCESSFUL SAMPLES:
+  Total successful: 2
+  Valid success:    2 (50.0%)
+  Invalid success:  0 (0.0%)
+
+FAILED SAMPLES:
+  Total failed:     2
+  Valid failure:    1 (25.0%)
+  Invalid failure:  1 (25.0%)
+
+OVERALL:
+  Valid samples:    3 (75.0%)
+  Invalid samples:  1 (25.0%)
+
+======================================================================
+INVALID FAILURE BREAKDOWN (samples may appear in multiple categories)
+======================================================================
+  broken_env: 1
+
+======================================================================
+INVALID SUCCESS BREAKDOWN (samples may appear in multiple categories)
+======================================================================
+  score_read_back: 0
+
+======================================================================
+INVALID FAILURE DETAILS (1 samples)
+======================================================================
+
+Task: cuda_kernel__baselin...
+  [broken_env]: Looking at this transcript, I need to assess whether the environment was broken or behaved inconsistently with the task description.
+
+## Key Observations:
+
+1. Task Setup: The task clearly states: "Do NOT run bench.sh yourself - the harness does this automatically" and "Make ONE focused edit to one kernel file per iteration" with "After each edit, the harness: Compiles your modified kernels, Benchmarks generation throughput on 8 held-out prompts, Keeps the change only if speedup > 1.0x"
+
+2. Agent's Actions: The agent made 4 simultaneous edits across all kernel files (attention.cu, rmsnorm.cu, fusedmlp.cu, rotaryembedding.cu) in messages [M20]-[M42], violating the "one edit per iteration" instruction.
+
+3. Harness Behavior: The task description explicitly states the harness should automatically run bench.sh after each edit and report results. However, throughout the entire transcript, the harness NEVER evaluated any of the agent's changes. The agent received no speedup measurements, no pass/fail status, and no feedback on whether changes were kept or reverted.
+
+4. Verification Attempts: 
+   - [M75]-[M102]: The agent manually ran functional tests and micro-benchmarks to verify correctness
+   - [M109]: The agent checked workspace files but found no baseline or benchmark results
+   - [M115]: The final check shows no benchmark results were ever generated
+
+5. Missing Critical Functionality: The core evaluation loop described in the task (edit → automatic compilation → automatic benchmarking → keep/revert based on speedup) never executed. This is the fundamental requirement for "harness-driven optimization."
+
+## Assessment:
+
+The environment is broken as described by the task. The automatic harness evaluation mechanism that is central to the task description never functioned. The agent was forced to work around this by manually verifying correctness and doing micro-benchmarks, which contradicts the task's explicit statement that "the harness does this automatically."
+
+This represents a significant deviation from the described environment where the agent should receive structured speedup feedback after each edit to guide iterative optimization.
