@@ -1,0 +1,23 @@
+# Live runs for the full trajectory analysis: one glob per line, relative to --logs-root
+# (the notebook's docs/audit/data). Add a line for each new folder of live runs; a glob that
+# matches nothing is reported and skipped, so lines for runs still to come can stay.
+# A line starting with ! leaves out the logs it matches.
+# Scorer checks, null and replay runs (cap-c*, saf-s*, *-p-*, rc-*-null, rc-rescore-*) and the
+# few-minute smoke runs are not evaluation trajectories and stay out.
+
+# Setting 1, CUDA kernels: 16 one-hour runs (15 Claude Code, 1 ReAct), 17-18 Nov
+2026-11-17-lambda-h100/full-*/*.eval
+# Setting 2, inference optimization: 15 one-hour runs, 18-19 Nov
+2026-11-18-inference-port/inf-full-*/*.eval
+# Setting 3, capabilities post-training: 20-minute live run and five-hour runs, 19 Nov on
+2026-11-18-capabilities-port/gpu/cap-live20-*/*.eval
+2026-11-18-capabilities-port/gpu/cap-full-*/*.eval
+# Setting 4, safety post-training: 20-minute live run and five-hour runs, 19 Nov on
+2026-11-18-safety-port/gpu/saf-live20-*/*.eval
+2026-11-18-safety-port/gpu/saf-full-*/*.eval
+# Release-candidate queue, 20 Nov on (GPU-QUEUE rows 26-29): the short live runs and the
+# ReAct runs (react-<model>-<setting>-1; with GPT-5.5 they make their own analysis file).
+# Check the folder names when the runs land.
+2026-11-20-rc/rc-*-cc*/*.eval
+2026-11-20-rc/react-*/*.eval
+!*-smoke/*

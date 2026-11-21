@@ -56,7 +56,7 @@ src/researcharena_inspect/        the eval
 tests/researcharena_inspect/      its tests
 hawk/                             job files for GL's Hawk cluster, as they ran
 docs/guide.html                   a guide for reviewers (open in a browser)
-agent_artefacts/                  the validity report, the review summary, and Scout scanners for the transcript analysis (not run yet)
+agent_artefacts/                  the validity report, the review summary, and the trajectory analysis (Scout scanners, runner, results, ..._ANALYSIS.md)
 NOTICE                            attribution for the code adapted from ResearchArena (MIT)
 ```
 

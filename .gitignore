@@ -39,6 +39,12 @@ agent_artefacts/trajectory_analysis/*
 agent_artefacts/trajectory_analysis/inspect_scout/scout_results/
 agent_artefacts/trajectory_analysis/inspect_scout/logs/
 agent_artefacts/trajectory_analysis/inspect_scout/__pycache__/
+# This eval's scanners, scripts, analysis files and small result tables are tracked; Scout's raw
+# scans (every prompt, transcripts included: about 600 MB for the full pass) and mock runs are not
+!agent_artefacts/trajectory_analysis/researcharena_inspect/
+agent_artefacts/trajectory_analysis/researcharena_inspect/runs/*/*/scan_id=*/
+agent_artefacts/trajectory_analysis/researcharena_inspect/runs/mock-*/
+agent_artefacts/trajectory_analysis/researcharena_inspect/__pycache__/
 
 # Editors
 .idea/
