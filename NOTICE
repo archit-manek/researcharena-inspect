@@ -42,3 +42,24 @@ Upstream's task files, evaluators, monitor templates and helper scripts are not 
 this repository: they are read at run time from a checkout of the commit above
 (src/researcharena_inspect/upstream.py). The other modules re-implement steps of upstream's
 pipeline scripts in Python; their docstrings cite the lines they follow.
+
+Data derived from the authors' published material and packaged with the port (the source,
+revision and hash of each are in src/researcharena_inspect/pins.py):
+
+  src/researcharena_inspect/data/researcharena_index.json.gz
+      The website's run index, https://research-arena.ai/traces/data/index.json, fetched
+      30 Oct 2026 (index built 2026-07-20T03:55:29Z), unchanged. Terms: not stated by the
+      source as far as checked.
+  src/researcharena_inspect/analysis/data/published_raw_metrics.json.gz
+      Selected scorer fields from each published run's results.json in the Hugging Face dataset
+      aisa-group/ResearchArena-Trajectories at revision 8cd737c. Terms: none found; the
+      dataset's top level holds only its four setting folders (no card or licence file).
+  src/researcharena_inspect/data/output_models_utility_finetuning.json.gz
+  src/researcharena_inspect/data/output_models_safety_finetuning.json.gz
+      File listings (paths, sizes, hashes; no weights) of the Hugging Face dataset
+      aisa-group/ResearchArena-output-models at revision 28acb91, read from the Hub on
+      18 Nov 2026. Terms: not recorded here; the weights themselves are downloaded at run time.
+
+Models and datasets fetched at run time are listed with their revisions in
+src/researcharena_inspect/eval.yaml (external_assets); two of them, google/gemma-2b and
+meta-llama/Llama-Guard-3-8B, are gated, and their licences must be accepted on the Hub.

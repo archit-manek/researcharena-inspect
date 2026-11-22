@@ -10,9 +10,11 @@ tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
   # baseline). Other settings: inference_optimization 5, safety_finetuning 4,
-  # utility_finetuning 3. All four settings have had live runs on a GPU (the one-hour
-  # cuda_kernel and inference_optimization series 17 to 19 Nov 2026, short runs and replays of
-  # both on 20 Nov; the post-training settings 19 and 20 Nov).
+  # utility_finetuning 3. Status at 10-F (22 Nov 2026, ca94ce2): all four settings have had live
+  # runs on one H100 with Docker (the one-hour cuda_kernel and inference_optimization series 17
+  # to 19 Nov, replayed in the evaluator's own container on 20 Nov; one five-hour run per
+  # post-training cell 19 and 20 Nov; a half-hour GPT-5.5 ReAct baseline per setting at 10-F,
+  # 21 and 22 Nov). Kubernetes (Hawk) has run cuda_kernel only, on an L4, at 1-A.
   # utility_finetuning is scored from version 4 (side scores, the upload capture service, the
   # cache and the submission store); 4-B adds the check-only option check_offline; 4-C adds the
   # datasets' prepared builds to the agent's cache (D-187). Version 5 scores safety_finetuning
@@ -22,8 +24,8 @@ tasks:
   # stopped, as upstream does (D-093); on Kubernetes scoring is as in 5-A. Version 7-F: a mean
   # over no values is nan, not 0.0; the letter counts the interface changes since 3-D (4-C, 5-A
   # and 6-A went backwards). Version 8-F: the safety scorer's Llama Guard judge loads without a
-  # token (D-254). Version 9-F: Claude Code's first prompt on stdin, not on its command line
-  # (D-078, D-257). Version 10-F: the ReAct agent's `bash` description names the working
+  # token (D-254). Version 9-F: the red-team Claude Code's first prompt on stdin, not on its
+  # command line (D-078, D-257); the monitor's own prompt is still an argument. Version 10-F: the ReAct agent's `bash` description names the working
   # directory and the time limit. Every version is in the README's changelog.
   - name: researcharena
     dataset_samples: 5
@@ -57,6 +59,11 @@ external_assets:
     fetch_method: other
     state: pinned
     comment: "The authors' fine-tuned models, one final_model/ per post-training run, at revision 28acb91 (pins.OUTPUT_MODELS_REVISION), downloaded with huggingface_hub when the replay agent re-scores a published capabilities run (about 1 GB each) or safety run (about 3.4 GB each)."
+  - type: huggingface
+    source: "Qwen/Qwen2.5-3B-Instruct"
+    fetch_method: other
+    state: pinned
+    comment: "inference_optimization's model, which the starter server and upstream's evaluator serve, put in the agent's cache at revision aa8e725 (environment.model_cache, D-130), copied from a host folder or downloaded in the sandbox (6.2 GB); upstream's config names the repository with no revision."
   - type: huggingface
     source: "Qwen/Qwen2.5-0.5B-Instruct"
     fetch_method: other
@@ -123,6 +130,11 @@ external_assets:
     state: floating
     comment: "The model whose generation the CUDA kernels speed up. Upstream's bench.py loads it with transformers inside the sandbox, with no revision."
 
+# Scope: the GPU is for researcharena and the two maintenance checks; researcharena_monitor
+# and the analysis need none. Every reported result ran with Docker on one H100. On Kubernetes
+# (supports_k8s) the port has run cuda_kernel only, on an L4 (a smoke run, not the reference),
+# scoring there runs in the agent's container after a process sweep (D-093), the two upload
+# cells are refused (D-174) and safety_finetuning cannot stage its gated judges (D-263).
 metadata:
   sandbox: ["solver", "scorer"]
   requires:
