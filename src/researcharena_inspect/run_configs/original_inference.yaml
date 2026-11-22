@@ -12,9 +12,11 @@
 # value follows.
 #
 # Not matchable, each marked NOT MATCHED below:
-#   - the vLLM version: the published runs ran vLLM 0.17.0 (97 of 105 transcripts print
-#     "LLM engine (v0.17.0)"); upstream's image at b922f4b, which the port builds, has 0.19.1
-#     (ledger D-133). The setting's own requirements.txt pins 0.17.0.
+#   - the vLLM version: the published runs show vLLM 0.17.0 (90 of 105 runs print vLLM's engine
+#     start-up line "Initializing a V1 LLM engine (v0.17.0)" in the transcript or the snapshot's
+#     logs, 89 in the transcript alone; no run prints another vLLM version; ledger D-258);
+#     upstream's image at b922f4b, which the port builds, has 0.19.1 (ledger D-133). The
+#     setting's own requirements.txt pins 0.17.0.
 #   - the Hugging Face cache: upstream's agent and evaluator saw the cluster's whole shared
 #     cache; the port's holds the setting's one model at a pinned revision (D-130, D-131).
 
