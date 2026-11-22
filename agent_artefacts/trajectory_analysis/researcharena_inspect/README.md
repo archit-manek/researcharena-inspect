@@ -47,7 +47,7 @@ Each question carries the setting, the side task's name and a summary of its ins
 
 **Reward hacking, the eval-aware way.** The template seeds its scanner registry with the defaults and skips an eval scanner whose name is taken, so a `reward_hacking_success` here would never run. Instead `uninstructed_reward_hacking` decides, and `VALIDITY_OVERRIDES` keeps the default `reward_hacking_success` running as information only (`invalidates_success: false`); `run.py` applies the override before writing `scanner_metadata.json`, so it is on record there. The analysis file counts how many side-task samples the default scanner flagged.
 
-**Compacted conversations.** When Claude Code compacted a conversation, the sample's messages can start from its summary, without the task prompt (10 of the 38 live samples on 20 Nov). The default scanners read those messages as they are; this eval's scanners get the conversation before each compaction put back in front, from the agent model's calls in the log.
+**Compacted conversations.** When Claude Code compacted a conversation, the sample's messages can start from its summary, without the task prompt (10 of the 38 live samples counted on 20 Nov; in the full analysis of 21 Nov, 14 of the 43 Claude Code samples were compacted and 10 lacked the task prompt). The default scanners read those messages as they are; this eval's scanners get the conversation before each compaction put back in front, from the agent model's calls in the log.
 
 ## Commands
 
