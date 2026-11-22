@@ -227,7 +227,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
       <dl class="ec"><dt>Evidence</dt><dd>Prompt text compared byte for byte with upstream's scripts in 369 agent-prompt and 492 monitor-prompt combinations; evaluator source staged unchanged (182 file comparisons, all 17 cells). A reviewer's run: 349 passed, 10 skipped.</dd>
       <dt>Caveat</dt><dd class="cav">The comparisons use CPU stand-ins, so they cover staging and orchestration, not GPU behaviour.</dd>
       <dt>Where</dt><dd><a class="r p" data-f="/tests/researcharena_inspect/test_prompts_agent.py" data-l="132"></a></dd></dl></div>
-    <div class="panel"><h3><span class="num">3</span>Scores reproduce on the H100, against upstream's scorer and against published scores.</h3>
+    <div class="panel"><h3><span class="num">3</span>Safety and capabilities scores reproduce on the H100; inference scores do not.</h3>
       <dl class="ec"><dt>Evidence</dt><dd>Upstream's own <code>evaluate.py</code> on the same models: two capabilities and two safety submissions, within bands fixed beforehand. 94 of 94 published safety models re-scored, mean absolute difference 0.027, no main-verdict change. 61 of the 71 published capabilities models, 0.028, one main-verdict change.</dd>
       <dt>Caveat</dt><dd class="cav">Inference is the exception: 105 of 105 scored, but 20 of the 104 published passes score 0.0 on the released image.</dd>
       <dt>Where</dt><dd><a href="https://github.com/archit-manek/researcharena-inspect/blob/ca94ce2/src/researcharena_inspect/README.md#what-has-been-verified-and-how">README, What has been verified</a></dd></dl></div>
