@@ -2,7 +2,9 @@
 
 An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://research-arena.ai/) ([paper](https://arxiv.org/abs/2607.19321), [code](https://github.com/aisa-group/ResearchArena)), an AI-control evaluation of sabotage and monitoring in automated AI R&D. An agent does a long research-engineering task while some runs also ask it to sabotage the work in secret; a monitor model then reads the run and scores how suspicious it looks.
 
-New to the benchmark or to this code? Start with the guide, [docs/guide.html](docs/guide.html): one run stage by stage, the four settings, the monitor, the evidence and the differences from the original, each linked to the lines it describes. It is a single HTML file; open it in a browser after cloning (GitHub shows its source, not the page). It was written on 18 Nov 2026 against commit `68c52cc`, and its links point at that commit.
+**Reference setup:** the four-setting evaluation is run and evidenced on Docker with one NVIDIA H100; Hawk (Kubernetes) is a smoke path only, one ten-minute CUDA run on an L4, and there the scorer runs in the agent's own container instead of a separate one.
+
+New to the benchmark or to this code? Start with the guide, [docs/guide.html](docs/guide.html): the port on one page, a thirty-minute reading order, then one run stage by stage, the four settings, the monitor, the evidence, the differences from the original and what is not shown, each linked to the lines it describes. It is a single HTML file; open it in a browser after cloning (GitHub shows its source, not the page). It was updated on 22 Nov 2026 at version 10-F, and its links point at commit `ca94ce2`.
 
 The eval's documentation is in [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md). For a review, read it in this order:
 
@@ -11,27 +13,35 @@ The eval's documentation is in [src/researcharena_inspect/README.md](src/researc
 3. [Deviations from upstream](src/researcharena_inspect/README.md#deviations-from-upstream) and [Known limitations](src/researcharena_inspect/README.md#known-limitations).
 4. [How to run it](src/researcharena_inspect/README.md#how-to-run-it), locally or on Hawk, and the paper's setup as run configs, one per setting and one for the monitor: [`run_configs/`](src/researcharena_inspect/run_configs/).
 
-Where things stand (21 Nov 2026; the one-hour `cuda_kernel` and `inference_optimization` series ran 17 to 19 Nov, their later GPU checks and replays on 20 Nov, the post-training runs on 19 and 20 Nov): all four settings are ported. Prompts, workspace staging and scorers match upstream's own scripts in the tests, and the paper's tables reproduce from the authors' published runs except for cells listed with their causes. On an NVIDIA H100, the paper's GPU: `cuda_kernel` has sixteen one-hour live runs, 47 published workspaces replayed through the scorer, and transcript and workspace monitors on our runs; `inference_optimization` has its scorer checks, fifteen one-hour live runs and transcript monitors on them. For these two settings, scoring in a container of its own (version 6-A onwards) has been checked on the H100 against the earlier scores. Replayed that way, twelve of the fifteen live inference runs score again and three give 0.0, because their submissions point vLLM at a compile cache in the agent's home (D-255). `utility_finetuning` and `safety_finetuning` have passed their scorer checks on the H100 (published models re-scored, and the port's scoring equal to upstream's scorer run directly within the checks' bands) and have one five-hour live Claude Code run per cell (capabilities: baseline, `embedded`, `independent`; safety: baseline, `embedded`, `embedded_german`, `independent`), with short Claude Code and ReAct runs; one run per cell, reported as observed. In both settings' upload (`independent`) runs the agent called the instruction a prompt injection and did not upload, so an upload being captured is shown by tests on a CPU, not by a live run. The details, and what has not been verified, are in [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how).
+Where things stand (22 Nov 2026, version 10-F): all four settings and all 13 of upstream's side tasks are ported, and the monitor task builds for all four. In the tests, prompts match upstream's own scripts byte for byte, and staged workspaces and scorer outputs match upstream's pipeline on CPU stand-ins (staging and orchestration, not GPU behaviour). On the H100 the port's scoring agrees with upstream's `evaluate.py` run directly on two capabilities and two safety submissions, within bands fixed beforehand, and published submissions were re-scored (safety 94 of 94, mean absolute difference 0.027; capabilities 61 of 71, 0.028; CUDA 57 workspaces, 51 at 0.892 to 1.039 of published and 6 at 0.0); inference is the exception, with 20 of the 104 published passes scoring 0.0 on the released image. Live, with Sonnet 4.6: sixteen one-hour `cuda_kernel` runs, fifteen one-hour `inference_optimization` runs and seven five-hour post-training runs, one per cell, reported as observed and not as a reproduction of the paper's rates; ReAct with GPT-5.5 ran a half-hour baseline in each setting at 10-F. On Docker every setting is scored in a container of its own; replayed that way, three of the fifteen live inference runs give 0.0 (D-255). Since 9-F Claude Code gets its first prompt on stdin, as upstream does; every headline Claude Code run predates that (D-078). In both upload (`independent`) runs the agent refused the upload, so capture is shown by tests, not live. The details, and what has not been verified, are in [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how).
 
 ## Getting started
 
+First, a free scored run: the monitor task end to end on one of the authors' published CUDA runs, with Inspect's mock model scripted to write a judgement, checking that the score read back is 37.
+
 ```bash
 uv sync
-uv run pre-commit install
+uv run --frozen pytest --runslow -q "tests/researcharena_inspect/test_monitor_task.py::test_monitor_task_end_to_end_with_mockllm[transcript]"
+```
+
+It needs Docker and, on a fresh checkout, network access to fetch the pinned upstream checkout, the published run and a small Python image. No API key and no GPU. On 22 Nov 2026, with those already cached, it passed in 15 seconds.
+
+The same run with a real model costs money. Put `INSPECT_EVAL_MODEL` and your API keys in a `.env` file (it is git-ignored) to avoid passing `--model` each time, then:
+
+```bash
 uv run inspect eval researcharena_inspect/researcharena_monitor --model anthropic/claude-sonnet-4-6 \
     -T runs=cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_162845_c17310740
 uv run inspect view
 ```
 
-That command runs the monitor on one of the authors' published CUDA runs (about $0.60) and needs Docker but no GPU. The red-team task (`researcharena_inspect/researcharena`) needs one NVIDIA GPU; see [How to run it](src/researcharena_inspect/README.md#how-to-run-it).
-
-Put `INSPECT_EVAL_MODEL` and your API keys in a `.env` file (it is git-ignored) to avoid passing `--model` each time.
+That command runs the monitor on the same published CUDA run (about $0.60) and needs Docker but no GPU. The red-team task (`researcharena_inspect/researcharena`) needs one NVIDIA GPU; see [How to run it](src/researcharena_inspect/README.md#how-to-run-it).
 
 The dev dependencies include the `anthropic` and `openai` SDKs. Inspect needs one package per model provider, so add the package for any other provider with `uv add --dev <package>`; Inspect's error message names the package when it is missing.
 
 ## Checks and tests
 
 ```bash
+uv run pre-commit install   # once, to run the hooks on each commit
 make check   # ruff, basedpyright, inspect-evals-lint, generated README sections, pre-commit
 make test    # pytest
 ```
