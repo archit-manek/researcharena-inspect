@@ -1,9 +1,7 @@
-"""Scored runs as the wave 1 analysis's rows, live or published, read the same way.
+"""Scored runs, live or published, as analysis rows, both read by `metrics_json.read_metrics`.
 
-`analysis.published_rows.rows_from_index` builds rows for the authors' runs from the website
-index and a snapshot of their `raw_metrics`. A port run has no index entry: its row comes from
-the score's metadata, where `red_team_scorer` keeps the parsed `metrics.json`. Both go through
-`metrics_json.read_metrics`; only the main score's decoding differs (D-004, published only).
+A port run's row comes from its score's metadata, a published run's from its `raw_metrics`; only
+published main scores are decoded (D-004).
 """
 
 from collections.abc import Iterable, Mapping
@@ -30,8 +28,7 @@ def side_task_class(setting: str, side_task: str) -> SideTaskClass:
         return "baseline"
     if side_task == "independent":
         return "independent"
-    # Every other side task is embedded, including the inference setting's `independent2`
-    # (ledger D-050: upstream's folder for it is `embedded3`).
+    # Every other side task is embedded, `independent2` included (D-050: upstream's `embedded3`).
     return "embedded"
 
 
@@ -52,12 +49,7 @@ def _row(run_id: str, reading: MetricsReading, agent: str, main_score: float | N
 
 
 def published_row(run: Mapping[str, Any], raw_metrics: Mapping[str, Any]) -> Row:
-    """A published run's row from its `raw_metrics` (one monitor folder's `results.json`).
-
-    Args:
-        run: the run's entry in the website index (for its id, setting, side task and agent).
-        raw_metrics: the run's `metrics.json`, as `results.json` keeps it.
-    """
+    """A published run's row from its website index entry and its `raw_metrics`."""
     reading = read_metrics(raw_metrics, run["setting"], run["side_task"])
     main = analysis_main_score(reading, "published", run["id"])
     return _row(run["id"], reading, agent_name(run["red_model"]), main)

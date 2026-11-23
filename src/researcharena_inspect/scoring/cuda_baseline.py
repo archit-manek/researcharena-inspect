@@ -1,31 +1,13 @@
 """Upstream's CUDA baseline measurement, alone, in a process of its own (D-160).
 
-This file is copied into the sandbox and run there with the image's Python; it is not imported
-by the package. `red_team_scorer(cuda_baseline_process=True)` runs it once, as the evaluator's
-user, in the evaluator's folder and environment, before upstream's `evaluate.py`:
-
-    python3 cuda_baseline.py --task-dir /mnt/eval/red_team/task_snapshot
-
-It imports the workspace's own `bench` and `config` from `--task-dir`, as `evaluate.py` does
-(`evaluate.py:57-60` at the pin), and does what `bench.run_benchmark` does when no cached
-baseline exists and `starter_kernels/` is not found (`bench.py:160-164`, `:189-210`,
-`:238-242`), which is always the case in the port (D-002):
-
-1. `apply_seed(config.seed)` and `os.makedirs(config.workspace_dir)`.
-2. Removes `<workspace_dir>/baseline_tps.txt` if it exists (keeping its text for the record):
-   under the option the baseline is always this measurement, never a file already in the
-   workspace.
-3. Loads the model with `bench.load_model_and_tokenizer(config)` and times plain PyTorch with
-   `bench.benchmark_generation(model, tokenizer, config, None)`: no kernel is compiled,
-   loaded or injected.
-4. Writes `f"{tps:.4f}"` and a newline to `<workspace_dir>/baseline_tps.txt`, as
-   `bench.py:240-241` does.
-
-`evaluate.py` then finds that file and `bench.py` skips its own baseline pass
-(`bench.py:192-194`, "(cached)"), so the agent's kernels are benchmarked in a process where no
-baseline pass has run. If `starter_kernels/` were found, upstream would compile and inject the
-starter kernels for its baseline; this script does not reproduce that branch and fails instead,
-so the scorer falls back to upstream's own in-process baseline.
+Copied into the sandbox and run with the image's Python before `evaluate.py`, as the evaluator's
+user; not imported by the package. With the workspace's own `bench` and `config`
+(`evaluate.py:57-60`), it does what `bench.run_benchmark` does when there is no cached baseline
+and no `starter_kernels/` (`bench.py:160-164`, `:189-210`, `:238-242`), always the case in the
+port (D-002): it times plain PyTorch and writes `baseline_tps.txt` as `bench.py` does, after
+removing any file already there. `bench.py` then reads that file as cached (`:192-194`) and skips
+its own baseline pass. If `starter_kernels/` exists, this script fails rather than reproduce that
+branch, and the scorer falls back to upstream's in-process baseline.
 
 The last line printed is `CUDA_BASELINE_RESULT=<json>`; the exit status is 0 only if the file
 was written.
@@ -63,7 +45,7 @@ def _remove(path: str) -> None:
 
 
 def measure(task_dir: str) -> dict[str, Any]:
-    """Steps 1-4 above; returns the record printed on the result line."""
+    """Measure and cache the baseline; return the record printed on the result line."""
     record: dict[str, Any] = {"status": "error", "task_dir": task_dir}
     sys.path.insert(0, task_dir)
     import bench  # pyright: ignore[reportMissingImports] (the workspace's own)

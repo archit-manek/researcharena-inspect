@@ -1,36 +1,18 @@
 """`cuda_baseline_process`: CUDA's baseline measured in a process of its own (D-160, opt-in).
 
-Upstream's `evaluate.py` for `cuda_kernel` calls `bench.run_benchmark` once: unless
-`workspace/baseline_tps.txt` exists, it times plain PyTorch first (the baseline, D-002) and then,
-in the same Python process, the model with the agent's kernels injected (`bench.py:189-263` at
-the pin). Some kernels fault ("CUDA error: an illegal memory access") only when that baseline
-pass has run before them in the same process, so the run scores 0.0; the same kernels run when
-`bench.py` finds a cached baseline and skips the pass (D-037; LOG 18 Nov, "the six diagnosis
-replays"). With the option on, the scorer measures the baseline first, with the workspace's own
-`bench.py` functions, in a separate process (`cuda_baseline.py`), and leaves the result where
-`bench.py` already looks for a cached baseline. `evaluate.py` then runs unchanged.
+Upstream's `evaluate.py` times plain PyTorch and then the agent's kernels in one process
+(`bench.py:189-263`), unless `workspace/baseline_tps.txt` exists. Some kernels fault only after
+that baseline pass (D-037). With the option, after `prepare_evaluation` and before the first
+attempt, the scorer:
 
-Step by step, after `prepare_evaluation` and before the first attempt:
-
-1. The text of `task_snapshot/workspace/baseline_tps.txt`, if the agent left one, is recorded
-   and the file removed from the snapshot (not from the agent's `task/`): the agent's number
-   never becomes the baseline under this option.
-2. Which of the files `evaluate.py` reads back instead of measuring (D-001) are present is
-   recorded; they are left in place. If one of them gives a result, `evaluate.py` returns it
-   without benchmarking, as upstream does, and the measured baseline is not used.
-3. `cuda_baseline.py` runs as the evaluator's user, in its folder, with its environment, under
-   `timeout --signal=TERM --kill-after=30s 3600s` like an attempt; its output goes to
-   `/mnt/eval/eval/cuda_baseline.log`.
-4. If it wrote a baseline above 0 and below infinity, that is the run's baseline. Otherwise the
-   option is not applied: any cached baseline is removed, so `evaluate.py` measures its own
-   baseline in-process, as upstream does, and the score's metadata says `failed`.
-5. Before each attempt (after `free_gpu_memory`, which ends the baseline process's leftovers),
-   the cached file is checked and, if changed or gone, written back with the measured text.
-   Upstream's attempts 2 and 3 would read whatever attempt 1 cached; here they read the same
-   measurement attempt 1 read.
-
-After the attempts, each attempt log's `BASELINE_TPS=` lines are recorded, so the metadata shows
-whether `evaluate.py` used the cached value ("(cached)") or measured.
+1. records and removes the snapshot's `workspace/baseline_tps.txt` (not the agent's `task/`);
+2. records which read-back files (D-001) are present and leaves them: if one gives a result,
+   `evaluate.py` returns it without benchmarking, as upstream does;
+3. runs `cuda_baseline.py` as an attempt runs, logging to `/mnt/eval/eval/cuda_baseline.log`;
+4. uses its baseline if it is finite and above 0; otherwise removes any cached baseline, so
+   `evaluate.py` measures in-process as upstream does, and records `failed`;
+5. before each attempt, writes the measured text back if the cached file changed or is gone
+   (upstream's later attempts would read what attempt 1 cached).
 """
 
 import hashlib
@@ -62,6 +44,8 @@ SCRIPT = f"{WORK_DIR}/cuda_baseline.py"
 LOG_PATH = f"{EVAL_DIR}/eval/cuda_baseline.log"
 DEFAULT_CACHE = f"{SNAPSHOT_DIR}/workspace/{CACHE_NAME}"
 
+# Not only on PASS: the first of these that is a JSON object is the main score with no benchmark,
+# its speedup on PASS and 0.0 otherwise (`evaluate.py:32-53`).
 READ_BACK_FILES = (
     "workspace/final_results.json",
     "final_results.json",
@@ -182,9 +166,9 @@ async def _as_user(command: EvaluationCommand, script: str, *args: str) -> Any:
 
 
 async def read_text(command: EvaluationCommand, path: str) -> str | None:
-    """A file's first 4 KiB, read as the evaluator's user; None if absent or unreadable.
+    """A file's first 4 KiB; None if absent or unreadable.
 
-    As the evaluator's user because the path is the workspace's choice (its `config.py`).
+    Read as the evaluator's user because the path is the workspace's choice (its `config.py`).
     """
     result = await _as_user(command, f'[ -f "$1" ] || exit 3; head -c {TEXT_LIMIT} -- "$1"', path)
     return result.stdout if result.success else None
@@ -246,17 +230,17 @@ def process_command(timeout: int = EVAL_TIMEOUT_SECONDS) -> list[str]:
 
 
 async def measure_baseline(command: EvaluationCommand) -> BaselineProcess:
-    """Steps 1-4 of the module docstring, on a prepared sandbox."""
+    """Steps 1 to 4 of the module docstring, on a prepared sandbox."""
     box = evaluator_sandbox()
     record = BaselineProcess(user=command.user, cwd=command.cwd)
-    # Step 1: the agent's cached baseline is recorded and removed from the snapshot.
+    # Step 1.
     record.agent_baseline_file = await read_text(command, DEFAULT_CACHE)
     await remove(command, DEFAULT_CACHE)
-    # Step 2: read-back files (D-001) are recorded, left in place.
+    # Step 2.
     record.read_back_files = await _present(command, READ_BACK_FILES)
     record.workspace_code_is_upstreams = await _code_is_upstreams(command)
 
-    # Step 3: the baseline process.
+    # Step 3.
     script = (Path(__file__).parent / "cuda_baseline.py").read_bytes()
     setup = await box.exec(
         ["bash", "-c", f"set -e; rm -rf {WORK_DIR}; install -d -m 755 {WORK_DIR}"], user="root"
@@ -289,7 +273,7 @@ async def measure_baseline(command: EvaluationCommand) -> BaselineProcess:
     record.log = _keep(log)
     await box.exec(["rm", "-rf", WORK_DIR], user="root")
 
-    # Step 4: is there a usable measurement?
+    # Step 4.
     parsed = result_line(log)
     record.result = parsed
     reason = _check(record, parsed)

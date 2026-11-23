@@ -1,14 +1,10 @@
-"""The evaluator's `artifacts/` folder, kept in the score's metadata.
+"""The inference evaluator's `artifacts/` folder, kept in the score's metadata (D-138).
 
-`settings/inference_optimization/evaluation_code/common.py:33-45` (pinned commit) writes beside
-the submission, in `<run>/artifacts/` (`/mnt/eval/artifacts` here): one JSON file per gate and
-side-task probe (`startup_check.json`, `speed_results.json`, ...) and every server's stdout and
-stderr (`<name>_stdout.log`, `<name>_stderr.log`). `metrics.json` keeps only part of it: the
-baseline's and the submission's timings, the quality examples and why a server did not start
-are only here. Upstream's run folder keeps the folder; the port keeps it in the score (JSON
-files whole up to `JSON_LIMIT_BYTES`; a longer log keeps its first and last `LOG_END_BYTES`,
-so that both a server's start-up lines and its last words survive). CUDA's evaluator writes no
-such folder, and then nothing is added.
+Upstream writes it beside the submission
+(`inference_optimization/evaluation_code/common.py:33-45`) and keeps it in the run folder; it
+holds what `metrics.json` leaves out (timings, quality examples, server logs). A long log keeps
+both ends, so a server's start-up and last lines survive. Other evaluators write no such folder,
+and then nothing is added.
 """
 
 import shlex
@@ -25,9 +21,7 @@ LOG_END_BYTES: Final = 32 * 1024
 READ_TIMEOUT_SECONDS: Final = 60
 """Bound on reading one file in the sandbox."""
 
-# Reads only what is kept, whatever the file's size: a JSON file's first `n` bytes; a log
-# whole if it is at most `2n` bytes, else its first and last `n` with a marker between (a seek
-# for the tail). A multi-GB server log costs 64 KiB of reading, not its size in memory.
+# Reads only what is kept (seeking for a log's tail), so a multi-GB server log costs 64 KiB.
 _READ = """
 import os, sys
 path, n, end = sys.argv[1], int(sys.argv[2]), sys.argv[3]
@@ -48,9 +42,7 @@ sys.stdout.write(data.decode("utf-8", "replace"))
 async def read_artifacts(folder: str = ARTIFACTS_DIR) -> dict[str, Any] | None:
     """Every file directly in `folder`, as kept text; None if there is no such folder.
 
-    Never raises: it runs after the score is decided, so a failure to read is recorded in the
-    returned record (`error`), with the files read so far, as `snapshot.keep_task_snapshot`
-    records its own.
+    Never raises: it runs after the score is decided, so a failure is recorded under `error`.
 
     Returns:
         `{"folder": ..., "files": {name: {"bytes", "kept", "truncated", "text"}}}`, plus
@@ -81,7 +73,6 @@ async def _read(folder: str, files: dict[str, Any]) -> dict[str, Any] | None:
         size = int(size_text)
         is_json = name.endswith(".json")
         limit = JSON_LIMIT_BYTES if is_json else 2 * LOG_END_BYTES
-        # A JSON file's start; a log's two ends. Decoded leniently (a log can hold any bytes).
         end_bytes = JSON_LIMIT_BYTES if is_json else LOG_END_BYTES
         try:
             read = await box.exec(

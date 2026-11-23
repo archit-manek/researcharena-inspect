@@ -1,24 +1,15 @@
-"""Part D: which shipped CUDA kernel faults on the untouched baseline workspace, and how often.
+"""`kernel_crash_check`: which shipped CUDA kernel faults on the untouched baseline workspace.
 
-On the H100, upstream's `evaluate.py` on the untouched staged baseline builds the four shipped
-kernels and then fails in the agent benchmark with `CUDA error: an illegal memory access was
-encountered` (`environment_check`, 17 Nov 2026). This task records upstream's behaviour; it changes no
-upstream file and fixes nothing. Two samples, each in its own sandbox:
+A diagnostic of upstream's behaviour (D-037); it changes no upstream file. Two samples:
 
-- `plain-repeats`: the baseline workspace staged as the pipeline stages it, then the pipeline's
-  evaluation (`prepare_evaluation` and the scorer's attempt loop, `run_evaluation`) `repeats`
-  times, the evaluation folders cleared before each.
-- `kernel-isolation`: a copy of the staged `task/` in `/tmp`; the extension built once with
-  `bench.compile_kernels`'s arguments; then upstream's own model loading, injection and
-  generation benchmark (`bench.py`, `inject.py`) with each kernel alone, none and all, twice; all
-  four after a vanilla model as `run_benchmark` orders them; each kernel and all four again with
-  `CUDA_LAUNCH_BLOCKING=1` and a synchronize after every kernel call (which names the faulting
-  call and records the shapes it got); `compute-sanitizer` on the kernels that faulted, if the
-  image has it; and `bash bench.sh` in the real workspace as the agent would run it.
+- `plain-repeats`: the staged baseline workspace scored by the pipeline's own evaluation
+  (`prepare_evaluation`, `run_evaluation`) `repeats` times.
+- `kernel-isolation`: upstream's `bench.py` and `inject.py` on a copy of `task/`, via
+  `kernel_bench.py`, with each kernel alone, none and all, then with a synchronize after every
+  kernel call; `bench.sh` as the agent runs it; `compute-sanitizer` on the kernels that faulted.
 
-Every command's exit status, output and duration go to the sample's metadata under
-`kernel_crash_check`, unparsed apart from `kernel_bench.py`'s own result line. Steps that would
-run past the sample's time limit are skipped and listed.
+Every command's output goes to the sample's metadata under `kernel_crash_check`. Steps that would
+run past the time limit are skipped and listed.
 """
 
 import json
@@ -178,7 +169,7 @@ async def plain_repeats(steps: _Steps, result: dict[str, Any], repeats: int) -> 
     runs: list[dict[str, Any]] = []
     result["repeats"] = runs
     for n in range(1, repeats + 1):
-        # One attempt takes about 250 s on an L4; up to three are allowed.
+        # Room for three attempts (one takes about 250 s on an L4).
         if steps.remaining() < 3 * 400:
             steps.skipped.append(f"plain evaluation {n}")
             continue
@@ -230,7 +221,7 @@ async def kernel_isolation(steps: _Steps, result: dict[str, Any], env: dict[str,
     if made is None or made["returncode"] != 0:
         return
     await sandbox().write_file(SCRIPT, script)
-    # evaluate.py's variables, with a home that exists (no evaluator folder in this sample).
+    # evaluate.py's variables, with a home that exists (this sample has no evaluator folder).
     eval_env = evaluator_env() | {"HOME": WORK_DIR}
     await steps.run("script readable", ["chmod", "644", SCRIPT])
     copied = await steps.run(
@@ -269,7 +260,7 @@ async def kernel_isolation(steps: _Steps, result: dict[str, Any], env: dict[str,
             }
         )
 
-    # The agent's own measurement, as its shell runs it (solve.sh sources the setup first).
+    # As the agent's shell runs it: solve.sh sources the setup first.
     await steps.run(
         "bench.sh as the agent",
         ["bash", "-c", f"source {PRE_AGENT_SETUP} > /dev/null 2>&1; bash bench.sh"],
