@@ -1,49 +1,19 @@
 """Replaying a workspace: a given `task/` in place of the agent's work, then scored as usual.
 
-A replayed sample is staged as any run is; in the agent's slot the staged `task/` is replaced by
-the given files, as the agent's user; then the scorer runs on it exactly as after an agent. The
-files come from a published run's `red_team/task_snapshot/` (Hugging Face, pinned revision) or
-from a local run folder in upstream's layout.
+The files come from a published run's `red_team/task_snapshot/` or a local run folder. A
+published snapshot was taken after upstream's scorer ran in it, and CUDA's `evaluate.py` and
+`bench.py` read back results left there (D-001; `evaluate.py:32-53`, `bench.py:190-194`). So
+`as_published` replays it as it is, as upstream's `src/reeval_only.sh` does, and `fresh` (D-098,
+the default) leaves those files out so this GPU measures. Other settings read back nothing.
 
-A published `task_snapshot/` is the workspace after the agent **and** after upstream's scorer
-ran in it (WP2, discrepancy 4): `evaluate.py` returns the speedup in
-`workspace/final_results.json`, `final_results.json` or `workspace/last_bench.json` without
-benchmarking anything when one says `compile_status` PASS (`evaluate.py:32-53`, ledger D-001),
-and `bench.py` reuses `workspace/baseline_tps.txt` as the baseline if it exists
-(`bench.py:190-194`), whether the agent or a previous scoring wrote it. So two modes:
-
-- `as_published`: the snapshot as it is. Upstream's own re-evaluation (`src/reeval_only.sh`)
-  does this; for the 16 runs with `last_bench.json` it only reads that file back, and elsewhere
-  a cached baseline measured on another GPU is divided into this GPU's agent throughput.
-- `fresh` (the fair re-score, the default; D-098, upstream has no such mode): the snapshot
-  without those four files, so `evaluate.py` compiles the kernels and measures the baseline and
-  the agent's kernels on this GPU, in one session, as it would have for an agent that never ran
-  `bench.py`. The side-task evaluators read none of the four files, so their verdicts are the
-  same in both modes.
-
-The left-out files are per setting (`SCORER_CACHE_FILES_BY_SETTING`). `inference_optimization`'s
-evaluator reads back no earlier result (it starts the submission's server and measures every
-time), so its two modes put the same files in place. Compile caches a `launch.sh` points into
-the workspace (`.vllm_cache/`, `compile_cache/`, `triton_cache/`) are kept in both. In a
-published snapshot such a cache need not be the agent's alone: upstream's evaluator starts the
-submission with the workspace as its working folder, so the published evaluation may have
-written to it too (D-110: the snapshot is taken after Phase 4). A replay therefore starts its
-servers with whatever cache the published evaluation left. One built by another vLLM version
-should not be reused by this image's vLLM, since such caches are keyed by version (not
-checked). 2 of the 105 published inference snapshots have such folders (`...c17312128`,
-`...c17360448`).
-
-`utility_finetuning` (D-172): the evaluator reads back no earlier result either (it serves
-`final_model/` with vLLM and asks it the questions every time), so its two modes are the same.
-A published capabilities run's `task_snapshot/` has no `final_model/`; the authors published it
-separately (`pins.OUTPUT_MODELS_DATASET` at `pins.OUTPUT_MODELS_REVISION`), and the replay puts
-it back in place from there (`published_model_files`). A local run folder (one the submission
-store wrote, `scoring.submission_store`) carries its own. Files of `LARGE_FILE_BYTES` or more
-(a model's weights) go into the sandbox in pieces, each checked by its SHA-256 in the sandbox
-(`scoring.transfer.copy_in`); smaller files go in tars of at most `TAR_BATCH_BYTES`, so the
-host never holds a whole model in memory. A published `independent` run's side task cannot be
-replayed: its evidence (`side_task_evidence/`, the capture log) is not in the published data,
-so the replayed side score is the one of a run that uploaded nothing.
+Warnings:
+- A published inference snapshot's compile caches (`.vllm_cache/` and the like) may hold what
+  the published evaluation wrote (D-110). A cache from another vLLM version is not checked.
+- Post-training models are published apart from the trajectories and put back in place
+  (`published_model_files`, D-172). Files go in by pieces or bounded tars, so the host never
+  holds a whole model in memory.
+- A published `independent` run's evidence is not published, so its replayed side score is
+  that of a run that uploaded nothing.
 """
 
 import gzip
@@ -178,8 +148,7 @@ def snapshot_files(source: ReplaySource) -> dict[str, bytes]:
 class ReplayError(RuntimeError):
     """The replayed workspace is missing, incomplete, unverified or over the caps.
 
-    Never replaced by an empty workspace: an empty one would score as upstream's genuine "no
-    model" 0.0 (D-172, round A).
+    Never replaced by an empty workspace: that would score as a genuine "no model" 0.0 (D-172).
     """
 
 
@@ -205,12 +174,9 @@ LISTED_SETTINGS: tuple[str, ...] = ("utility_finetuning", "safety_finetuning")
 
 @cache
 def model_listing(setting: str = "utility_finetuning") -> dict[str, Any]:
-    """The pinned listing of a setting's published models (`pins.OUTPUT_MODELS_LISTINGS`).
+    """The pinned listing of a setting's published models, checked against its pinned SHA-256.
 
-    One entry per file of every run's `final_model/`, with its size and its SHA-256 (LFS files)
-    or git blob id (small files), as the Hub listed the dataset at `pins.OUTPUT_MODELS_REVISION`;
-    checked against its own pinned SHA-256 when loaded. Lets a replay verify a published model
-    without calling the Hub.
+    One entry per `final_model/` file: size and SHA-256 (LFS files) or git blob id (small files).
     """
     from researcharena_inspect.pins import OUTPUT_MODELS_LISTINGS, OUTPUT_MODELS_REVISION
 
@@ -244,11 +210,8 @@ def _sha256(path: Path) -> str:
 def published_model_files(run_id: str) -> tuple[dict[str, Path], dict[str, Any]]:
     """A published post-training run's `final_model/` files, checked against the pinned listing.
 
-    From `pins.OUTPUT_MODELS_DATASET` at `pins.OUTPUT_MODELS_REVISION` (about 1 GB per run, cached
-    by `huggingface_hub`; with `HF_HUB_OFFLINE=1` only the local copy is read). Every file the
-    pinned listing names must be present locally with its size and hash, and no other file may
-    be there: an incomplete or altered local snapshot is an error. Empty for the run that saved
-    no model (the listing has no files for it).
+    The local copy must hold exactly the listed files, each with its size and hash. Empty for a
+    run that saved no model.
 
     Returns:
         The files by path relative to `task_snapshot/`, and their provenance (dataset,
@@ -271,8 +234,7 @@ def published_model_files(run_id: str) -> tuple[dict[str, Path], dict[str, Any]]
 
         if run_id not in {run["id"] for run in load_index()["runs"]}:
             raise ReplayError(f"{run_id!r} is not a published run")
-    # A published run of a listed setting with no entry saved no `final_model/` (one capabilities
-    # baseline, two safety `independent` runs: D-212).
+    # No entry: the run saved no `final_model/` (D-212).
     listed = {e["path"]: e for e in runs.get(run_id, [])}
     provenance: dict[str, Any] = {
         "dataset": OUTPUT_MODELS_DATASET,
@@ -329,19 +291,14 @@ def _check_caps(files: Mapping[str, "FileSource"], where: str) -> None:
 
 
 def local_run_files(run_dir: Path) -> tuple[dict[str, Path], dict[str, Any]]:
-    """The files of a local run folder's `red_team/task_snapshot/`, checked, never followed out.
+    """The files of a local run folder's `red_team/task_snapshot/`, checked.
 
-    - The snapshot must exist and hold a file (a missing or empty one is an error, never an
-      empty workspace), and the folder must not be a store that did not finish.
-    - A folder the submission store wrote has a `manifest.json`: its status must be `stored`
-      (a `partial` or unfinished store is refused), and the files on disk must be exactly the
-      manifest's, each with its size and SHA-256.
-    - A symbolic link is followed only when it resolves to a regular file inside the run
-      folder; any other link is left out and listed (`refused_links`), so no file outside the
-      run folder is read on the host. Links to folders are not followed.
+    A link is followed only to a regular file inside the run folder, so no file outside it is
+    read on the host; other links are listed in `refused_links`. A folder the submission store
+    wrote must be complete and match its `manifest.json`.
 
     Raises:
-        ReplayError: as above.
+        ReplayError: an empty, unfinished or altered snapshot, or one over the caps.
     """
     run_dir = run_dir.resolve()
     root = run_dir / SNAPSHOT
@@ -403,11 +360,6 @@ def local_run_files(run_dir: Path) -> tuple[dict[str, Path], dict[str, Any]]:
 
 def replay_input(source: "ReplaySource") -> ReplayInput:
     """The replayed workspace's files (host paths, read when put in place) and their provenance.
-
-    A published run: its `task_snapshot/` from the trajectories dataset, plus, for a
-    post-training run, its `final_model/` from the models dataset, checked against the pinned
-    listing (`published_model_files`). A local run folder: `local_run_files`, and its
-    `side_task_evidence/` if it kept one.
 
     Raises:
         ReplayError: a missing, incomplete or altered source, conflicting files, or the caps.
@@ -471,11 +423,9 @@ def select_files(
 
 
 def snapshot_tar(files: Mapping[str, FileSource], dirs: set[str] | None = None) -> bytes:
-    """A tar of the files in `task/`'s layout, with the modes upstream's staging gives.
+    """A tar of the files in `task/`'s layout, with the modes of `_mode` (Hugging Face keeps none).
 
-    644, and `chmod +x` on top-level `*.sh` and `*.py` (`pipeline_redteam.sh:185`): Hugging
-    Face keeps no modes. `dirs`, if given, holds the folders already written, shared between
-    several tars of one workspace.
+    `dirs` holds the folders already written, shared between several tars of one workspace.
     """
     buffer = io.BytesIO()
     dirs = set() if dirs is None else dirs
@@ -524,9 +474,8 @@ async def replay_workspace(
     """Replace the staged `task/` with `files` as the agent's user.
 
     Returns:
-        What was put in place: the mode, the files written and the cache files left out, and
-        for files of `LARGE_FILE_BYTES` or more (`streamed`), each one's size and SHA-256 as
-        the sandbox computed it.
+        The mode, the files written, the files left out, and for large files (`streamed`)
+        each one's size and SHA-256 as the sandbox computed it.
     """
     chosen = select_files(files, mode, setting)
     large = {k: v for k, v in chosen.items() if _size(v) >= LARGE_FILE_BYTES}

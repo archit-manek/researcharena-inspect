@@ -1,28 +1,10 @@
 """The red-team agent phase as a solver: Phase 3 of `src/pipeline_redteam.sh` and `solve.sh`.
 
-Order of events, with upstream's lines at the pinned commit:
-
-1. `RED_START` (`pipeline_redteam.sh:350`); everything below runs under `RED_TIMEOUT`, the
-   budget plus five minutes (`:344`, `:357`).
-2. Claude Code only: install the CLI and record its version (`solve.sh:35-38`).
-3. Start the agent's clock (`solve.sh:59-65`) and run the rounds: the first prompt, then
-   "Continue where you left off..." until the budget is spent (`agents.continuation`). Each
-   round has the time left as its limit, as `timeout` gives it (`:97`; `AgentRounds`).
-4. Stop everything the agent started (`agents.processes`), as the container teardown and
-   `free_gpu_memory` do (`:415`), and record `RED_END` (`:403-406`).
-
-The sample then goes on to scoring with the workspace as the agent left it, whether the agent
-finished, ran out of time or failed, as upstream's pipeline goes on to Phase 4. One exception
-(D-108): if `claude_code` or `react` got no response from any model call in the whole phase,
-the sample ends with an error instead (`NoModelOutputError`), unless
-`fail_on_no_model_output=False`.
-
-Every agent runs as the environment's agent user (`environment.AGENT_USER`) with upstream's
-container variables (`environment.agent_env`), in the staged workspace, after its shell has
-sourced `pre_agent_setup.sh` (`:378`: `source /home/user/pre_agent_setup.sh && bash
-/home/user/agent_solve.sh`). Two agents call no model: `null` does nothing and exits at once, so
-the staged workspace is scored as it was staged; `replay` puts a given workspace (a published
-run's `task_snapshot/` or a local one) in place of the agent's work (`agents.replay`).
+In order: `RED_START` (`pipeline_redteam.sh:350`) and the `RED_TIMEOUT` limit (`:344`, `:357`);
+`source pre_agent_setup.sh` (`:378`); for Claude Code, the CLI install (`solve.sh:35-38`); the
+agent's clock (`solve.sh:59-65`) and the rounds (`agents.continuation`); the process sweep
+(`agents.processes`) and `RED_END` (`:403-406`). Scoring follows however the agent ended, except
+that a model agent with no model output at all ends with an error (D-108).
 """
 
 import os
@@ -102,15 +84,11 @@ def _returned(event: Event) -> bool:
 
 
 def model_output_seen() -> bool:
-    """Whether any model call of the sample so far returned output (D-108).
+    """Whether any model call of the sample so far returned output (D-108). A refusal counts.
 
-    Read from the sample's transcript. Every attempt at a model call, ReAct's and those Claude
-    Code makes through Inspect's bridge (its background calls included), adds a `ModelEvent`
-    when it starts, which is completed in place with the output or with the error the call
-    raised; a failed attempt that is retried leaves one event per attempt. A refusal is
-    output. If the transcript's history cannot be read back (with Inspect's opt-in bounded
-    transcript, older events are read from a store that can be gone), the answer is yes, so
-    that doubt never fails a sample.
+    Read from the transcript's `ModelEvent`s, Claude Code's bridge calls included. If the
+    history cannot be read back (Inspect's bounded transcript), the answer is yes, so that
+    doubt never fails a sample.
     """
     try:
         return transcript().history.find_last(_returned) is not None
@@ -143,10 +121,10 @@ def no_model_output_message(run: AgentRun) -> str:
 
 @cache
 def resolve_agent_effort(setting: str, model: str, provider: str = "claude") -> str:
-    """The red-team effort from upstream's `effort.json`, by upstream's `src/resolve_effort.py`.
+    """The red-team effort from upstream's `effort.json`, by `src/resolve_effort.py`.
 
-    As `pipeline_redteam.sh:77-78` calls it. Both agents use the `claude` entry (`xhigh` at the
-    pinned commit), so ReAct runs at the same effort as Claude Code. `default` means none.
+    As `pipeline_redteam.sh:77-78` calls it. Both agents use the `claude` entry, so ReAct runs
+    at Claude Code's effort. `default` means none.
     """
     script = upstream_dir(UPSTREAM_COMMIT) / "src" / "resolve_effort.py"
     result = subprocess.run(
@@ -176,9 +154,7 @@ class PreAgentSetup:
 async def source_pre_agent_setup(env: dict[str, str]) -> PreAgentSetup:
     """`source /home/user/pre_agent_setup.sh` in the agent's shell, as the agent's user.
 
-    The script prepends the workspace to `PATH`, checks CUDA and runs the workspace's own
-    `hook_pre_agent.sh` if there is one (`src/utils/pre_agent_setup.sh`). The `PATH` it leaves
-    is what the agent's process inherits, so it is read back and given to the agent.
+    The script changes `PATH`, which the agent's process inherits upstream, so it is read back.
     """
     script = f'source {PRE_AGENT_SETUP} && printf "\\n%s%s\\n" "{_PATH_MARKER}" "$PATH"'
     result = await sandbox().exec(["bash", "-c", script], user=AGENT_USER, env=env, cwd=TASK_DIR)
@@ -228,21 +204,16 @@ class DeadlineStop:
 class AgentRounds:
     """Runs one round of an agent on a shared conversation, for the continuation loop.
 
-    A resume round appends the continuation prompt as a user message; Claude Code then runs
-    `claude --resume <session> -- <prompt>` and ReAct carries on from the conversation. Each
-    round runs as upstream's `timeout "${remaining}s"` (`solve.sh:97`) and returns the code
-    `timeout` would: the CLI's exit code, 124 if the deadline came first, or 137 if the CLI
-    was still running 30 s after it.
+    Each round runs as upstream's `timeout "${remaining}s"` (`solve.sh:97`) and returns the code
+    `timeout` would: the CLI's exit code, 124 at the deadline, or 137 if killed after the grace.
 
     Args:
         agent: the agent; it changes `state` in place, so its work is kept however it stops.
         state: the conversation, shared by the rounds.
         name: the agent's name, for spans and log lines.
         log: receives error lines.
-        cli: for Claude Code, how to find and stop its CLI and read its exit code; None for
-            ReAct, which has no CLI process.
-        new_agent: for Claude Code, makes a new agent (a new CLI session) for a resume round
-            that comes before any assistant message (D-105); None never replaces the agent.
+        cli: for Claude Code, how to stop its CLI and read its exit code; None for ReAct.
+        new_agent: for Claude Code, makes a new agent for D-105; None never replaces it.
     """
 
     def __init__(
@@ -267,12 +238,8 @@ class AgentRounds:
 
     async def __call__(self, phase: Phase, prompt: str, remaining: int) -> int:
         if phase == "resume":
-            # D-105: Inspect SWE passes `--resume <session id>` only once the conversation has
-            # an assistant message; before that it starts the CLI with the same `--session-id`
-            # again, which the CLI refuses ("Session ID ... is already in use") because the
-            # earlier round created that session. Upstream's `claude --continue` resumes it
-            # whatever happened. So such a round gets a new agent, whose new session starts
-            # with the user messages so far: the first prompt, then this continuation prompt.
+            # D-105: with no assistant message yet, Inspect SWE would reuse `--session-id`,
+            # which the CLI refuses, so the round gets a new agent and session.
             if self.new_agent is not None and not any(
                 isinstance(m, ChatMessageAssistant) for m in self.state.messages
             ):
@@ -285,9 +252,7 @@ class AgentRounds:
         return await self._cli_round(phase, remaining, self.cli)
 
     async def _react_round(self, phase: Phase, remaining: int) -> int:
-        # D-081: ReAct has no CLI process and no upstream counterpart, so nothing can be sent
-        # SIGTERM: at the deadline Inspect cancels the round, and the tool commands it leaves
-        # are killed after the last round (`kill_new_processes`).
+        # D-081: no CLI to send SIGTERM; the round is cancelled at the deadline.
         with apply_limits([time_limit(remaining)], catch_errors=True) as scope:
             try:
                 async with span(name=f"{self.name} {phase}", type="agent"):
@@ -295,23 +260,14 @@ class AgentRounds:
             except LimitExceededError:
                 raise  # a limit of the sample, not of this round
             except Exception as ex:
-                # The model call failed: the round ends with a non-zero code, and the loop
-                # decides (solve.sh:105-133).
+                # The loop decides what follows (solve.sh:105-133).
                 self.log.append(f"[agent] {phase} error: {ex!r}")
                 return RC_FAILED
         return RC_BUDGET if scope.limit_error is not None else RC_OK
 
     async def _cli_round(self, phase: Phase, remaining: int, cli: CliStop) -> int:
-        # D-081: as `timeout --signal=TERM --kill-after=30s "${remaining}s"` (solve.sh:97), at
-        # the deadline the CLI and its process group get SIGTERM, and SIGKILL `kill_after`
-        # seconds later if the round has not ended; then the round is cancelled. What still
-        # differs: each signal goes out through a sandbox exec, so it lands a fraction of a
-        # second after the deadline, and a killed round ends once Inspect's cancellation
-        # returns (seconds, not at once); the CLI's container outlives the round (the snapshot
-        # is made in it, D-251; with a sandbox that has no `evaluator` service the scorer
-        # runs in it, D-093), so
-        # whatever the agent left running is killed after the last round
-        # (`kill_new_processes`) rather than with its container.
+        # D-081: `timeout --signal=TERM --kill-after=30s` (solve.sh:97) through sandbox execs,
+        # so each signal lands slightly late; then the round is cancelled.
         launched = len(cli.exit_codes)
         stop: DeadlineStop | None = None
         error: Exception | None = None
@@ -350,8 +306,7 @@ class AgentRounds:
         codes = cli.exit_codes[launched:]
         exit_code = codes[-1] if codes else None
         if stop is not None:
-            # `timeout` returns 124 once its limit has fired, whatever the CLI exits with
-            # (it exits 143 or 0 on SIGTERM), and 137 if it had to SIGKILL it (RC_KILLED).
+            # `timeout` returns 124 once its limit has fired, whatever the CLI exits with.
             stop.cli_exit_code = exit_code
             stop.agent_error = None if error is None else repr(error)
             stop.ended_after_term_s = round(ended - term_time, 3)
@@ -359,14 +314,11 @@ class AgentRounds:
             self.deadline_stops.append(stop)
             return stop.rc
         if error is not None:
-            # The CLI exited non-zero or the model call failed: the round ends with the CLI's
-            # code, or 1 if there is none, and the loop decides (solve.sh:105-133).
+            # The loop decides what follows (solve.sh:105-133).
             self.log.append(f"[agent] {phase} error: {error!r}")
             return exit_code or RC_FAILED
-        # D-084: Inspect SWE does not raise when the CLI exits 1 after a refusal (exit 1, no
-        # stderr, stop reason `content_filter`: `_is_claude_code_refusal_exit`), so the round's
-        # code is read from the CLI itself, as upstream's AGENT_RC is. A refused resume round
-        # thus stops the loop, and a refused round 0 is resumed, as in solve.sh:110-133.
+        # D-084: Inspect SWE does not raise for a refusal's exit 1, so the code is read from
+        # the CLI itself, as upstream's AGENT_RC is.
         return exit_code if exit_code is not None else RC_OK
 
 
@@ -382,10 +334,7 @@ def red_team_agent(
 ) -> Solver:
     """Run the red-team agent on the sample's prompt within upstream's time budget.
 
-    Reads `setting`, `redruntime` and `resume_agent` from the sample's metadata (see
-    `task.red_team_sample`), and `replay` for the replay agent, and keeps the run in the store
-    as an `AgentRun`. The run's record and metadata are written before the check below raises,
-    so an errored sample still has them in the log.
+    Reads the sample's metadata (`task.red_team_sample`) and keeps the run as an `AgentRun`.
 
     Args:
         agent: `claude_code` (Inspect SWE), `react`, `null` (does nothing; no model call) or
@@ -393,15 +342,12 @@ def red_team_agent(
         effort: the agent's reasoning effort; `auto` reads upstream's `effort.json`
             (`xhigh`), `default` sets none.
         claude_code_version: Claude Code version to install (`latest`, `stable`, `2.1.162`,
-            ..., or `sandbox` for one already in the image). Upstream installs the latest.
-        small_model: model for Claude Code's Haiku-class background calls: Haiku 4.5, as
-            upstream's CLI used; `None` uses the task's model.
+            ..., or `sandbox` for one already in the image).
+        small_model: model for Claude Code's background calls; `None` uses the task's model.
         react_compaction: let ReAct summarise its conversation near the context limit.
-        replay_mode: for `replay`: `fresh` (without the scorer's cached results) or
-            `as_published` (see `agents.replay`).
+        replay_mode: for `replay`: `fresh` or `as_published` (see `agents.replay`).
         fail_on_no_model_output: for `claude_code` and `react`: raise `NoModelOutputError`
-            after the agent phase if no model call in it returned output (D-108). `False`
-            goes on to scoring, as upstream does. `null` and `replay` are never checked.
+            if no model call returned output (D-108); `False` scores as upstream does.
     """
     if agent not in AGENTS:
         raise ValueError(f"agent must be one of {AGENTS}, got {agent!r}")
@@ -430,9 +376,7 @@ def red_team_agent(
         result = ContinuationResult()
 
         keep = await list_processes()
-        # D-085: upstream's RED_START (pipeline_redteam.sh:350) comes before the container
-        # starts and runs pre_agent_setup.sh (:357-378), so RED_TIMEOUT and time_taken.txt
-        # include both. Here the sandbox is up and the setup solver has run before this point.
+        # D-085: upstream's RED_START (pipeline_redteam.sh:350) also covers container start.
         run.red_start = time.time()
         # The container's `--env` values (pipeline_redteam.sh:359-369); credentials are not
         # passed (D-076, D-091).
@@ -442,8 +386,7 @@ def red_team_agent(
             agent_config=model.name,
             agent_effort=resolved,
         )
-        # `AGENT_EXTRA_ENV_ARGS` from the run's `pipeline_pre_agent.sh` hooks (:371), such as the
-        # upload-capture proxy's `http_proxy`; none for most runs (`environment.services`).
+        # `AGENT_EXTRA_ENV_ARGS` from the `pipeline_pre_agent.sh` hooks (:371).
         env.update(agent_extra_env(meta))
         no_model_exit: int | None = None
 
@@ -558,11 +501,7 @@ def red_team_agent(
                 agent_exit_code=run.exit_code,
                 agent_time_taken_s=run.time_taken_s,
             )
-        # D-108: upstream scores the workspace whatever the agent did. A model agent that got
-        # no response from any model call (an outage, a wrong model name, an exhausted key)
-        # took no action, so its score would be the staged workspace's, counted as a result;
-        # an error leaves the sample unscored and lets Inspect's retries rerun it. Checked
-        # after everything above is recorded, so the errored sample keeps it in the log.
+        # D-108. Checked after the record is written, so the errored sample keeps it.
         if fail_on_no_model_output and agent in MODEL_AGENTS and not model_output_seen():
             raise NoModelOutputError(no_model_output_message(run))
         return state

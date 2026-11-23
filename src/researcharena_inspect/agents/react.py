@@ -1,26 +1,12 @@
 """The comparison agent: Inspect's ReAct loop with a shell and a file editor.
 
-Upstream has no ReAct agent; this one is given what the Claude Code agent is given, as far as
-Inspect's standard tools allow:
-
-- the same first prompt (the `claude` family's, whose suffix names "Read, Write, Bash") and the
-  same continuation prompts, through the same loop (`agents.continuation`);
-- `bash` for Claude Code's Bash tool, with its default timeout (`BASH_DEFAULT_TIMEOUT_MS`,
-  one hour), and `text_editor` for Read, Write and Edit; no web tools (they need a search
-  provider) and no subagents;
-- both run as the agent's user; `bash` also gets the agent's environment and starts in the
-  workspace, as Claude Code's shell does (Inspect's own `bash()` takes a user but no
-  environment or working directory);
-- three sentences in `bash`'s description (`react_bash_description`), a tool every model
-  reads: where commands start, absolute paths for the editor (it resolves relative ones from
-  `/`), and the per-command limit. Claude Code's model is told the starting directory, absolute
-  paths for Read and Edit, and the 60-minute default; unlike this tool, its shell keeps its
-  working directory between calls and its Bash tool takes an optional `timeout` up to the
-  maximum upstream sets (`BASH_MAX_TIMEOUT_MS`);
-- the same served-model effort, and no system prompt beyond the task prompt;
-- `submit=False`: a round ends when the model answers without calling a tool, which is when
-  `claude --print` exits;
-- summary compaction near the context limit, as Claude Code compacts its own conversation.
+Upstream has no ReAct agent. This one gets what Claude Code gets, as far as Inspect's tools
+allow: the same prompts and loop, the same effort, `bash` and `text_editor` for Bash, Read,
+Write and Edit (no web tools, no subagents), the agent's user, environment and workspace.
+`bash`'s description adds what Claude Code's model is told: where commands start, absolute
+paths for the editor, and the one-hour limit. Unlike Claude Code's Bash tool, each command
+starts a new shell and takes no `timeout`. `submit=False` ends a round when the model answers without a tool
+call, as `claude --print` exits.
 """
 
 from copy import copy
@@ -103,10 +89,11 @@ def red_team_react(
     Args:
         model: the task's model.
         effort: the resolved effort (`default` sets none), set as `reasoning_effort`.
-        compaction: summarise the conversation at 90% of the context window.
-        user: sandbox user the tools run as (the environment's agent user).
+        compaction: summarise the conversation at 90% of the context window, as Claude Code
+            compacts its own.
+        user: sandbox user the tools run as.
         env: the agent's environment for `bash` (`environment.agent_env`).
-        cwd: where `bash` starts (the workspace), which its description names.
+        cwd: where `bash` starts, which its description names.
     """
     if effort != "default":
         model = copy(model)

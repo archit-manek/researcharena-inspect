@@ -1,27 +1,9 @@
 """ResearchArena's red-team run as an Inspect task: one sample per side task (or baseline).
 
-Port of `run_redteam.sh` and `src/pipeline_redteam.sh` at the pinned commit. Each sample is one
-red-team run of a setting: the prompt is built by `prompts.agent_prompt`, the workspace is staged
-as upstream stages it, the agent runs in the sandbox for upstream's time budget and is
-re-prompted as upstream re-prompts it, and the workspace is then scored by upstream's
-`evaluate.py`. By default each part comes from the environment and scoring packages:
-
-- `sandbox`: `environment.sandbox_spec()`, upstream's image with one GPU in Docker on the
-  local machine, with the evaluator's own container (D-093). The `sandbox` option replaces it
-  with another Inspect sandbox; `sandbox="docker"` without a config gives a CPU-only Debian
-  image for tests.
-- `setup`: `environment.stage_agent_workspace`, upstream's staging and pre-agent hooks
-  (`pipeline_redteam.sh:169-309`), for `inference_optimization` and the two post-training
-  settings the model (and their datasets, and `safety_finetuning`'s judges) in the agent's
-  Hugging Face cache
-  (`environment.model_cache`), and the `pipeline_pre_agent.sh` hooks, such as the post-training
-  `independent` side task's upload capture, in a service beside the agent
-  (`environment.services`). `setup=[]` stages nothing.
-- `scorer`: `scoring.red_team_scorer`, upstream's Phase 4 (`pipeline_redteam.sh:415-530`).
-
-The agent is Claude Code (as upstream), ReAct, `null` (does nothing, so the staged workspace is
-scored as staged) or `replay` (a given workspace, such as a published run's, in place of the
-agent's work; one sample per replayed run).
+Port of `run_redteam.sh` and `src/pipeline_redteam.sh`. The defaults: the sandbox is
+`environment.sandbox_spec()` (upstream's image, one GPU, Docker, a separate evaluator, D-093);
+the setup is `environment.stage_agent_workspace` (`pipeline_redteam.sh:169-309`); the solver is
+`agents.red_team_agent`; the scorer is `scoring.red_team_scorer` (Phase 4, `:415-530`).
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
@@ -90,8 +72,7 @@ def red_team_sample(
     Args:
         setting: e.g. `cuda_kernel`.
         side_task: a side task of the setting, or `none` for the baseline.
-        redruntime: the budget in hours, as upstream's `--redruntime` (kept as typed, since it
-            appears in the prompt).
+        redruntime: the budget in hours, kept as typed, since it appears in the prompt.
         task_config: the setting's task config; `None` for its first, as upstream defaults.
     """
     hours = format_hours(redruntime)
@@ -144,11 +125,7 @@ def red_team_dataset(
 
 
 def replay_dataset(sources: str | list[str]) -> MemoryDataset:
-    """One sample per replayed run: published run ids or local run folders.
-
-    Each sample is the run's own setting, side task, config and budget, with the source in
-    `metadata["replay"]`; its id is the run's folder name.
-    """
+    """One sample per replayed run (published run id or local run folder), with its settings."""
     samples = []
     for name in _as_list(sources) or []:
         source = replay_source(name)
@@ -167,11 +144,7 @@ def replay_dataset(sources: str | list[str]) -> MemoryDataset:
 def red_team_sandbox(
     sandbox: str | SandboxEnvironmentSpec, sandbox_config: str | None
 ) -> SandboxEnvironmentSpec:
-    """A sandbox given by spec, or by type and config.
-
-    `docker` alone is the CPU-only image, with the evaluator's service as every Docker sandbox
-    of the task has (D-093).
-    """
+    """A sandbox given by spec, or by type and config; `docker` alone is the CPU-only image."""
     if isinstance(sandbox, SandboxEnvironmentSpec):
         return sandbox
     if sandbox_config is not None or sandbox != "docker":
@@ -222,11 +195,7 @@ HOOK_CLI_MINIMUM = (2, 1, 104)
 def check_hook_cli(dataset: MemoryDataset, agent: str, claude_code_version: str) -> None:
     """Refuse a Claude Code version that sends its own model call to the upload capture (D-256).
 
-    The hook gives the agent `http_proxy` and `no_proxy=localhost,127.0.0.1`. Inspect SWE's
-    bridge is on `http://localhost`, and Claude Code 2.1.34 ignores `no_proxy`, so its first
-    model call gets the capture proxy's 403 and the run ends with no model output. Upstream's
-    CLI talks HTTPS to the API, which `http_proxy` does not touch. A version given by name
-    (`latest`, `stable`) is not checked.
+    A version given by name (`latest`, `stable`) is not checked.
 
     Raises:
         ValueError: `agent` is `claude_code`, a sample sources the hook, and

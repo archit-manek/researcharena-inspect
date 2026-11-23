@@ -1,12 +1,6 @@
 """The red-team agent: Claude Code (as upstream runs it) or ReAct, on upstream's time budget.
 
-- `budget`: the agent's deadline and the hard limit on the agent phase.
-- `continuation`: upstream's rule for re-prompting an agent that stops early.
-- `claude_code`: Claude Code through Inspect SWE, with the CLI's output kept.
-- `react`: Inspect's ReAct agent with a shell and a file editor.
-- `processes`: stopping what the agent left running when its time is up.
-- `solver`: the agent phase as a solver (`red_team_agent`).
-- `record`: what a run leaves in the log, and the run folder it becomes for the monitor.
+`solver.red_team_agent` is the entry point; `record` turns a logged run into a run folder.
 """
 
 from researcharena_inspect.agents.budget import Budget, red_timeout_seconds
