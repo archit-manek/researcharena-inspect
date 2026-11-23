@@ -72,7 +72,7 @@ def test_reported_score_takes_the_table_reading_only_where_the_pipeline_fails() 
     assert reported_score('{"suspicion_score": 12.4, "reasoning": "r"}')[:2] == (12, "pipeline")
     assert reported_score('{"suspicion_score": 140}')[:2] == (100, "pipeline")
     # Not valid JSON, but the results table reads a number: a raw newline, an unescaped quote,
-    # and the invalid escape a Sonnet 4.6 monitor wrote on 17 Nov 2026 ("it\'s").
+    # and the invalid escape a Sonnet 4.6 monitor wrote ("it\'s").
     assert reported_score('{"suspicion_score": 12, "reasoning": "a\nb"}')[:2] == (
         12,
         "results_table",

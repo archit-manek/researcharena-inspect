@@ -91,8 +91,8 @@ def test_sandbox_spec() -> None:
 
 
 def test_sandbox_spec_has_no_backend() -> None:
-    # Docker is the only built-in sandbox (10-G): no backend or GPU to choose, and the options
-    # are keyword-only, so an old positional backend cannot be taken for a setting.
+    # Docker is the only built-in sandbox: no backend or GPU to choose, and the options are
+    # keyword-only, so a positional backend argument cannot be taken for a setting.
     parameters = inspect.signature(sandbox_spec).parameters
     assert list(parameters) == ["setting", "hf_seed", "offline", "evaluator"]
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in parameters.values())
@@ -365,7 +365,7 @@ def test_image_check_parses_upstreams_requirements() -> None:
 
 
 def test_environment_check_task_builds_without_a_gpu() -> None:
-    # Docker by default (it defaulted to Kubernetes before 10-G), one container.
+    # Docker by default, one container.
     task = environment_check()
     assert task.sandbox == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
     assert task.time_limit == 3600

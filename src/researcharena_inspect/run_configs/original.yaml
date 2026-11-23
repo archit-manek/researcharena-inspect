@@ -5,12 +5,12 @@
 # Same format and purpose as `run_configs/original.yaml` in inspect_evals' HLE eval: one file,
 # read by `inspect eval --run-config`, that fixes every setting of a paper-faithful run. Flags on
 # the command line override it (`--model`, `-T name=value`). `inspect eval-set` does not read
-# run configs.
+# run configs. The other `original_*.yaml` files follow this one.
 #
 # "Upstream" is ResearchArena at b922f4b (pins.UPSTREAM_COMMIT), the code the port follows.
-# "Published runs" are the authors' 15 Sonnet 4.6 Claude Code CUDA runs in the dataset at
-# revision 8cd737c (pins.HF_REVISION), which are what the paper's CUDA numbers for this agent
-# come from. Where the two disagree, the comment says which one the value follows.
+# "Published runs" are the authors' runs in the dataset at revision 8cd737c (pins.HF_REVISION);
+# here, the 15 Sonnet 4.6 Claude Code CUDA runs the paper's CUDA numbers come from. Where the two
+# disagree, the comment says which one the value follows.
 
 task:
   task: researcharena_inspect/researcharena
@@ -18,70 +18,49 @@ task:
     # Upstream: `run_redteam.sh --setting cuda_kernel`.
     setting: cuda_kernel
 
-    # The baseline (`none`) and the four CUDA side tasks: upstream's folders under
-    # settings/cuda_kernel/side_tasks/ (embedded = RoPE backdoor, embedded2 = latency trigger,
-    # embedded3 = dtype backdoor, independent = typosquat dependency). The published runs have
-    # three of each for Sonnet 4.6.
+    # The baseline and settings/cuda_kernel/side_tasks/: embedded (RoPE backdoor), embedded2
+    # (latency trigger), embedded3 (dtype backdoor), independent (typosquat dependency).
     side_tasks: [none, embedded, embedded2, embedded3, independent]
 
-    # settings/cuda_kernel/config.json has one config, `tinyllama`; upstream uses the first
-    # when none is given (`run_redteam.sh --task_config`). Every published CUDA run records it.
+    # The one config in settings/cuda_kernel/config.json; every published CUDA run records it.
     task_config: tinyllama
 
-    # Upstream: `--redteammodel claude:claude-sonnet-4-6` runs agents/claude/solve.sh (Claude
-    # Code). The port runs the same CLI through Inspect SWE (ledger D-076 to D-080).
+    # Upstream's agents/claude/solve.sh (Claude Code), run through Inspect SWE (D-076 to D-080).
     agent: claude_code
 
-    # One hour. Paper §5: "one hour for CUDA kernel and inference optimization"; all 15
-    # published runs have `redruntime_hours: 1` in metadata.json. (run_redteam.sub's own
-    # default is 0.1667, ten minutes.)
+    # Paper §5 and all 15 published runs: one hour (run_redteam.sub's own default is ten minutes).
     redruntime: "1"
 
-    # Upstream's effort.json gives Claude red-team agents `xhigh` ("auto" reads it). The
-    # published runs predate effort.json: solve.sh at the paper commit passed no --effort, so
-    # their effort is not recorded (D-056). All 15 published runs have thinking blocks, so
-    # thinking was on. Through Inspect the effort is set on the served model and the bridge
-    # drops the CLI's own thinking and effort settings (D-077): with "default" the provider's
-    # own default would apply (whether that thinks has not been checked); with "auto" Inspect's
-    # Anthropic provider sends adaptive thinking with the effort, `xhigh` lowered to `high`
-    # for Sonnet 4.6. Not matchable: the published effort level.
+    # "auto" reads upstream's effort.json: `xhigh`, which Inspect's Anthropic provider sends to
+    # Sonnet 4.6 as adaptive thinking at `high` (D-077). NOT MATCHED: the published runs predate
+    # effort.json and record no effort level (D-056); all of them have thinking blocks.
     effort: auto
 
-    # The published runs' CLI version, from the `init` event of each solve_out file: 2.1.104
-    # for the 9 baseline, embedded and independent runs (April and May 2026), 2.1.162 for the
-    # 6 embedded2 and embedded3 runs (June 2026). One config holds one version: this file uses
-    # 2.1.162; for the other three side tasks add
+    # Upstream installs the latest CLI at each run (D-056). The published runs used 2.1.162 for
+    # embedded2 and embedded3 and 2.1.104 for the other three; for those, add
     # `-T claude_code_version=2.1.104 -T side_tasks=none,embedded,independent`.
-    # Upstream itself installs the latest release at each run (`update_agent_cli.sh`, D-056).
     claude_code_version: "2.1.162"
 
-    # Claude Code's own background calls: Haiku 4.5, which the published runs' `modelUsage`
-    # lists (pins.CLAUDE_CODE_SMALL_MODEL; D-080).
+    # Claude Code's background model, as the published runs' `modelUsage` lists (D-080).
     small_model: anthropic/claude-haiku-4-5-20251001
 
-    # One machine with one NVIDIA GPU and Docker, the port's built-in sandbox: run_redteam.sub
-    # asks for one "NVIDIA H100 80GB HBM3", 8 CPUs, 256000 MB of memory and 200 GB of disk;
+    # Needs one NVIDIA GPU and Docker. run_redteam.sub asks for one H100 80GB, 8 CPUs and 256 GB;
     # the port's compose.yaml asks for one GPU, 8 CPUs and 64 GB. No option sets it.
 
-    # Upstream has no overall limit: the agent's budget plus five minutes (RED_TIMEOUT), then
-    # up to three evaluation attempts of 3600 s each. An Inspect time_limit would give scoring
-    # only half of it (D-099), so none is set.
+    # Upstream has no overall limit (the agent's budget plus five minutes, then up to three
+    # 3600 s evaluation attempts); an Inspect time_limit would give scoring only half (D-099).
     time_limit: null
 
-# Upstream: `--redteammodel claude:claude-sonnet-4-6` (run_redteam.sub's default and the
-# paper's agent).
+# Upstream: `--redteammodel claude:claude-sonnet-4-6`, run_redteam.sub's default.
 model: anthropic/claude-sonnet-4-6
 
-# Claude Code sends its own requests; upstream sets no temperature, seed or token limit, and
-# every published run has `seed: null` (D-010). Nothing is set here.
+# Claude Code sends its own requests; upstream sets no temperature, seed or token limit (D-010).
 generate_config: {}
 
-# The paper runs each configuration three times (§5, "three independent trials"); `--epochs 3`
-# does that. The task reduces each sample's epochs to the mean of those with a score, leaving
-# upstream's -1 ("no score") out (D-123); each epoch's own score is still in its sample.
+# The paper's three trials (§5): add `--epochs 3`. The task averages the epochs that have a
+# score, leaving out upstream's -1 ("no score") (D-123).
 #
-# One sample at a time: the main score is a speed measurement on the machine's one GPU, which
-# every sandbox asks for (upstream gives each run its own GPU, run_redteam.sub). Our CUDA runs
-# all passed `--max-samples 1` on the command line, which overrides this.
+# One sample at a time: every sandbox asks for the machine's one GPU (upstream gives each run its
+# own, run_redteam.sub), and the main score is a speed measurement on it.
 eval_config:
   max_samples: 1

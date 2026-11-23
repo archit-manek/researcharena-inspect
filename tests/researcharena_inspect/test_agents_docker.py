@@ -5,7 +5,7 @@ and then stops (no tool call), as an agent that thinks it is done would; upstrea
 each time. In round 2 it starts a background `sleep 300` and a foreground one, so it is still
 working when the budget runs out. The budget is 25 seconds (`redruntime` 0.007 hours).
 A second Claude Code run has the model refuse in rounds 0 and 2 (D-084). A third pair of runs
-has every model call fail with a 404, as a live run did, and ends with an error (D-108). A fourth
+has every model call fail with a 404 and ends with an error (D-108). A fourth
 Claude Code run has the model fail until the first resume round and answer from then on (D-105).
 
 Claude Code is the real CLI (Inspect SWE, version `CLI_VERSION`) talking to the mock model
@@ -106,12 +106,12 @@ def workspace_probe():
     return score
 
 
-# WP4: AGENTS now also has the no-model agents; these scenarios need a model agent.
+# These scenarios need a model agent; AGENTS also has the no-model agents.
 @pytest.fixture(scope="module", params=MODEL_AGENTS)
 def red_run(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory):
     agent = request.param
-    # WP4: `sandbox="docker"` is the CPU image the task used to default to (now with git, so
-    # the default staging runs); the agent runs as the staged user.
+    # `sandbox="docker"` is the CPU test image (it has git, so the default staging runs); the
+    # agent runs as the staged user.
     task = researcharena(
         side_tasks="independent",
         agent=agent,
@@ -555,7 +555,7 @@ def test_errored_sample_keeps_the_run_record(no_output_run: tuple[str, EvalSampl
     run = sample.store_as(AgentRun)
     assert run.agent == agent
     # Round 0 failed, round 1 was a resume and failed too, so the loop stopped with time left
-    # (solve.sh:128-130), as in that live run.
+    # (solve.sh:128-130).
     assert [(r["phase"], r["rc"]) for r in run.rounds] == [("exec", 1), ("resume", 1)]
     assert run.exit_code == 1
     assert run.log[-1] == "[agent] resume failed rc=1; stopping resume loop"

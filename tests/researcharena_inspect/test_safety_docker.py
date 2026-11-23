@@ -9,8 +9,8 @@ sandbox from the same image with the hook service beside it.
    hook starts upstream's proxy on both sides and gives the agent the same proxy variables.
 2. What the agent can read after staging (the same home for every agent type): none of the
    graded items (HarmBench prompts, held-out questions, AdvBench and German prompts) in any file
-   it can read outside the system's package folders, the cache left empty here (what the cache
-   holds is in the ledger, D-217); no evaluator folder; no sight of the proxy.
+   it can read outside the system's package folders, the cache left empty here (D-217); no
+   evaluator folder; no sight of the proxy.
 3. Scoring: upstream's `evaluate.py`, its `evaluation_code/` and the side-task evaluators on both
    sides, with the stand-in `vllm serve` and the stand-in `judgezoo` (`fake_vllm_serve/`). Cases:
    a model (baseline, `embedded`, `embedded_german`), the same model uploaded through the proxy

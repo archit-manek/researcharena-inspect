@@ -429,7 +429,7 @@ def test_end_to_end_with_a_mock_scanner_model(
     run = _load("run")
     rc = _load("ra_common")
     # The scan has two transcripts, so Scout runs it in spawned worker processes, as a real scan
-    # does: the scanners and the mock model must reach them (the 20 Nov pilot died there).
+    # does: the scanners and the mock model must reach them.
     monkeypatch.setenv(rc.MOCK_YES_WHEN, "READ BACK from a results file&&speedup=1.500x")
     runs = tmp_path / "runs"
     run.main(

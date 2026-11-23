@@ -263,7 +263,7 @@ def test_mixed_replays_with_inference_are_refused() -> None:
 
     assert dataset_setting(ds(SETTING, SETTING)) == SETTING
     assert dataset_setting(ds("cuda_kernel", "cuda_kernel")) == "cuda_kernel"
-    # Every setting but CUDA has a model server and its own sandbox (D-210 added the last one).
+    # Every setting but CUDA has a model server and its own sandbox.
     for other in (SETTING, "utility_finetuning", "safety_finetuning"):
         with pytest.raises(ValueError, match="on their own"):
             dataset_setting(ds("cuda_kernel", other))

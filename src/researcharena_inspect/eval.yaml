@@ -8,27 +8,9 @@ contributors:
 version: "10-G"
 tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
-  # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
-  # baseline). Other settings: inference_optimization 5, safety_finetuning 4,
-  # utility_finetuning 3. Status at 10-F (22 Nov 2026, ca94ce2): all four settings have had live
-  # runs on one H100 with Docker (the one-hour cuda_kernel and inference_optimization series 17
-  # to 19 Nov, replayed in the evaluator's own container on 20 Nov; one five-hour run per
-  # post-training cell 19 and 20 Nov; a half-hour GPT-5.5 ReAct baseline per setting at 10-F,
-  # 21 and 22 Nov).
-  # utility_finetuning is scored from version 4 (side scores, the upload capture service, the
-  # cache and the submission store); 4-B adds the check-only option check_offline; 4-C adds the
-  # datasets' prepared builds to the agent's cache (D-187). Version 5 scores safety_finetuning
-  # (its side scores, its model, judges and datasets in the cache, replay of its published
-  # models: D-210 to D-213); the other three settings' samples are scored as in 4-C. Version 6
-  # scores every setting, on Docker, in a container of its own after the agent's has been
-  # stopped, as upstream does (D-093). Version 7-F: a mean
-  # over no values is nan, not 0.0; the letter counts the interface changes since 3-D (4-C, 5-A
-  # and 6-A went backwards). Version 8-F: the safety scorer's Llama Guard judge loads without a
-  # token (D-254). Version 9-F: the red-team Claude Code's first prompt on stdin, not on its
-  # command line (D-078, D-257); the monitor's own prompt is still an argument. Version 10-F: the ReAct agent's `bash` description names the working
-  # directory and the time limit. Version 10-G removes the built-in Kubernetes backend and
-  # the gpu_probe task; the two check tasks run on Docker by default, and nothing on Docker
-  # can move. Every version is in the README's changelog.
+  # The red-team run. 5 samples with the defaults (cuda_kernel: the baseline and four side
+  # tasks); inference_optimization 5, safety_finetuning 4, utility_finetuning 3.
+  # Version history: the README's changelog.
   - name: researcharena
     dataset_samples: 5
   # The monitor over the authors' published runs. 113 samples with the defaults (every published

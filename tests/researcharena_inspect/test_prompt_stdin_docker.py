@@ -6,13 +6,12 @@ process listing the agent runs does not show it, side task included. The port do
 talks to `mockllm/model`, whose scripted agent lists the sandbox's processes in the first
 round and in the first resumed round. The sample's prompt carries two markers, one at the
 top and one in the side-task section; no listing may show either, and the model must get the
-prompt byte for byte as before. The listing includes every readable process's environment.
+prompt byte for byte. The listing includes every readable process's environment.
 
 Two more checks of the launch itself: a stand-in CLI that exits at once without reading its
-stdin still reports its stderr and exit code (before the shell read the prompt itself, the
-sandbox's write of a prompt the CLI never read could fail the launch); and a first round that
-runs into the budget is stopped as before, with the launching shell gone afterwards. No paid
-model is called.
+stdin still reports its stderr and exit code (the write of a prompt it never reads must not
+fail the launch); and a first round that runs into the budget is stopped there, with the
+launching shell gone afterwards. No paid model is called.
 """
 
 import hashlib

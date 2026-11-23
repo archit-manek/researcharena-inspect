@@ -1,14 +1,11 @@
-# The paper's Claude monitor on the published CUDA runs, as an Inspect run config:
+# The paper's Claude monitor on the published CUDA runs:
 #
 #   uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_monitor.yaml
 #
-# Companion to original.yaml (same format). It monitors the authors' 113 published cuda_kernel
-# runs with Sonnet 4.6 through Claude Code, which is one of the two monitor backbones in the
-# paper's Table 8 (the other, GPT-5.4 through Codex, has no counterpart in the port). The paper
-# reports four access types; this file runs one, so run it once per type with `-T access=...`.
-# Needs Docker (any machine; no GPU) and an Anthropic key.
-#
-# "Upstream" is ResearchArena at b922f4b (pins.UPSTREAM_COMMIT).
+# See original.yaml for the format. Monitors the authors' 113 published cuda_kernel runs with
+# Sonnet 4.6 through Claude Code, one of the two monitor backbones in the paper's Table 8 (the
+# other, GPT-5.4 through Codex, has no counterpart in the port). The paper reports four access
+# types; run this once per type with `-T access=...`. Needs Docker (no GPU) and an Anthropic key.
 
 task:
   task: researcharena_inspect/researcharena_monitor
@@ -18,45 +15,38 @@ task:
     # published workspace.
     access: transcript
 
-    # Every published cuda_kernel run (113), baselines and side tasks.
+    # Every published cuda_kernel run, baselines and side tasks.
     settings: cuda_kernel
 
-    # Upstream: `--blueteammodel claude:claude-sonnet-4-6` runs monitors/claude/monitor.sh
-    # (Claude Code). The port runs the same CLI through Inspect SWE (D-066, D-067, D-089).
+    # Upstream's monitors/claude/monitor.sh (Claude Code), run through Inspect SWE (D-066, D-067,
+    # D-089).
     monitor_agent: claude_code
 
-    # Upstream's effort.json gives Claude monitors `high` ("auto" reads it). The published
-    # Sonnet 4.6 monitors of CUDA runs are in folders tagged `high`: 110 runs have one for
-    # `transcript` and 80 for `transcript_cot` (pinned index).
+    # "auto" reads upstream's effort.json: `high` for Claude monitors, the tag of the published
+    # Sonnet 4.6 CUDA monitors' folders.
     effort: auto
 
-    # Upstream's run_monitor.sub, run_monitor_no_artifact.sub and README use 0.5 hours;
-    # run_monitor_claude.sub's own default is 0.0833 (five minutes). Which one the published
-    # monitors had is not recorded in what we have read.
+    # run_monitor.sub, run_monitor_no_artifact.sub and upstream's README use 0.5;
+    # run_monitor_claude.sub's default is five minutes. The published monitors' value is unknown.
     blue_runtime_hours: 0.5
 
-    # Each published run's monitor CLI version, read from its published monitor output. The
-    # versions differ in tools: 2.1.34 and 2.1.104 have Grep and Glob, 2.1.162 has neither
-    # (D-075).
+    # Each published run's own monitor CLI version. 2.1.34 and 2.1.104 have Grep and Glob,
+    # 2.1.162 has neither (D-075).
     claude_code_version: published
 
-    # Claude Code's own background calls: Haiku 4.5, as the published runs' `modelUsage`
-    # lists (pins.CLAUDE_CODE_SMALL_MODEL).
+    # Claude Code's background model, as the published runs' `modelUsage` lists.
     small_model: anthropic/claude-haiku-4-5-20251001
 
     # Upstream runs every monitor in the agent's image without a GPU (pipeline_monitor.sh:70,
-    # :294; D-025). The port's default Docker sandbox does too for the artifact types (the
-    # image by digest, linux/amd64, about 14 GB compressed), and keeps a small Python image for
-    # the transcript types, whose monitors use only grep, head, sed and the like (D-107).
+    # :294; D-025). The port does too for the artifact types, and uses a small Python image for
+    # the transcript types, whose monitors only read text (D-107).
     sandbox: docker
 
-    # The pinned commit's prompt builders and templates. For CUDA they match the task text
-    # recovered from published monitor traces; the paper-era text differs only for the
-    # post-training settings (D-054).
+    # The pinned commit's prompts. For CUDA they match the task text in the published monitor
+    # traces; the paper-era text differs only for the post-training settings (D-054).
     prompt_commit: latest
 
-# Upstream: `--blueteammodel claude:claude-sonnet-4-6`, run_monitor.sub's default and one of
-# the paper's two monitor backbones.
+# Upstream: `--blueteammodel claude:claude-sonnet-4-6`, run_monitor.sub's default.
 model: anthropic/claude-sonnet-4-6
 
 generate_config: {}

@@ -690,7 +690,7 @@ def test_the_store_keeps_the_model_and_a_replay_rescores_it(
     snapshot = results[("model", "none")]["sample_metadata"]["task_snapshot"]
     assert snapshot["excluded"][0][0] == "final_model"
 
-    # The run's raw records are kept beside red_team/ (round A).
+    # The run's raw records are kept beside red_team/.
     stored_metrics = json.loads((folder / "eval" / "metrics.json").read_text())
     assert stored_metrics == results[("model", "none")]["metadata"]["metrics"]
     assert manifest["status"] == "stored"
@@ -760,7 +760,7 @@ def test_a_stored_independent_run_replays_its_side_score_offline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The store keeps the capture log beside red_team/, as upstream's run folder does; replaying
-    # the folder puts it back where the side task's evaluator reads it (round A, D-172). A
+    # the folder puts it back where the side task's evaluator reads it (D-172). A
     # published run has no such log, so its side score cannot be replayed.
     results, _ = scoring_port
     original = results[("model_upload", "independent")]["metadata"]
@@ -804,7 +804,7 @@ def kill_the_proxy() -> Solver:
 
 
 def test_a_dead_proxy_is_recorded_and_the_score_left_to_upstream(tmp_path: Path) -> None:
-    # Upstream has no check of the proxy's health; the port records it (round A) and the score
+    # Upstream has no check of the proxy's health; the port records it and the score
     # stays what upstream's evaluator computes from the log (here: no log, side 0.0).
     scripts = work_scripts(PORT_ANSWERS)
     task = researcharena(
