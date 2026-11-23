@@ -2,7 +2,8 @@
 
 Upstream has no ReAct agent. This one gets what Claude Code gets, as far as Inspect's tools
 allow: the same prompts and loop, the same effort, `bash` and `text_editor` for Bash, Read,
-Write and Edit (no web tools, no subagents), the agent's user, environment and workspace.
+Write and Edit (no subagents; no web tools, which need a search provider), the agent's user,
+environment and workspace.
 `bash`'s description adds what Claude Code's model is told: where commands start, absolute
 paths for the editor, and the one-hour limit. Unlike Claude Code's Bash tool, each command
 starts a new shell and takes no `timeout`. `submit=False` ends a round when the model answers without a tool
