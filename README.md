@@ -4,7 +4,7 @@ An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://resea
 
 **Reference setup:** the four-setting evaluation is run and evidenced on Docker with one NVIDIA H100, the port's built-in sandbox. Another Inspect sandbox can be given with `sandbox` and `sandbox_config`; without an `evaluator` service the scorer then runs in the agent's own container instead of a separate one.
 
-New to the benchmark or to this code? Start with the guide, [docs/guide.html](docs/guide.html): the port on one page, a thirty-minute reading order, then one run stage by stage, the four settings, the monitor, the evidence, the differences from the original and what is not shown, each linked to the lines it describes. It is a single HTML file; open it in a browser after cloning (GitHub shows its source, not the page). It was updated on 22 Nov 2026 at version 10-F and its text edited for 10-G on 23 Nov; its links still point at commit `ca94ce2`.
+New to the benchmark or to this code? Start with the short review guide, [docs/REVIEW-GUIDE.md](docs/REVIEW-GUIDE.md).
 
 The eval's documentation is in [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md). For a review, read it in this order:
 
@@ -64,7 +64,7 @@ src/researcharena_inspect/        the eval
   pins.py, upstream.py, published.py   pinned versions, the upstream checkout, the published runs
   eval.yaml, README.md            the eval's metadata and documentation
 tests/researcharena_inspect/      its tests
-docs/guide.html                   a guide for reviewers (open in a browser)
+docs/REVIEW-GUIDE.md              a short guide for reviewers
 agent_artefacts/                  the validity report, the review summary, and the trajectory analysis (Scout scanners, runner, results, ..._ANALYSIS.md)
 NOTICE                            attribution for the code adapted from ResearchArena (MIT)
 ```
