@@ -6,6 +6,8 @@ An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://resea
 
 The eval's documentation, written for a reviewer, is [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md): what the port is and what "the original" means, how to run it, how a sample is scored, what has been verified, the evaluation report, one line per deviation from upstream that can move a score or what a monitor sees, and the main limitations. Three appendices beside it hold the detail: [EVIDENCE.md](src/researcharena_inspect/EVIDENCE.md), everything measured (the full verification table, the full evaluation report and the log behind each result); [DEVIATIONS.md](src/researcharena_inspect/DEVIATIONS.md), everything that differs from upstream (the full deviations table and known limitations); and [DESIGN.md](src/researcharena_inspect/DESIGN.md), how the port works, in full (every run command, the parameters, a sample and its scoring, the changelog in full).
 
+For a guided, interactive tour of the same material: [the walkthrough](https://claude.ai/artifact/GEiMd4A1nJw7h8FgweHdT1).
+
 Where things stand (version 10-G, 23 Nov 2026; every result was produced at 10-F or earlier, and 10-G only removes the built-in Kubernetes backend and the Hawk job files):
 
 - All four settings and all 13 of upstream's side tasks are ported, and the monitor task builds for all four.
