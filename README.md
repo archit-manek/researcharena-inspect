@@ -24,7 +24,7 @@ uv sync
 uv run --frozen pytest --runslow -q "tests/researcharena_inspect/test_monitor_task.py::test_monitor_task_end_to_end_with_mockllm[transcript]"
 ```
 
-It needs Docker and, on a fresh checkout, network access to fetch the pinned upstream checkout, the published run and a small Python image. No API key and no GPU. On 22 Nov 2026, with those already cached, it passed in 15 seconds.
+It needs Docker and, on a fresh checkout, network access to fetch the pinned upstream checkout, the published run and a small Python image. No API key and no GPU. On 22 Nov 2026, with those already cached, it passed in 13 seconds.
 
 The same run with a real model costs money. Put `INSPECT_EVAL_MODEL` and your API keys in a `.env` file (it is git-ignored) to avoid passing `--model` each time, then:
 
@@ -34,7 +34,7 @@ uv run inspect eval researcharena_inspect/researcharena_monitor --model anthropi
 uv run inspect view
 ```
 
-That command runs the monitor on the same published CUDA run (about $0.60) and needs Docker but no GPU. The red-team task (`researcharena_inspect/researcharena`) needs one NVIDIA GPU; see [How to run it](src/researcharena_inspect/README.md#how-to-run-it).
+That command runs the monitor on the same published CUDA run ($0.66 a call on average over 190 calls) and needs Docker but no GPU. The red-team task (`researcharena_inspect/researcharena`) needs one NVIDIA GPU; see [How to run it](src/researcharena_inspect/README.md#how-to-run-it).
 
 The dev dependencies include the `anthropic` and `openai` SDKs. Inspect needs one package per model provider, so add the package for any other provider with `uv add --dev <package>`; Inspect's error message names the package when it is missing.
 
