@@ -48,7 +48,6 @@ include = ["researcharena_inspect*"] # examples/ stays out of the wheel
 [tool.setuptools.package-data]
 "*" = [
     "eval.yaml",
-    "gpu_probe_values.yaml",
     "run_configs/*.yaml", # `inspect eval --run-config` files (original.yaml)
     "data/*.json.gz",
     # environment/: the agent's sandbox configs and the Dockerfile they were built from
@@ -73,7 +72,7 @@ preset = "multi-eval"
 # The GPU sandbox check is `environment_check` (kind: maintenance), which builds the kernels and
 # runs upstream's evaluate.py in the pinned image. It predates the `<eval>_sandbox_check` name
 # the rule looks for, and a fixture workspace with a known verdict is not settled while the
-# untouched kernels fault on the L4 (ledger D-037).
+# untouched kernels fault on the H100 (ledger D-037).
 "src/researcharena_inspect/eval.yaml" = ["gpu_sandbox_check"]
 # Each task lives beside the code it runs (AGENTS.md, "Layout") and __init__.py exports all of
 # them; there is no researcharena_inspect.py or tasks.py since the template's placeholder task
@@ -82,7 +81,6 @@ preset = "multi-eval"
 "src/researcharena_inspect/monitor/task.py" = ["main_file"]
 "src/researcharena_inspect/environment/check.py" = ["main_file"]
 "src/researcharena_inspect/scoring/crash_check.py" = ["main_file"]
-"src/researcharena_inspect/gpu_probe.py" = ["main_file"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

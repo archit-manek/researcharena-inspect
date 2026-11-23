@@ -1,8 +1,8 @@
 """Part D: which shipped CUDA kernel faults on the untouched baseline workspace, and how often.
 
-On Hawk's L4, upstream's `evaluate.py` on the untouched staged baseline built the four shipped
-kernels and then failed in the agent benchmark with `CUDA error: an illegal memory access was
-encountered` (work package 2, one run). This task records upstream's behaviour; it changes no
+On the H100, upstream's `evaluate.py` on the untouched staged baseline builds the four shipped
+kernels and then fails in the agent benchmark with `CUDA error: an illegal memory access was
+encountered` (`environment_check`, 17 Nov 2026). This task records upstream's behaviour; it changes no
 upstream file and fixes nothing. Two samples, each in its own sandbox:
 
 - `plain-repeats`: the baseline workspace staged as the pipeline stages it, then the pipeline's

@@ -14,7 +14,7 @@ tasks:
   # runs on one H100 with Docker (the one-hour cuda_kernel and inference_optimization series 17
   # to 19 Nov, replayed in the evaluator's own container on 20 Nov; one five-hour run per
   # post-training cell 19 and 20 Nov; a half-hour GPT-5.5 ReAct baseline per setting at 10-F,
-  # 21 and 22 Nov). Kubernetes (Hawk) has run cuda_kernel only, on an L4, at 1-A.
+  # 21 and 22 Nov).
   # utility_finetuning is scored from version 4 (side scores, the upload capture service, the
   # cache and the submission store); 4-B adds the check-only option check_offline; 4-C adds the
   # datasets' prepared builds to the agent's cache (D-187). Version 5 scores safety_finetuning
@@ -34,8 +34,7 @@ tasks:
   - name: researcharena_monitor
     dataset_samples: 113
   # Checks of the environment on a GPU, without an agent or a model call. Their scores describe
-  # the sandbox, not a model. gpu_probe (nvidia-smi only, in a plain CUDA image) is left out:
-  # environment_check runs the same check inside the eval's own image and does more.
+  # the sandbox, not a model.
   - name: environment_check
     dataset_samples: 1
     kind: maintenance

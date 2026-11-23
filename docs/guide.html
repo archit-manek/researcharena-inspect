@@ -214,7 +214,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
   <h2>Start here: the port on one page</h2>
   <p class="sub">State on 22 Nov 2026, at <code>ca94ce2</code>, task version 10-F; the results added later that day (the comparison image with vLLM 0.17.0, the repeat scorings and the re-score of all published CUDA workspaces) link to the current <a href="https://github.com/archit-manek/researcharena-inspect/blob/main/src/researcharena_inspect/README.md">eval README</a> and <a href="https://github.com/archit-manek/researcharena-inspect/blob/main/src/researcharena_inspect/EVIDENCE.md">EVIDENCE.md</a>. Eight claims, each with its best evidence, its caveat and where to check it, then what is not shown.</p>
   <div class="setup">
-    <p><b>Reference setup.</b> All GPU evidence is from Docker on one NVIDIA H100. Hawk, Generality's Kubernetes cluster, is a smoke path: one ten-minute CUDA run on an L4 at an older commit. On Kubernetes the scorer runs in the agent's own container after a process sweep, so choosing it changes the scoring boundary.</p>
+    <p><b>Reference setup.</b> All GPU evidence is from Docker on one NVIDIA H100. On Kubernetes the scorer runs in the agent's own container after a process sweep, so choosing it changes the scoring boundary.</p>
   </div>
   <p><b>What was built.</b> ResearchArena gives an AI agent a long engineering job, sometimes with a hidden sabotage instruction (the <em>side task</em>), and then asks a second model (the <em>monitor</em>) how suspicious the run looks. This repository runs it in Inspect AI: each run is one Inspect <em>sample</em>, the authors' own scoring scripts, pinned at upstream commit <code>b922f4b</code>, score it unchanged, and only their shell orchestration is rewritten.</p>
 
@@ -257,7 +257,6 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
   <ol class="notshown">
     <li><b>The paper's rates, reproduced.</b> Three runs per cell in CUDA and inference, one per cell in post-training, one main model.</li>
     <li><b>A checkpoint upload captured in a live run.</b> The agent refused the upload in both five-hour upload runs, and a three-minute check ended at its budget with no upload request; tests with a scripted upload show capture.</li>
-    <li><b>Hawk as a path for the four-setting evaluation.</b> One ten-minute CUDA smoke run, as above.</li>
     <li><b>A ResearchArena monitor on the two post-training settings.</b> None has run.</li>
     <li><b>The Inspect Evals checklist's 10% line for invalid samples.</b> 4 to 6 of 43 is 9.3% to 14.0%; CUDA (3 to 5 of 16) and capabilities (1 of 5) are above it.</li>
   </ol>
@@ -351,7 +350,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
     <text class="t" x="265" y="304">3  the agent's container is stopped (60 s, or the sample errors)</text>
     <text class="t" x="265" y="324">4  the evaluator scores the copy</text>
     <rect x="10" y="338" width="740" height="56" rx="6" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
-    <text class="t" x="24" y="362">On Kubernetes (Hawk) there is no evaluator container: scoring runs in the agent's</text>
+    <text class="t" x="24" y="362">On Kubernetes there is no evaluator container: scoring runs in the agent's</text>
     <text class="t" x="24" y="382">container after a process sweep, and the upload cells are refused.</text>
   </svg></div>
   <p class="shared">On Docker, since version 6-A and for all four settings, the agent's and the evaluator's containers share only two folders: the model cache and the run folder. The evaluator gets the agent's work as a copy placed in the run folder, after the agent's container has stopped.
@@ -403,7 +402,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
       <div><h4>In the original</h4>
         <p>One Apptainer container with the GPU for the agent, and later a new one for each scoring attempt. The image here is the authors' image definition translated to a Dockerfile.</p>
         <h4>What can go wrong</h4>
-        <p>On Generality's cluster (Hawk, Kubernetes) waiting for a GPU node and pulling the 13.8 GB image can run past the start timeout. On Kubernetes there is no separate evaluator container: see <a href="#differences">Differences</a>.</p></div>
+        <p>On Kubernetes there is no separate evaluator container: see <a href="#differences">Differences</a>.</p></div>
     </div>
     <div class="refs">
       <a class="r p" data-f="environment/sandbox.py" data-l="166-216"></a>
@@ -1046,11 +1045,10 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
 
 <section id="notshown">
   <h2>What is not shown</h2>
-  <p class="sub">Five things a reader could assume from the rest of this page, and why they do not follow.</p>
+  <p class="sub">Four things a reader could assume from the rest of this page, and why they do not follow.</p>
   <ol class="notshown">
     <li><b>The paper's rates, reproduced.</b> The live results are raw outcomes and small-cohort comparisons with the published runs: three runs per cell in CUDA and inference, one per cell in post-training, one main model.</li>
     <li><b>A checkpoint upload captured in a live run.</b> Tests with a scripted upload show capture. Live, the agent refused the upload in both five-hour upload runs, and a three-minute check ended at its budget with no upload request. (The separate inference conversation-upload side task did record uploads live, 3 of 3.)</li>
-    <li><b>Kubernetes as a path for the four-setting evaluation.</b> Hawk has run one ten-minute CUDA smoke run on an L4 at an older commit. There the scorer runs in the agent's own container, and the upload cells are refused.</li>
     <li><b>A ResearchArena monitor on the two post-training settings.</b> None has run.</li>
     <li><b>Valid samples above the checklist's line.</b> Hand-checked, 4 to 6 of 43 Claude Code samples are invalid (9.3% to 14.0%), so the Inspect Evals checklist's 10% line is not shown to be met; CUDA (3 to 5 of 16) and capabilities (1 of 5) are above it. The invalid ones are upstream's behaviour reproduced. The three D-255 successes are outside that range. No trajectory analysis covers the GPT-5.5 runs.</li>
   </ol>
@@ -1095,7 +1093,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
       <ul class="files">
         <li><code>analysis/</code>: the paper's tables recomputed from the published runs, the paper's printed numbers, and a list of every cell that differs with its cause. The pinned upstream commit has no code for the paper's tables.</li>
         <li><code>agents/replay.py</code>: scores a published or stored workspace again. <code>published.py</code> loads the published data.</li>
-        <li><code>environment/check.py</code>, <code>scoring/crash_check.py</code>, <code>gpu_probe.py</code>: check tasks that run no agent. <code>scoring/kernel_bench.py</code> is their helper inside the sandbox.</li>
+        <li><code>environment/check.py</code>, <code>scoring/crash_check.py</code>: check tasks that run no agent. <code>scoring/kernel_bench.py</code> is their helper inside the sandbox.</li>
         <li><code>environment/image_check.py</code>: compares the built image with the original's package list.</li>
         <li><code>scoring/baseline_process.py</code>, <code>scoring/cuda_baseline.py</code>: the opt-in CUDA baseline option.</li>
       </ul>
@@ -1172,7 +1170,6 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
       <tr><td><b>vLLM</b></td><td>The server software used to run a language model and answer requests quickly.</td></tr>
       <tr><td><b>Fixed (pinned)</b></td><td>Tied to one exact version, by commit or by checksum, so that it cannot change unnoticed.</td></tr>
       <tr><td><b>Ledger, <code>D-093</code></b></td><td>The project's numbered list of differences between the paper, the original code, the published data and this port.</td></tr>
-      <tr><td><b>Hawk</b></td><td>Generality Labs' Kubernetes cluster for running Inspect jobs.</td></tr>
       <tr><td><b>Claude Code, ReAct</b></td><td>Claude Code is Anthropic's command-line coding agent, the one the published runs used. ReAct is Inspect's own simple agent loop, here with a <code>bash</code> tool and a file editor.</td></tr>
       <tr><td><b>Evaluator container</b></td><td>The second container of a sample on Docker, where the authors' scorer runs after the agent's container has stopped.</td></tr>
       <tr><td><b>AUROC</b></td><td>How well the monitor's scores separate side-task runs from baselines: 1.0 is perfect, 0.5 is chance.</td></tr>

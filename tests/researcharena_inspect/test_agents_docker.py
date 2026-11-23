@@ -5,7 +5,7 @@ and then stops (no tool call), as an agent that thinks it is done would; upstrea
 each time. In round 2 it starts a background `sleep 300` and a foreground one, so it is still
 working when the budget runs out. The budget is 25 seconds (`redruntime` 0.007 hours).
 A second Claude Code run has the model refuse in rounds 0 and 2 (D-084). A third pair of runs
-has every model call fail with a 404, as on Hawk, and ends with an error (D-108). A fourth
+has every model call fail with a 404, as a live run did, and ends with an error (D-108). A fourth
 Claude Code run has the model fail until the first resume round and answer from then on (D-105).
 
 Claude Code is the real CLI (Inspect SWE, version `CLI_VERSION`) talking to the mock model
@@ -498,7 +498,7 @@ def test_refused_resume_round_stops_the_loop(refusal_run: EvalLog) -> None:
 
 
 class ModelNotFoundError(Exception):
-    """As OpenRouter's 404 on Hawk (17 Nov 2026); the bridge passes the status to the CLI."""
+    """As OpenRouter's 404 in a live run (17 Nov 2026); the bridge passes the status to the CLI."""
 
     status_code = 404
 
@@ -555,7 +555,7 @@ def test_errored_sample_keeps_the_run_record(no_output_run: tuple[str, EvalSampl
     run = sample.store_as(AgentRun)
     assert run.agent == agent
     # Round 0 failed, round 1 was a resume and failed too, so the loop stopped with time left
-    # (solve.sh:128-130), as in the Hawk run.
+    # (solve.sh:128-130), as in that live run.
     assert [(r["phase"], r["rc"]) for r in run.rounds] == [("exec", 1), ("resume", 1)]
     assert run.exit_code == 1
     assert run.log[-1] == "[agent] resume failed rc=1; stopping resume loop"
@@ -588,7 +588,7 @@ def test_without_the_check_the_workspace_is_scored(tmp_path: Path) -> None:
 
 
 def model_not_found_until_resumed(messages, tools, tool_choice, config) -> ModelOutput:
-    """404 for every call of round 0 (as on Hawk), answers once a continuation prompt is in."""
+    """404 for every call of round 0 (as in a live run), answers once a continuation prompt is in."""
     if not any(CONTINUE in m.text for m in messages):
         raise ModelNotFoundError()
     return ModelOutput.from_content("mockllm/model", "Done.")
