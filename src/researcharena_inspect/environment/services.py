@@ -6,8 +6,8 @@ side task's, starts an upload-capture proxy on the host's loopback and gives the
 `http_proxy` variables. The agent shares the host's network namespace but not its processes or
 files, so the port runs the hooks in `SERVICE_NAME`, a container in the agent container's
 network namespace (`sandbox.with_hook_service`). The shell that sourced them stays alive, so
-their `EXIT` traps fire when the service is removed with the sample, as upstream's fire when
-the pipeline exits.
+their `EXIT` traps do not fire; the proxy dies with the service when the sample ends, as
+upstream's does when the pipeline exits.
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
@@ -56,7 +56,7 @@ LOG_END_BYTES: Final = 16 * 1024
 LOOPBACK: Final = ("127.0.0.1", "::1")
 
 # Sourced under `pipeline_redteam.sh`'s `set -euo pipefail` (`:18`). After the hooks return,
-# the shell waits, so their `trap ... EXIT` cleanups run only when the service is removed.
+# the shell waits, so their `trap ... EXIT` cleanups do not run; removing the service ends the proxy.
 _RUNNER = """set -euo pipefail
 out="$1"; shift
 AGENT_EXTRA_ENV_ARGS=()
