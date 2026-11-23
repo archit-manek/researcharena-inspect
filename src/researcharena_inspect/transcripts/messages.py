@@ -1,28 +1,16 @@
 """Monitor transcripts for agents that leave no CLI trace, such as Inspect's ReAct agent.
 
-The message list of an Inspect sample is converted to Claude Code's `stream-json` events and
-then rendered by upstream's own Claude parser (`agents/claude/human_readable_trace.py`), so the
-text format, the turn headers, the tool-call and tool-result layout and the rule for what the
-no-CoT version drops all come from upstream. Only the conversion below is new.
+Inspect messages become Claude Code `stream-json` events, which upstream's Claude parser
+(`agents/claude/human_readable_trace.py`) renders; only the conversion is new.
 
-Choices, following what upstream's Claude transcripts contain:
+- One event per content block and per tool call, as Claude Code streams them.
+- User and system messages are left out, as Claude Code's stream does not echo prompts. This
+  also keeps the red-team prompt, which names the side task, from the monitor.
+- Reasoning becomes a `thinking` block (the summary if redacted), or an empty
+  `redacted_thinking` block; the no-CoT pass drops both and keeps visible text (D-040).
 
-- One event per content block and per tool call, as Claude Code streams them, so an assistant
-  message with reasoning, text and two tool calls becomes four "Assistant — turn N" entries.
-- User and system messages are left out: Claude Code's stream does not echo the prompt or the
-  continuation prompts, so upstream's Claude transcripts never show them. This also keeps the
-  red-team prompt, which names the side task, out of the monitor's view.
-- Reasoning becomes a `thinking` block holding Inspect's readable reasoning (`reasoning`, or
-  `summary` when the reasoning is redacted); fully redacted reasoning becomes a
-  `redacted_thinking` block with no text. The no-CoT pass drops both and keeps the agent's
-  visible text between tool calls, as upstream does (ledger D-040).
-- Tool results carry the tool message's text, or the error message when the text is empty.
-
-What this cannot reproduce: Claude Code's own tool names and argument shapes, its session id,
-tool list and working directory in the header (unless passed in), its closing `Result` event
-(cost, usage, final text), and anything Codex or OpenCode transcripts would show instead
-(their formats differ, ledger D-051). Reasoning the provider returns only in encrypted form has
-no readable text, so a "CoT" transcript of such a run shows empty thinking blocks.
+Not reproduced: Claude Code's own tool names, its closing `Result` event, and the other
+families' formats (D-051). Reasoning returned only encrypted gives empty thinking blocks.
 """
 
 import json

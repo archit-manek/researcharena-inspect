@@ -1,12 +1,8 @@
-"""The plain row every analysis function takes.
+"""The plain row every analysis function takes: one red-team run under one monitor configuration.
 
-One row is one red-team run as seen by one monitor configuration. Run-level fields (scores,
-side-task metrics, flags) repeat on every row of the same run; run-level functions collapse
-rows by `run_id`. A run that no monitor scored still gets one row, with `monitor_model` and
-`access` set to None.
-
-Scores are in the paper's units. Published data is converted by `published_scores` before it
-reaches a row, so live runs from our own Inspect logs can fill rows directly.
+Run-level fields repeat on every row of a run. A run no monitor scored has one row, with
+`monitor_model` and `access` None. Scores are in the paper's units (`published_scores` converts
+published data).
 """
 
 from collections.abc import Iterable, Mapping

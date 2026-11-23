@@ -1,20 +1,9 @@
 """The red-team agent's prompts, as the agent CLI receives them upstream.
 
-The path at the pinned commit:
-
-1. `src/pipeline_redteam.sh:255-265` runs `src/prompt_builder.py` and keeps its stdout as
-   `PROMPT=$(...)`, then writes `echo "$PROMPT"` to `prompt.txt` in the agent's home and to
-   the run's `instruction.md`.
-2. `agents/<family>/solve.sh` reads it back (`PROMPT="$(cat prompt.txt)"`) and sends
-   `printf '%s' "$PROMPT"` to the CLI's stdin. Claude Code, Codex and OpenCode all do the
-   same; the family changes the text only through the suffix `prompt_builder.py` adds for
-   `claude` and `opencode` in settings with `resume_agent: true`.
-3. In those settings `solve.sh` then resumes the session until the time budget is spent,
-   each time passing `make_resume_prompt` (see `resume_prompt`) as the CLI's last argument.
-
-`build_prompt` is a line-for-line port of `prompt_builder.build_prompt`; the other
-functions add the shell steps around it. Tests run upstream's own scripts and require
-identical output.
+`src/pipeline_redteam.sh:255-265` writes `prompt_builder.py`'s output to `prompt.txt`, and
+`agents/<family>/solve.sh` sends it to the CLI's stdin. In settings with `resume_agent: true`,
+`solve.sh` then resumes the session with `make_resume_prompt` until the budget is spent.
+`build_prompt` ports `prompt_builder.build_prompt` line for line; tests require identical output.
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
@@ -116,19 +105,10 @@ def build_prompt(
 ) -> str:
     """Port of upstream's `prompt_builder.build_prompt`: the text before the shell sees it.
 
-    Args:
-        setting: setting name, for example "cuda_kernel".
-        side_task: side task name, or "none" for the baseline.
-        task_config: task config name. An unknown or empty name falls back to the first
-            config in `config.json`, as upstream does.
-        redruntime: the red-team budget in hours, exactly as typed on upstream's command line.
-        red_provider: agent family; anything other than "claude" or "opencode" gets no suffix.
-        main_task_only: leave out `side_task.md` and `no_side_task.md` (the monitor's view).
-        upstream: upstream tree to read; defaults to the pinned checkout.
-
-    Raises:
-        FileNotFoundError: the setting has no (or an empty) `instruction.md`.
-        ValueError: a suffix is due and `config.json` lacks a boolean `resume_agent`.
+    `redruntime` is pasted in exactly as typed on upstream's command line. An unknown or empty
+    `task_config` falls back to the first, as upstream does. `main_task_only` leaves out the
+    side-task text (the monitor's view). Raises `FileNotFoundError` without an `instruction.md`,
+    and `ValueError` when a suffix is due and `resume_agent` is not a bool.
     """
     setting_dir = settings_root(upstream) / setting
     config_path = setting_dir / "config.json"
@@ -232,16 +212,9 @@ def agent_prompt(
 ) -> str:
     """The first prompt the red-team agent CLI receives on stdin, byte for byte.
 
-    Args:
-        setting: setting name (see `list_settings`).
-        side_task: side task name, or "none" for the baseline (see `list_side_tasks`).
-        family: agent CLI: "claude", "codex" or "opencode".
-        redruntime: the budget in hours; see `format_hours` for how it is written.
-        task_config: task config name; None means the setting's first (upstream's default).
-        upstream: upstream tree to read; defaults to the pinned checkout.
-
-    Raises:
-        ValueError: unknown setting, side task, family or task config, or a non-numeric budget.
+    `redruntime` is written as `format_hours` writes it; `task_config` None means the setting's
+    first. Raises `ValueError` for an unknown setting, side task, family or task config, or a
+    non-numeric budget.
     """
     hours = format_hours(redruntime)
     _check_agent_run(setting, side_task, family, task_config, upstream)
@@ -270,12 +243,6 @@ def budget_seconds(redruntime: str | int | float) -> int:
 
 
 def resume_prompt(remaining_seconds: int) -> str:
-    """The "continue" prompt `solve.sh` passes when it resumes the session.
-
-    Args:
-        remaining_seconds: seconds left before the deadline when the round starts. Upstream
-            computes it from the container clock and floors it at 0; a round starts only
-            while it is positive.
-    """
+    """The "continue" prompt `solve.sh` passes when it resumes, given the seconds left."""
     remaining = max(0, remaining_seconds)
     return RESUME_PROMPT_FORMAT.format(hours=remaining // 3600, minutes=(remaining % 3600) // 60)

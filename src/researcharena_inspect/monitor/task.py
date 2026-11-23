@@ -1,9 +1,7 @@
-"""The monitor as an Inspect task: one monitor run per run bundle, for one access type.
+"""The monitor task: one sample per red-team run, for one access type.
 
-Port of `src/pipeline_monitor.sh` (phases 5 and 6) at the pinned commit. Each sample is one
-red-team run. The monitor's files are staged in its sandbox as upstream stages them, the monitor
-agent runs in `/home/user/task` with upstream's prompt and time limit, and the scorer reads
-`judgement.json` back and scores the sample with the suspicion value (-1: no usable judgement).
+Port of `src/pipeline_monitor.sh`, phases 5 and 6. The score is the suspicion read back from
+`judgement.json` (-1: no usable judgement).
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
@@ -58,7 +56,6 @@ from researcharena_inspect.published import fetch_run_file
 from researcharena_inspect.scoring.epochs import scored_epochs_mean
 from researcharena_inspect.transcripts import messages_to_stream_events
 
-# eval.yaml sits in the package folder, one above this module.
 EVAL_VERSION = load_eval_version(Path(__file__).parent.parent / "eval.yaml")
 logger = logging.getLogger(__name__)
 
@@ -156,29 +153,19 @@ def bundle_to_sample(bundle: RunBundle, access: str, prompt_commit: str = "lates
 def monitor_sandbox(
     sandbox_type: str, sandbox_config: str | None, access: str = "transcript"
 ) -> SandboxEnvironmentSpec:
-    """The monitor's sandbox: a given config, or upstream's launch as far as Docker allows.
+    """The monitor's sandbox: `sandbox_config` if given, else upstream's launch as Docker allows.
 
-    Upstream starts every monitor with `apptainer exec -C ... arena.sif`
-    (`pipeline_monitor.sh:292-310`): the agent's image, no `--nv` (no GPU, D-025), no model
-    cache bound in and `-C` dropping the job's `HF_HOME`, the host's network, a writable
-    overlay that is thrown away, the job folder as `/home/user` and the host's `/tmp`
-    (D-030). The defaults here (D-107): the artifact access types get the agent's image,
-    the transcript types a small Python image (`TRANSCRIPT_IMAGE`); neither has a GPU or a
-    model cache, both have an open network (Docker's default bridge) and their own `/tmp`.
-    The monitor runs as root. Another sandbox type without a config is given no config.
-
-    Args:
-        sandbox_type: `docker` or another Inspect sandbox type.
-        sandbox_config: a config file; used as given for every access type.
-        access: the access type, which picks the default image.
+    Upstream runs `apptainer exec -C ... arena.sif` (`pipeline_monitor.sh:292-310`): no GPU
+    (no `--nv`, D-025), no model cache, the host's network and the host's `/tmp` (D-030). The
+    Docker default (D-107) has no GPU, no model cache, an open network and its own `/tmp`, and
+    runs as root. Another sandbox type without a config gets no config.
     """
     with_artifact, _ = ACCESS_TYPES[access]
     if sandbox_config is not None:
         return SandboxEnvironmentSpec(sandbox_type, sandbox_config)
     if sandbox_type != "docker":
         return SandboxEnvironmentSpec(sandbox_type, None)
-    # D-107: transcript monitors keep the small image they were compared with the published
-    # monitors on; artifact monitors get upstream's image, without a GPU as upstream's.
+    # D-107: a small image for the transcript types, the agent's image for the artifact types.
     service = ComposeService(
         image=ARTIFACT_IMAGE if with_artifact else TRANSCRIPT_IMAGE,
         command="tail -f /dev/null",
@@ -218,14 +205,9 @@ def cli_version_in_output(text: str) -> str | None:
 def published_monitor_cli_version(run_id: str, published_dir: str) -> str:
     """The Claude Code version of a published monitor run, from its `monitor_out_sanitized.json`.
 
-    Upstream installs the latest release at each run (`monitors/claude/monitor.sh`), so the
-    published monitors ran on whatever was current: 2.1.34, 2.1.104 and 2.1.162 among the
-    CUDA runs' Sonnet 4.6 monitors. The versions differ in the tools they offer the model
-    (2.1.34 and 2.1.104 have `Grep` and `Glob`; 2.1.162 has neither), ledger D-075.
-
-    Args:
-        run_id: the published run's id in the index.
-        published_dir: the monitor's folder under `blue_team/` (`published_monitor_dir`).
+    Upstream installs the latest release at each run, so published monitors ran on several
+    versions, which offer different tools (D-075). `published_dir` is the monitor's folder
+    under `blue_team/` (`published_monitor_dir`).
     """
     relative = f"blue_team/{published_dir}/monitor_out_sanitized.json"
     try:
@@ -248,14 +230,8 @@ def run_monitor(
 ) -> Solver:
     """Run the monitor agent on the staged files, stopped after upstream's time limit.
 
-    Args:
-        agent: `claude_code` or `react`.
-        effort: the monitor's reasoning effort; `auto` resolves it from upstream's
-            `effort.json` (`high` for Claude monitors), `default` sets none.
-        blue_runtime_hours: upstream's `--blueruntime`; the agent is stopped one minute after.
-        claude_code_version: Claude Code version for Inspect SWE, or `published` for the
-            version the published monitor of the same run, model, effort and access used.
-        small_model: model for Claude Code's own background calls; `None` for the task's model.
+    Arguments as for `researcharena_monitor`. `claude_code_version="published"` takes the version
+    of the published monitor with the same run, model, effort and access.
     """
     if agent not in MONITOR_AGENTS:
         raise ValueError(f"agent must be one of {MONITOR_AGENTS}, got {agent!r}")
@@ -299,15 +275,13 @@ async def _read_judgement(path: str) -> str | None:
 
 
 def monitor_raw_output(messages: list[ChatMessage], agent: str) -> str:
-    """The stand-in for the monitor CLI's stdout (`monitor_out.json`) used to recover a verdict.
+    """The stand-in for the monitor CLI's stdout (`monitor_out.json`), searched for a verdict.
 
-    For Claude Code it is the agent's messages as `stream-json` lines, which is what upstream
-    searched: every string in them is JSON-escaped, so upstream's recovery never finds a verdict
-    in a Claude monitor's output and the port does not either. For ReAct, which has no CLI, it is
-    the plain text of the agent's messages.
+    Claude Code: the messages as `stream-json` lines, whose strings are JSON-escaped, so the
+    search finds no verdict, as upstream's never did in a Claude monitor's output. ReAct: the
+    messages' plain text.
     """
-    # D-067: Inspect SWE does not keep the CLI's stdout, so it is rebuilt from the messages;
-    # a ReAct monitor's verdict printed as plain text can be recovered, a Claude Code one cannot.
+    # D-067: Inspect SWE keeps no CLI stdout, so it is rebuilt from the messages.
     if agent == "claude_code":
         events = messages_to_stream_events(messages)[1:]
         return "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events)

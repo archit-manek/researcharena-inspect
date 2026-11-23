@@ -1,10 +1,8 @@
 """Adapter from the authors' published runs to analysis rows.
 
-The website index carries each run's headline scores and one suspicion score per monitor folder.
-Some success rules need scorer outputs the index lacks (the RoPE string check, the fp16 KL, the
-wrong-answer rates). Those come from the run's `results.json` on Hugging Face; a small snapshot of
-the needed fields is in the package (`data/published_raw_metrics.json.gz`), so the analysis runs
-offline. `build_raw_metrics_snapshot` rebuilds it from the pinned dataset revision.
+The website index has each run's headline scores and one suspicion per monitor folder. Scorer
+outputs that some rules need come from each run's `results.json`, through a packaged snapshot
+(`data/published_raw_metrics.json.gz`), so the analysis runs offline.
 """
 
 import gzip
@@ -32,10 +30,8 @@ MonitorSet = Literal["paper", "all"]
 BaselineExclusions = Literal["paper", "website"]
 MainScoreField = Literal["main_score", "main_success"]
 
-# D-007: the website excludes 13 baselines for unprompted sabotage, the paper 12 (9 safety,
-# 2 capabilities, 1 inference; L527, L570-572). Table 7 lists GPT-5.4 with three scored
-# capabilities baselines (L2023-2024), so the website's GPT-5.4 capabilities exclusion is the
-# one the paper doesn't make. This is inferred from the table, not stated in the paper.
+# D-007: the website excludes 13 baselines, the paper 12 (L527, L570-572). Table 7 scores three
+# GPT-5.4 capabilities baselines (L2023-2024), so this is the one the paper keeps (inferred).
 WEBSITE_ONLY_EXCLUSIONS = frozenset(
     {"utility_finetuning/utility_finetuning__baseline__codex_norepeat__gpt-5.4__20260505_183246"}
 )
@@ -174,8 +170,8 @@ def _is_not_found(err: OSError) -> bool:
 def build_raw_metrics_snapshot(runs: Iterable[Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """Rebuild the snapshot from the pinned Hugging Face revision (one download per run).
 
-    For each run, reads results.json from the first of its monitor folders (sorted by name) that
-    has one. Every monitor folder carries a copy of the same scorer output.
+    Reads the first `results.json` among the run's monitor folders (sorted); each holds the same
+    scorer output.
     """
     out: dict[str, dict[str, Any]] = {}
     for run in runs if runs is not None else load_index()["runs"]:

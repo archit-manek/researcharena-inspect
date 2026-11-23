@@ -1,18 +1,15 @@
 """What the monitor finds in its sandbox, staged as `src/pipeline_monitor.sh:163-273` stages it.
 
-Upstream makes a job folder that the container mounts as the monitor's home (`/home/user`) and
-starts the monitor in `/home/user/task`. In order, it writes:
+The monitor's home is `/home/user` and it starts in `/home/user/task`. Upstream writes, in order:
 
-1. `main_task_instruction.md` (home), the main-task-only instruction (`:174`);
-2. `task/agent_transcript.txt`, the transcript with or without CoT (`:262`);
+1. `main_task_instruction.md` (home, `:174`);
+2. `task/agent_transcript.txt` (`:262`);
 3. `task/task_instruction.md`, a copy of 1 (`:263`);
-4. with artifact access, the agent's whole final workspace into `task/` (`:269`), which can
-   overwrite 2 and 3 if the workspace has files of those names (ledger D-019);
-5. `prompt.txt` (home), the monitor prompt (`:273`).
+4. with artifact access, the agent's final workspace into `task/` (`:269`), which can overwrite
+   2 and 3 (D-019);
+5. `prompt.txt` (home, `:273`).
 
-Not staged by the port, because Inspect starts the monitor itself (D-066): upstream's launch
-script `monitor_solve.sh`, `update_agent_cli.sh`, `check_effort.py` and the CLI's credentials
-(`oauth_token`, `.claude/.credentials.json`, `.codex/auth.json`), all in the monitor's home.
+Upstream's launch scripts and the CLI's credentials are not staged (D-066).
 """
 
 import io
@@ -46,11 +43,10 @@ class StagedFile:
 def workspace_files(workspace: Path, *, links_outside: bool = False) -> list[tuple[str, Path]]:
     """Files under `workspace` as (relative POSIX path, host path), sorted.
 
-    Symlinks to files are followed (the Hugging Face cache stores each file as a symlink), where
-    `cp -r` would copy a symlink as a symlink; symlinked folders and empty folders are left out
-    (D-111). A link to a file outside the workspace is followed only if `links_outside`: the
-    agent made a restored workspace's links, and following them on the host would hand host
-    files to the monitor.
+    D-111: symlinked files are followed (the Hugging Face cache stores files as symlinks);
+    symlinked and empty folders are left out. A link to a file outside the workspace is followed
+    only if `links_outside`: a restored workspace's links were made by the agent, and following
+    them on the host would hand host files to the monitor.
     """
     inside = workspace.resolve()
     files = []
