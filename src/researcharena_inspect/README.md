@@ -26,6 +26,8 @@ Deviations are tagged in the code with their ledger id (`# D-NNN`) and listed [b
 
 Two tasks, two checks with no agent (`environment_check`, `kernel_crash_check`) and the paper's analysis (`analysis/`).
 
+![One run in each of the four settings: prompt, agent, sandbox, scoring and monitor](architecture.png)
+
 | Setting | Main score | Pass line (above) | Side tasks | Published budget | Needs |
 | --- | --- | --- | --- | --- | --- |
 | `cuda_kernel` | TinyLlama-1.1B tokens/s speedup over plain PyTorch | 1.3 | 4 | 1 h | One GPU |
@@ -224,7 +226,7 @@ Notes on the agents, `redruntime`, `effort`, `small_model`, the sandbox, `model_
 
 ## What has been verified, and how
 
-The full table, one row per check with the test or run behind it: [EVIDENCE.md](EVIDENCE.md#what-has-been-verified-and-how). The logs behind the results, 196 of the 199 H100 logs, are on Generality Labs' Hawk, eval-set [`imported-researcharena-in-bh4pq9qvhrizbunj`](https://viewer.hawk.hawk.generalitylabs.ai/eval-set/imported-researcharena-in-bh4pq9qvhrizbunj); [EVIDENCE.md](EVIDENCE.md#the-runs) names the log behind each result.
+The full table, one row per check with the test or run behind it: [EVIDENCE.md](EVIDENCE.md#what-has-been-verified-and-how). The H100 logs, 196 of 199, are on Generality Labs' Hawk, eval-set [`imported-researcharena-in-bh4pq9qvhrizbunj`](https://viewer.hawk.hawk.generalitylabs.ai/eval-set/imported-researcharena-in-bh4pq9qvhrizbunj); the others (the monitor runs and other runs made on my laptop) are in my notes, and I can share them on request. [EVIDENCE.md](EVIDENCE.md#the-runs) names the log behind each result.
 
 | Claim | Headline result |
 | --- | --- |
@@ -342,7 +344,7 @@ The other 43 deviations change how a run is set up or recorded (the containers, 
 
 The ones a reviewer most needs, besides D-093 and D-078 above; all of them, in full: [DEVIATIONS.md](DEVIATIONS.md#known-limitations).
 
-- **Inspect Evals checklist exceptions.** The 10% line on invalid samples is not shown to be met; the evaluation report cannot be regenerated from this repository, since its logs are not in it: they are on Generality Labs' Hawk ([EVIDENCE.md](EVIDENCE.md) maps each table to its logs); the trajectory analysis covers Sonnet 4.6 only; and no positive known-good fixture runs by default on the GPU path, because the untouched starter faults in upstream's scorer.
+- **Inspect Evals checklist exceptions.** The 10% line on invalid samples is not shown to be met; the evaluation report cannot be regenerated from this repository, since its logs are not in it: the H100 logs are on Generality Labs' Hawk and the rest in my notes ([EVIDENCE.md](EVIDENCE.md) maps each table to its logs); the trajectory analysis covers Sonnet 4.6 only; and no positive known-good fixture runs by default on the GPU path, because the untouched starter faults in upstream's scorer.
 - **Upstream's RoPE starter faults on the H100, and so do some agents' kernels** (D-037): a 0.0 from this fault is upstream's score.
 - **Upstream's flaws are kept by default**: a CUDA score can be read from a file the agent wrote (D-001), the baseline is plain PyTorch (D-002), there is no correctness check on the kernels (D-013), and the inference gates are weak (D-139).
 - **`inference_optimization` runs on upstream's vLLM 0.19.1, not the published runs' 0.17.0** (D-133, D-134); see the re-scored published submissions above.
