@@ -24,12 +24,13 @@ score's metadata.
 
 Where (D-093): on Docker, `prepare_evaluation` stops the agent's container once the snapshot is
 on the shared run folder, and from then on everything runs in the evaluator's own container
-(`evaluator_sandbox`); on Kubernetes, in the agent's.
+(`evaluator_sandbox`); with a custom `sandbox` that has no `evaluator` service, in the
+agent's.
 
 `free_gpu_memory` here (D-097): the evaluator runs as the agent's user, so after the agent
 every process of that user in the agent's container is killed, and before each attempt every
-one in the evaluator's (a previous attempt's survivors; on Kubernetes also the agent's
-leftovers), then the scorer waits 5 s, as upstream does. The `nvidia-smi
+one in the evaluator's (a previous attempt's survivors; without an `evaluator` service
+also the agent's leftovers), then the scorer waits 5 s, as upstream does. The `nvidia-smi
 --query-compute-apps` list is not used: inside a container it shows host PIDs or none, so
 killing by it could hit an unrelated process; every process that can hold the GPU here
 belongs to the agent's user or to root (Inspect's own tools).

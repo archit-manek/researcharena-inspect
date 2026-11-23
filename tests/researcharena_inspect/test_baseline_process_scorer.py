@@ -137,7 +137,7 @@ def box(
         "researcharena_inspect.environment.staging.sandbox_env",
         "researcharena_inspect.environment.evaluation.sandbox_env",
     ):
-        # One container, as on Kubernetes: the evaluator's sandbox is the agent's.
+        # One container, as with a custom sandbox: the evaluator's sandbox is the agent's.
         monkeypatch.setattr(target, lambda *name: fake)
     return fake
 
@@ -186,7 +186,7 @@ async def test_off_runs_upstreams_commands_only(monkeypatch: pytest.MonkeyPatch)
         assert result.metadata is not None
         assert METADATA_KEY not in result.metadata
         assert result.reason is None
-        # One container, as on Kubernetes: the agent's scored (D-093).
+        # One container, as with a custom sandbox: the agent's scored (D-093).
         assert result.metadata["evaluator_service"] == "default"
         assert not any(WORK_DIR in c.script or "baseline" in c.cmd for c in fake.calls)
         runs.append([(c.cmd, c.user, c.cwd, c.env) for c in fake.calls])
@@ -229,7 +229,8 @@ async def test_baseline_runs_alone_before_the_first_attempt(
     first = calls[attempts[0]]
     process = calls[baseline]
     assert (process.user, process.cwd, process.env) == (first.user, first.cwd, first.env)
-    # One fake container: the evaluator shares the agent's (Kubernetes' arrangement, D-093).
+    # One fake container: the evaluator shares the agent's (a custom sandbox's arrangement,
+    # D-093).
     shared = (AGENT_USER, SHARED_EVAL_HOME, evaluator_env(home=SHARED_EVAL_HOME))
     assert (process.user, process.cwd, process.env) == shared
     assert "--task-dir /mnt/eval/red_team/task_snapshot" in process.script

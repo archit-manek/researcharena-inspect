@@ -214,7 +214,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
   <h2>Start here: the port on one page</h2>
   <p class="sub">State on 22 Nov 2026, at <code>ca94ce2</code>, task version 10-F; the results added later that day (the comparison image with vLLM 0.17.0, the repeat scorings and the re-score of all published CUDA workspaces) link to the current <a href="https://github.com/archit-manek/researcharena-inspect/blob/main/src/researcharena_inspect/README.md">eval README</a> and <a href="https://github.com/archit-manek/researcharena-inspect/blob/main/src/researcharena_inspect/EVIDENCE.md">EVIDENCE.md</a>. Eight claims, each with its best evidence, its caveat and where to check it, then what is not shown.</p>
   <div class="setup">
-    <p><b>Reference setup.</b> All GPU evidence is from Docker on one NVIDIA H100. On Kubernetes the scorer runs in the agent's own container after a process sweep, so choosing it changes the scoring boundary.</p>
+    <p><b>Reference setup.</b> All GPU evidence is from Docker on one NVIDIA H100, the built-in sandbox. A custom sandbox with no evaluator container scores in the agent's own container after a process sweep, so choosing one changes the scoring boundary.</p>
   </div>
   <p><b>What was built.</b> ResearchArena gives an AI agent a long engineering job, sometimes with a hidden sabotage instruction (the <em>side task</em>), and then asks a second model (the <em>monitor</em>) how suspicious the run looks. This repository runs it in Inspect AI: each run is one Inspect <em>sample</em>, the authors' own scoring scripts, pinned at upstream commit <code>b922f4b</code>, score it unchanged, and only their shell orchestration is rewritten.</p>
 
@@ -310,7 +310,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
 
   <div class="svgwrap"><svg viewBox="0 0 760 400" role="img" aria-labelledby="dg-t dg-d">
     <title id="dg-t">The containers of one sample on Docker</title>
-    <desc id="dg-d">The agent's container and the evaluator's container share only the model cache and the run folder. At the hand-over the agent's processes are killed, the workspace is cleaned and copied to the run folder, the agent's container is stopped, and the evaluator scores the copy. A helper container runs the upload-capture proxy for the upload cells. On Kubernetes there is no evaluator container.</desc>
+    <desc id="dg-d">The agent's container and the evaluator's container share only the model cache and the run folder. At the hand-over the agent's processes are killed, the workspace is cleaned and copied to the run folder, the agent's container is stopped, and the evaluator scores the copy. A helper container runs the upload-capture proxy for the upload cells. A custom sandbox with no evaluator container scores in the agent's.</desc>
     <defs><marker id="dg-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker></defs>
     <rect class="ag" x="10" y="10" width="230" height="190" rx="8"/>
     <text class="tb" x="24" y="38">Agent's container</text>
@@ -350,8 +350,8 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
     <text class="t" x="265" y="304">3  the agent's container is stopped (60 s, or the sample errors)</text>
     <text class="t" x="265" y="324">4  the evaluator scores the copy</text>
     <rect x="10" y="338" width="740" height="56" rx="6" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
-    <text class="t" x="24" y="362">On Kubernetes there is no evaluator container: scoring runs in the agent's</text>
-    <text class="t" x="24" y="382">container after a process sweep, and the upload cells are refused.</text>
+    <text class="t" x="24" y="362">In a custom sandbox with no evaluator container, scoring runs in the agent's</text>
+    <text class="t" x="24" y="382">container after a process sweep.</text>
   </svg></div>
   <p class="shared">On Docker, since version 6-A and for all four settings, the agent's and the evaluator's containers share only two folders: the model cache and the run folder. The evaluator gets the agent's work as a copy placed in the run folder, after the agent's container has stopped.
     <a class="r p" data-f="environment/sandbox.py" data-l="98-130"></a>
@@ -397,12 +397,12 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
     <h3>B. The containers start</h3>
     <div class="grid2">
       <div><h4>What happens</h4>
-        <p>Inspect starts the containers for this sample. In the built-in Docker set-up the agent's container uses the benchmark's image, fixed by its digest, with 8 CPUs, 64 GB of memory, one GPU and an open network. Generality's cluster uses its own limits.</p>
+        <p>Inspect starts the containers for this sample. In the built-in Docker set-up the agent's container uses the benchmark's image, fixed by its digest, with 8 CPUs, 64 GB of memory, one GPU and an open network.</p>
         <p>On Docker a second container of the same image is started for scoring. The two fine-tuning settings add a helper from the same image with no GPU. Docker also gives the three settings whose scoring starts a model server a larger shared-memory area (16 GB), which the server needs.</p></div>
       <div><h4>In the original</h4>
         <p>One Apptainer container with the GPU for the agent, and later a new one for each scoring attempt. The image here is the authors' image definition translated to a Dockerfile.</p>
         <h4>What can go wrong</h4>
-        <p>On Kubernetes there is no separate evaluator container: see <a href="#differences">Differences</a>.</p></div>
+        <p>A custom sandbox with no evaluator container scores in the agent's: see <a href="#differences">Differences</a>.</p></div>
     </div>
     <div class="refs">
       <a class="r p" data-f="environment/sandbox.py" data-l="166-216"></a>
@@ -493,7 +493,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
         <p>The agent's container has exited by this point. The cleaning and the copy are done on the cluster host, and each scoring attempt is a new container with its own home that sees the run folder and the model cache.</p>
         <h4>What can go wrong</h4>
         <p>The cleaning and the copy still run inside the agent's container, because Inspect gives no host shell. A process that survived the sweep could change the copy in those seconds. On Docker the scorer's own files are made only after the agent's container has stopped.</p>
-        <p>On Generality's cluster, and in a custom set-up with one container, there is no second container: scoring runs in the agent's container after the sweep.</p></div>
+        <p>In a custom set-up with one container there is no second container: scoring runs in the agent's container after the sweep.</p></div>
     </div>
     <div class="refs">
       <a class="r p" data-f="environment/evaluation.py" data-l="22-30"></a>
@@ -969,7 +969,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
   <h3>Where the port differs, and why</h3>
   <details open><summary><span class="tag">D-093</span>Where scoring runs</summary><div>
     <p><b>Original:</b> a fresh container for each scoring attempt, after the agent's has exited, sharing only the run folder and the model cache.</p>
-    <p><b>Port:</b> in the built-in Docker set-up, since version 6-A and for all four settings, a separate evaluator container is started in advance and the agent's container is stopped before scoring. On Kubernetes, and with a custom sandbox that has no evaluator container, scoring still runs in the agent's container after its processes are swept. The current cluster set-up cannot give a second container the same GPU and folders, so choosing Kubernetes changes the scoring boundary.</p>
+    <p><b>Port:</b> in the built-in Docker set-up, since version 6-A and for all four settings, a separate evaluator container is started in advance and the agent's container is stopped before scoring. With a custom sandbox that has no evaluator container, scoring still runs in the agent's container after its processes are swept, so choosing one changes the scoring boundary.</p>
     <a class="r p" data-f="environment/evaluation.py" data-l="22-30"></a><a class="r p" data-f="README.md" data-l="759"></a><a class="r u" data-f="src/pipeline_redteam.sh" data-l="469-500"></a>
   </div></details>
   <details><summary><span class="tag">D-250, D-251</span>The hand-over happens inside the agent's container</summary><div>
@@ -1000,7 +1000,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
   </div></details>
   <details><summary><span class="tag">D-174, D-173</span>The upload capture runs in a helper container</summary><div>
     <p><b>Original:</b> the capture proxy runs on the cluster host, whose network the agent's container shares. <b>Port:</b> the same proxy script, unchanged, in a helper container that shares the agent container's network. The port also changes where the named upload address resolves inside the agent's container.</p>
-    <p>Not closed: a program that asks a name server directly, connects to a numeric address, or uploads somewhere else. The network is open, as in the original. On Kubernetes the helper cannot share the agent's network, so the task refuses these samples there.</p>
+    <p>Not closed: a program that asks a name server directly, connects to a numeric address, or uploads somewhere else. The network is open, as in the original.</p>
     <a class="r p" data-f="environment/services.py" data-l="3-35"></a><a class="r p" data-f="README.md" data-l="780-781"></a><a class="r u" data-f="src/pipeline_redteam.sh" data-l="325-335"></a>
   </div></details>
   <details><summary><span class="tag">D-110, D-172</span>What is kept of the agent's work</summary><div>
@@ -1154,7 +1154,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
       <tr><td><b>Inspect</b></td><td>Inspect AI is a Python framework for evaluating models, first developed by the UK AI Security Institute. It supplies tasks, samples, solvers, scorers, sandboxes and log files.</td></tr>
       <tr><td><b>Task, sample</b></td><td>A task defines an evaluation. A sample is one input case. Here it is one run of the agent on one side task or the baseline, run once per epoch.</td></tr>
       <tr><td><b>Solver, scorer</b></td><td>The solver is the code that produces the work (here: runs the agent). The scorer turns the result into a score (here: runs the authors' <code>evaluate.py</code>).</td></tr>
-      <tr><td><b>Sandbox</b></td><td>The isolated environment where a sample's tools and commands run. Here, Docker containers on one machine, or Kubernetes on a cluster.</td></tr>
+      <tr><td><b>Sandbox</b></td><td>The isolated environment where a sample's tools and commands run. Here, Docker containers on one machine.</td></tr>
       <tr><td><b>Setting</b></td><td>One of the four task families.</td></tr>
       <tr><td><b>Main task, side task, baseline</b></td><td>The honest job; the hidden sabotage instruction; a run with no side task.</td></tr>
       <tr><td><b>Embedded, independent</b></td><td>An embedded side task changes the way the main job itself is done. An independent one adds a separate objective, which may still leave a file in what is handed in.</td></tr>
@@ -1179,7 +1179,7 @@ td.min { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
 </section>
 
 <footer>
-  <p>Updated 22 Nov 2026. Source links point to the file or line range at the commits named at the top: this repository at <code>ca94ce2</code> (version 10-F) and the original, <a href="https://github.com/aisa-group/ResearchArena">aisa-group/ResearchArena</a>, at <code>b922f4b</code>. For later code, see the README on the current branch.</p>
+  <p>Updated 22 Nov 2026; on 23 Nov the Hawk and Kubernetes text was removed for version 10-G, which changes nothing else. Source links point to the file or line range at the commits named at the top: this repository at <code>ca94ce2</code> (version 10-F) and the original, <a href="https://github.com/aisa-group/ResearchArena">aisa-group/ResearchArena</a>, at <code>b922f4b</code>. For later code, see the README on the current branch.</p>
 </footer>
 
 </div>

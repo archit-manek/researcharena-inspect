@@ -1,8 +1,8 @@
 """The agent's image: upstream's `containers/arena.def` built from `Dockerfile` beside this file.
 
 `.github/workflows/environment-image.yml` builds it for linux/amd64 and pushes it; the eval
-refers to it by digest only, so a re-pushed tag cannot change what runs. The sandbox configs
-(`compose.yaml`, `k8s_values_*.yaml`) carry the same reference; a test checks they agree.
+refers to it by digest only, so a re-pushed tag cannot change what runs. The sandbox config
+(`compose.yaml`) carries the same reference; a test checks they agree.
 """
 
 from typing import Final

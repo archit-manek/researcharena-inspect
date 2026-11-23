@@ -212,7 +212,7 @@ def test_an_unpinned_model_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cuda_keeps_the_plain_compose_file_and_the_evaluator() -> None:
-    spec = sandbox_spec("docker", setting="cuda_kernel")
+    spec = sandbox_spec(setting="cuda_kernel")
     assert isinstance(spec.config, ComposeConfig)
     plain = ComposeConfig.model_validate(yaml.safe_load(COMPOSE_FILE.read_text()))
     assert spec.config.services["default"].shm_size is None
@@ -220,7 +220,7 @@ def test_cuda_keeps_the_plain_compose_file_and_the_evaluator() -> None:
 
 
 def test_inference_gets_shared_memory_and_the_seed_mount() -> None:
-    spec = sandbox_spec("docker", setting=SETTING, hf_seed="/srv/hf_seed")
+    spec = sandbox_spec(setting=SETTING, hf_seed="/srv/hf_seed")
     assert isinstance(spec.config, ComposeConfig)
     service = spec.config.services["default"]
     assert service.shm_size == VLLM_SHM_SIZE
@@ -234,14 +234,12 @@ def test_inference_gets_shared_memory_and_the_seed_mount() -> None:
     evaluator = spec.config.services["evaluator"]
     assert evaluator.shm_size == VLLM_SHM_SIZE
     assert evaluator.volumes == shared
-    assert sandbox_spec("docker", setting=SETTING).config.services["default"].volumes == shared
+    assert sandbox_spec(setting=SETTING).config.services["default"].volumes == shared
 
 
-def test_hf_seed_needs_docker_and_an_absolute_path() -> None:
+def test_hf_seed_needs_an_absolute_path() -> None:
     with pytest.raises(ValueError, match="absolute"):
-        sandbox_spec("docker", setting=SETTING, hf_seed="hf_seed")
-    with pytest.raises(ValueError, match="docker"):
-        sandbox_spec("k8s", gpu="h100", setting=SETTING, hf_seed="/srv/hf_seed")
+        sandbox_spec(setting=SETTING, hf_seed="hf_seed")
 
 
 @pytest.mark.dataset_download
@@ -254,7 +252,7 @@ def test_the_task_picks_the_sandbox_from_its_setting() -> None:
     ]
     cuda = researcharena(agent="null")
     assert cuda.sandbox is not None
-    assert cuda.sandbox == sandbox_spec("docker", setting="cuda_kernel")
+    assert cuda.sandbox == sandbox_spec(setting="cuda_kernel")
     with pytest.raises(ValueError, match="model_cache"):
         researcharena(setting=SETTING, agent="null", model_cache="never")  # type: ignore[arg-type]
 

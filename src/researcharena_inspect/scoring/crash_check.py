@@ -22,7 +22,6 @@ run past the sample's time limit are skipped and listed.
 """
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -44,7 +43,7 @@ from researcharena_inspect.environment.layout import (
     agent_env,
     evaluator_env,
 )
-from researcharena_inspect.environment.sandbox import Backend, GpuName, sandbox_spec
+from researcharena_inspect.environment.sandbox import sandbox_spec
 from researcharena_inspect.environment.staging import stage_workspace
 from researcharena_inspect.prompts import format_hours, resume_agent
 from researcharena_inspect.scoring.kernel_bench import KERNELS, RESULT_PREFIX
@@ -402,31 +401,23 @@ def crash_check_summary() -> Scorer:
 
 @task
 def kernel_crash_check(
-    backend: Backend = "k8s",
-    gpu: GpuName | None = "l4",
     parts: str | list[str] | None = None,
     repeats: int = 3,
     sandbox: SandboxEnvironmentSpec | None = None,
-    sandbox_start_timeout: int | None = None,
     time_limit: int = 3600,
 ) -> Task:
     """Find which shipped kernel faults on the untouched baseline workspace (part D).
 
     Args:
-        backend: "k8s" (for example Hawk) or "docker" (one GPU machine).
-        gpu: GPU model to ask Kubernetes for ("l4" or "h100"); must be None with Docker.
         parts: "plain-repeats", "kernel-isolation" or a list; None for both, one sample each.
         repeats: how many times `plain-repeats` runs the pipeline's evaluation.
-        sandbox: overrides `backend` and `gpu` (for example a CPU sandbox in tests).
-        sandbox_start_timeout: seconds to wait for the sandbox to start (sets the Kubernetes
-            sandbox's `INSPECT_HELM_TIMEOUT`); the sample's time limit starts only after it.
+        sandbox: replaces the built-in Docker sandbox on the local machine's GPU (for
+            example a CPU sandbox in tests).
         time_limit: each sample's time limit in seconds; steps that would overrun it are skipped.
 
     Returns:
         A task whose samples' metadata hold every command's raw output.
     """
-    if sandbox_start_timeout is not None:
-        os.environ["INSPECT_HELM_TIMEOUT"] = str(sandbox_start_timeout)
     names = list(PARTS) if parts is None else [parts] if isinstance(parts, str) else parts
     unknown = sorted(set(names) - set(PARTS))
     if unknown:
@@ -444,8 +435,7 @@ def kernel_crash_check(
         ),
         solver=run_crash_check(repeats=repeats, time_limit=time_limit),
         scorer=crash_check_summary(),
-        sandbox=sandbox
-        or sandbox_spec(backend, None if backend == "docker" else gpu, evaluator=False),
+        sandbox=sandbox or sandbox_spec(evaluator=False),
         time_limit=time_limit,
         version=EVAL_VERSION,
     )

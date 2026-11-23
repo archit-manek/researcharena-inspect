@@ -87,9 +87,6 @@ ARTIFACT_IMAGE = IMAGE
 monitor in (`pipeline_monitor.sh:70, :294`, `arena.sif`), with git, CUDA and the agent's
 Python packages. Built for linux/amd64 only."""
 
-MONITOR_K8S_VALUES = Path(__file__).parent / "k8s_values_artifact.yaml"
-"""Kubernetes values for the artifact access types: the agent's image, no GPU, open network."""
-
 # pipeline_monitor.sh:296-298, passed into the monitor's container.
 SANDBOX_ENV = {
     "HOME": SANDBOX_HOME,
@@ -159,7 +156,7 @@ def bundle_to_sample(bundle: RunBundle, access: str, prompt_commit: str = "lates
 def monitor_sandbox(
     sandbox_type: str, sandbox_config: str | None, access: str = "transcript"
 ) -> SandboxEnvironmentSpec:
-    """The monitor's sandbox: a given config, or upstream's launch as far as the backend allows.
+    """The monitor's sandbox: a given config, or upstream's launch as far as Docker allows.
 
     Upstream starts every monitor with `apptainer exec -C ... arena.sif`
     (`pipeline_monitor.sh:292-310`): the agent's image, no `--nv` (no GPU, D-025), no model
@@ -167,19 +164,17 @@ def monitor_sandbox(
     overlay that is thrown away, the job folder as `/home/user` and the host's `/tmp`
     (D-030). The defaults here (D-107): the artifact access types get the agent's image,
     the transcript types a small Python image (`TRANSCRIPT_IMAGE`); neither has a GPU or a
-    model cache, both have an open network (Docker's default bridge; `allowEntities: [world]`
-    on Kubernetes for the artifact types) and their own `/tmp`. The monitor runs as root.
+    model cache, both have an open network (Docker's default bridge) and their own `/tmp`.
+    The monitor runs as root. Another sandbox type without a config is given no config.
 
     Args:
-        sandbox_type: `docker`, `k8s` or another Inspect sandbox type.
+        sandbox_type: `docker` or another Inspect sandbox type.
         sandbox_config: a config file; used as given for every access type.
         access: the access type, which picks the default image.
     """
     with_artifact, _ = ACCESS_TYPES[access]
     if sandbox_config is not None:
         return SandboxEnvironmentSpec(sandbox_type, sandbox_config)
-    if sandbox_type == "k8s" and with_artifact:
-        return SandboxEnvironmentSpec("k8s", str(MONITOR_K8S_VALUES))
     if sandbox_type != "docker":
         return SandboxEnvironmentSpec(sandbox_type, None)
     # D-107: transcript monitors keep the small image they were compared with the published
@@ -446,7 +441,8 @@ def researcharena_monitor(
             `published` uses, for each published run, the version its published monitor ran on.
         small_model: model for Claude Code's own background calls: Haiku 4.5, as in the
             published runs; `None` sends them to the monitor model.
-        sandbox: sandbox type, e.g. `docker` or `k8s`.
+        sandbox: sandbox type: `docker` (the default) or another Inspect sandbox type,
+            with `sandbox_config`.
         sandbox_config: sandbox config file. By default the artifact types run in the
             agent's image (upstream's monitor image), the transcript types in a small Python
             image; neither has a GPU (D-107, see `monitor_sandbox`).

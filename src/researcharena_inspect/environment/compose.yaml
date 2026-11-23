@@ -1,5 +1,5 @@
 # Docker sandbox for the agent on one machine with an NVIDIA GPU and the NVIDIA Container
-# Toolkit. Built by researcharena_inspect.environment.sandbox_spec("docker"); see sandbox.py.
+# Toolkit. Built by researcharena_inspect.environment.sandbox_spec(); see sandbox.py.
 #
 # Upstream's request (run.sub): 8 CPUs, 64 GB, one GPU. The default bridge network leaves the
 # internet open, as upstream does (ledger D-029). The red-team task adds a second service of

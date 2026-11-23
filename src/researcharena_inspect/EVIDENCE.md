@@ -12,7 +12,7 @@ The columns:
 - **Setting, cell**: from the task arguments. For a replay, from the sample ids: published submissions, or ours (a stored run of the port), or the untouched base model.
 - **Agent, model**: the task's `agent` argument, Claude Code's version argument (`latest` and `published` are names, resolved when the run starts), and the model.
 - **Commit, version**: the implementation commit in the log's header and the task version (`0` for tasks outside `eval.yaml`).
-- **Scored in**: where upstream's `evaluate.py` ran. "evaluator's" is the evaluator's own container, from the score's `evaluator_service` metadata (recorded from 7-F on); "agent's" is the agent's container, which is how the port scored on Docker before 6-A (the field is then absent) and how it scores on Kubernetes. A monitor log has no red-team scorer.
+- **Scored in**: where upstream's `evaluate.py` ran. "evaluator's" is the evaluator's own container, from the score's `evaluator_service` metadata (recorded from 7-F on); "agent's" is the agent's container, which is how the port scored on Docker before 6-A (the field is then absent) and how it scores with a custom sandbox that has no `evaluator` service. A monitor log has no red-team scorer.
 - **Samples**: samples in the log; a log status other than `success` is named.
 - **Folder**: under the notebook's `docs/`.
 

@@ -24,7 +24,6 @@ from typing import Any
 import pytest
 from inspect_ai.util import ComposeConfig
 
-from researcharena_inspect import researcharena
 from researcharena_inspect.agents.replay import model_listing, published_model_files
 from researcharena_inspect.environment import services
 from researcharena_inspect.environment.evaluation import evaluator_entries
@@ -87,16 +86,13 @@ def test_the_setting_as_upstream_configures_it() -> None:
 
 
 def test_the_sandbox_is_the_post_training_one() -> None:
-    config = sandbox_spec("docker", None, setting=SETTING, hf_seed="/srv/seed").config
+    config = sandbox_spec(setting=SETTING, hf_seed="/srv/seed").config
     assert isinstance(config, ComposeConfig)
     default = config.services["default"]
     assert default.shm_size == VLLM_SHM_SIZE
     assert default.volumes is not None
     assert "/srv/seed:/opt/hf_seed:ro" in default.volumes
     assert config.services[services.SERVICE_NAME].network_mode == "service:default"
-    with pytest.raises(ValueError, match="network namespace"):
-        researcharena(setting=SETTING, agent="null", backend="k8s")
-    researcharena(setting=SETTING, side_tasks="none,embedded,embedded_german", backend="k8s")
 
 
 # ------------------------------------------------------------------------------ the cache

@@ -104,7 +104,7 @@ def test_sandbox_can_be_injected() -> None:
     assert red_team_sandbox("docker", "compose.yaml") == SandboxEnvironmentSpec(
         "docker", "compose.yaml"
     )
-    assert red_team_sandbox("k8s", None) == SandboxEnvironmentSpec("k8s", None)
+    assert red_team_sandbox("other", None) == SandboxEnvironmentSpec("other", None)
     spec = SandboxEnvironmentSpec("docker", "arena.yaml")
     assert red_team_sandbox(spec, None) is spec
 
@@ -118,7 +118,7 @@ def test_task_builds_for_each_agent(agent: str) -> None:
     assert task.setup is not None
     assert task.scorer is not None
     assert len(task.scorer) == 1
-    assert task.sandbox == sandbox_spec("docker", setting="cuda_kernel")  # with the evaluator
+    assert task.sandbox == sandbox_spec(setting="cuda_kernel")  # with the evaluator
 
 
 def test_task_rejects_unknown_agents() -> None:

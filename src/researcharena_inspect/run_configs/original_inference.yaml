@@ -64,9 +64,7 @@ task:
 
     # One machine with one NVIDIA GPU and Docker. run_redteam.sub asks for one
     # "NVIDIA H100 80GB HBM3"; the published transcripts show that GPU. With this setting the
-    # port's Docker sandbox is compose.yaml plus a 16 GB /dev/shm (D-132).
-    backend: docker
-    gpu: null
+    # port's Docker sandbox is compose.yaml plus a 16 GB /dev/shm (D-132). No option sets it.
 
     # The model reaches the agent's Hugging Face cache before the agent starts (upstream's
     # cluster cache already held it, src/utils/hf_overlay.sh; D-130). `auto`: copied from

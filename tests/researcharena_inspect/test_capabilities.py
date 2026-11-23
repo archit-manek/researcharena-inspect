@@ -11,6 +11,7 @@ Docker, is in `test_capabilities_docker.py`.
 import asyncio
 import hashlib
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -220,7 +221,7 @@ def test_the_cache_script_copies_a_dataset_repository(tmp_path: Path) -> None:
 
 
 def test_the_sandbox_adds_the_hook_service_beside_the_agent() -> None:
-    config = sandbox_spec("docker", None, setting=SETTING).config
+    config = sandbox_spec(setting=SETTING).config
     assert isinstance(config, ComposeConfig)
     default, aux = config.services["default"], config.services[services.SERVICE_NAME]
     assert default.shm_size == VLLM_SHM_SIZE
@@ -230,15 +231,19 @@ def test_the_sandbox_adds_the_hook_service_beside_the_agent() -> None:
     assert aux.volumes is None
     # The other settings get no hook service, only the evaluator's (D-093).
     for other in ("cuda_kernel", "inference_optimization"):
-        config = sandbox_spec("docker", None, setting=other).config
+        config = sandbox_spec(setting=other).config
         assert isinstance(config, ComposeConfig)
         assert list(config.services) == ["default", "evaluator"]
 
 
-def test_kubernetes_is_refused_only_where_the_hook_runs() -> None:
-    with pytest.raises(ValueError, match="network namespace"):
-        researcharena(setting=SETTING, agent="null", backend="k8s")
-    researcharena(setting=SETTING, side_tasks="none,embedded", agent="null", backend="k8s")
+def test_every_cell_builds_on_docker_with_the_hook_service() -> None:
+    # No backend to choose since 10-G: the upload cell builds on the built-in Docker sandbox.
+    task = researcharena(setting=SETTING, agent="null")
+    config = cast(ComposeConfig, cast(Any, task.sandbox).config)
+    assert services.SERVICE_NAME in config.services
+    parameters = inspect.signature(researcharena).parameters
+    for removed in ("backend", "gpu", "sandbox_start_timeout"):
+        assert removed not in parameters
 
 
 def test_only_the_independent_side_task_sources_a_pipeline_hook() -> None:
@@ -418,15 +423,14 @@ def test_check_offline_builds_a_network_off_sandbox_and_refuses_what_would_not_b
     for bad in (
         {"agent": "react", "replay": None},
         {"model_cache": "auto"},
-        {"backend": "k8s"},
         {"sandbox": "docker"},
     ):
-        with pytest.raises(ValueError, match=r"check_offline|backend='docker'"):
+        with pytest.raises(ValueError, match="check_offline"):
             researcharena(**{**ok, **bad})
     # D-254: a replayed safety model cannot be scored with no network (its judges' loader).
     with pytest.raises(ValueError, match="D-254"):
-        check_offline_run("replay", "seed", "docker", None, frozenset({"safety_finetuning"}))
-    check_offline_run("null", "seed", "docker", None, frozenset({"safety_finetuning"}))
+        check_offline_run("replay", "seed", None, frozenset({"safety_finetuning"}))
+    check_offline_run("null", "seed", None, frozenset({"safety_finetuning"}))
     monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", False)
     with pytest.raises(ValueError, match="HF_HUB_OFFLINE"):
         researcharena(**ok)
