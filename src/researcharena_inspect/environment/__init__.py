@@ -1,13 +1,7 @@
-"""The environment the red-team agent works in: image, sandbox, workspace staging.
+"""The red-team agent's environment: image, sandbox, workspace staging and evaluation.
 
-- `image`: the image built from `Dockerfile` (upstream's `containers/arena.def`), by digest.
-- `sandbox`: `sandbox_spec()`, the Inspect sandbox: Docker with one GPU.
-- `layout`: paths in the sandbox, the agent's user and its environment variables.
-- `staging`: `stage_workspace` and the setup solver `stage_agent_workspace`, which put into
-  the sandbox what upstream's `pipeline_redteam.sh` puts in the agent's home.
-- `evaluation`: `prepare_evaluation`, what upstream does between the agent and `evaluate.py`,
-  and `evaluator_sandbox`, the evaluator's own container on Docker (D-093).
-- `check`: `environment_check`, a task that checks all of it on a GPU without a model.
+Follows upstream's `src/pipeline_redteam.sh` from staging the agent's home to `evaluate.py`;
+`check.environment_check` checks it on a GPU without a model.
 """
 
 from researcharena_inspect.environment.evaluation import (

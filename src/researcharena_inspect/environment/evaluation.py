@@ -1,33 +1,14 @@
-"""What upstream does to the workspace between the agent finishing and `evaluate.py`.
+"""What upstream does between the agent finishing and `evaluate.py` (`src/pipeline_redteam.sh`).
 
-`src/pipeline_redteam.sh` at the pinned commit, after the agent's container exits:
+Upstream's steps: 1. `lib/clean_hf_models.py` empties model folders in `task/` except
+`final_model` (`:434`); 2. `task/` is copied to `red_team/task_snapshot` (`:438`); 3. the
+evaluator's job folder is filled (`:446-467`); 4. `evaluate.py` runs up to three times, each
+under `timeout 3600s`, until `metrics.json` exists (`:469-530`). `prepare_evaluation` does 1-3
+and returns step 4 for the scorer.
 
-1. `lib/clean_hf_models.py task --exclude final_model` empties every folder in the agent's
-   `task/` that looks like a Hugging Face model, except `final_model`, in place (`:434`).
-2. `cp -r task $EVAL_DIR/red_team/task_snapshot` (`:438`).
-3. A fresh evaluator job folder (`mktemp -d`, mode 700) with the setting's `evaluate.py`,
-   its `config.json` as `setting_config.json`, the optional `baseline_misalignment.json`,
-   `misalignment_eval.py` and `evaluation_code/`, and the side task's `evaluate.py` under
-   `side_tasks/<name>/` (`embedded`'s for a baseline) (`:446-467`).
-4. Up to three attempts of `python3 evaluate.py --mode full --output
-   /mnt/eval/eval/metrics.json --submission-dir /mnt/eval/red_team --setting ...
-   --side-task ... --task-config ...` in a new container with the job folder as its home
-   and working directory, each under `timeout 3600s`, its output in
-   `eval/eval_attempt_<n>.log`; success means `metrics.json` exists (`:469-530`).
-
-`prepare_evaluation` does 1-3 and returns step 4 as an `EvaluationCommand` for the scorer to
-run. Before step 1 it ends every process the agent left running: upstream's agent container,
-with its own process namespace, is gone by then.
-
-Where (D-093). On Docker the sandbox has a second service, `EVALUATOR_SERVICE`, of the same
-image with the GPU, which shares only `HF_HOME` and `EVAL_DIR` with the agent's
-(`sandbox.with_evaluator`), as upstream's evaluator shares only the cache overlay and the run
-folder. Steps 1 and 2 run in the agent's container (upstream runs them on the host, which sees
-the agent's `task/`), the snapshot landing on the shared `EVAL_DIR`; then the agent's container
-is stopped, with every process in it, and step 3, step 4 and everything after it run in the
-evaluator's (`evaluator_sandbox`), with the job folder at upstream's `/home/user`. With a
-sandbox that has no `evaluator` service (a custom `sandbox`), everything runs in the agent's
-container, the job folder at `SHARED_EVAL_HOME`.
+D-093, D-251: steps 1 and 2 run in the agent's container, which is then stopped; step 3 and
+after run in the evaluator's (`evaluator_sandbox`). With no `evaluator` service, everything
+runs in the agent's container, the job folder at `SHARED_EVAL_HOME`.
 """
 
 import shlex
@@ -69,8 +50,7 @@ METRICS_PATH = f"{EVAL_DIR}/eval/metrics.json"
 SUBMISSION_DIR = f"{EVAL_DIR}/red_team"
 SNAPSHOT_DIR = f"{SUBMISSION_DIR}/task_snapshot"
 
-# Root-owned scratch folder for upstream's cleaning script and the evaluator's files; removed
-# afterwards.
+# Root-owned scratch folder for upstream's cleaning script and the evaluator's files.
 _SCRATCH = "/var/tmp/researcharena-evaluation"
 
 STOP_SECONDS = 60
@@ -178,12 +158,12 @@ async def stop_agent_processes(box: SandboxEnvironment | None = None) -> None:
 async def stop_agent_container(box: SandboxEnvironment) -> None:
     """Stop the agent's container with every process in it, as upstream's has exited (D-093).
 
-    SIGTERM to its init (`init: true` in the Compose service), which ends its child and exits;
-    the container then stops and later calls to it raise `SandboxUnavailableError`.
+    SIGTERM to its init (`init: true` in the Compose service); later calls to the container
+    raise `SandboxUnavailableError`.
 
     Raises:
         StagingError: it was still running, or a call to it had not returned, after
-            `STOP_SECONDS` (one limit for the signal and the checks).
+            `STOP_SECONDS`.
     """
     try:
         with anyio.fail_after(STOP_SECONDS):
@@ -209,11 +189,8 @@ async def prepare_evaluation(
 ) -> EvaluationCommand:
     """Prepare upstream's `evaluate.py` as the pipeline does (steps 1-3).
 
-    Call once, after the agent has finished. Leaves the agent's (cleaned) `task/` in place, its
-    copy at `/mnt/eval/red_team/task_snapshot`, and the evaluator's job folder at `EVAL_HOME` in
-    the evaluator's container, the agent's container stopped; or at `SHARED_EVAL_HOME` in the
-    agent's container (a sandbox with no `evaluator` service). All of it belongs to the agent's user, as upstream's
-    belongs to the job's account.
+    Call once, after the agent has finished. The files belong to the agent's user, as
+    upstream's belong to the job's account.
 
     Args:
         setting: setting name.
@@ -223,8 +200,7 @@ async def prepare_evaluation(
         upstream: upstream tree to read; defaults to the pinned checkout.
 
     Returns:
-        The command for step 4, to run in `evaluator_sandbox()`. Upstream's scorer looks only
-        at `metrics_path` afterwards.
+        The command for step 4, to run in `evaluator_sandbox()`.
 
     Raises:
         StagingError: a step failed.
@@ -236,9 +212,8 @@ async def prepare_evaluation(
     home = EVAL_HOME if separate else SHARED_EVAL_HOME
     await stop_agent_processes(agent)
 
-    # Step 1, with upstream's script, as the account that owns the files, in the agent's
-    # container (D-251). `EVAL_DIR` stays root's until the evaluator's container takes it over:
-    # only `red_team/` is the agent's.
+    # Step 1, in the agent's container (D-251). `EVAL_DIR` stays root's until the evaluator's
+    # container takes it over: only `red_team/` is the agent's.
     cleaner = (upstream_root(upstream) / "lib" / "clean_hf_models.py").read_bytes()
     result = await _exec(
         agent,
@@ -277,8 +252,8 @@ async def prepare_evaluation(
     if separate:  # D-093: the agent's container ends here, as upstream's has
         await stop_agent_container(agent)
 
-    # Step 3, in the evaluator's container: the account (as staging makes it), its job folder
-    # (in a fresh one, holding only the cache's mount point) and `EVAL_DIR/eval`.
+    # Step 3: the account, its job folder and `EVAL_DIR/eval`. A separate container's job folder
+    # is fresh and holds the cache's mount point, so only a shared one is reset.
     reset = "" if separate else f"rm -rf {home}; "
     result = await _exec(
         evaluator,

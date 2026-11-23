@@ -1,8 +1,7 @@
 """The agent's image: upstream's `containers/arena.def` built from `Dockerfile` beside this file.
 
-`.github/workflows/environment-image.yml` builds it for linux/amd64 and pushes it; the eval
-refers to it by digest only, so a re-pushed tag cannot change what runs. The sandbox config
-(`compose.yaml`) carries the same reference; a test checks they agree.
+Referred to by digest only, so a re-pushed tag cannot change what runs. `compose.yaml` carries
+the same reference; a test checks they agree.
 """
 
 from typing import Final
@@ -15,5 +14,5 @@ and `dockerfile-<hash>`); 13.8 GB compressed in 19 layers."""
 
 IMAGE: Final = f"{IMAGE_REPOSITORY}@{IMAGE_DIGEST}"
 
-# D-133: this image has upstream's vLLM 0.19.1 (containers/requirements.txt at the pin); the
-# published inference runs ran vLLM 0.17.0, which the inference setting's requirements.txt pins.
+# D-133: vLLM 0.19.1 (upstream's containers/requirements.txt); the published inference runs
+# ran 0.17.0.

@@ -1,21 +1,9 @@
-"""Environment check on a GPU, with no agent and no model calls (pass rule 4 of work package 2).
+"""`environment_check`: the agent's environment on a GPU, with no agent and no model call.
 
-In the eval's image and sandbox it records:
-
-1. `nvidia-smi` (full output and the name, memory, driver and compute capability line), the
-   CPU count, memory and disk the container sees;
-2. what PyTorch sees of the GPU, as the agent's user with the agent's environment;
-3. the agent's workspace staged for the setting and side task, as upstream stages it;
-4. upstream's `pre_agent_setup.sh`, sourced as the agent's shell sources it;
-5. upstream's build step, `python3 compile.py --check --verbose` in the agent's `task/`
-   (`compile.py` writes only to `/tmp`, so the workspace stays as staged; the check records
-   `git status` before and after);
-6. upstream's `evaluate.py`, run once as the pipeline runs it, on the untouched workspace.
-
-Every command's exit status, output and duration go to the sample's metadata under
-`environment_check`, unparsed; `evaluate.py`'s log and `metrics.json` are kept as raw text.
-The score says only whether `evaluate.py` wrote `metrics.json` (upstream's own test for a
-finished evaluation); judging the numbers is the scorers' job.
+Records the GPU and node, the staged workspace, `pre_agent_setup.sh`, upstream's kernel build
+and one run of `evaluate.py`, each command's raw output under `environment_check` in the
+sample's metadata. The score says only whether `evaluate.py` wrote `metrics.json`, upstream's
+own test for a finished evaluation.
 """
 
 import time
@@ -41,13 +29,11 @@ from researcharena_inspect.environment.sandbox import sandbox_spec
 from researcharena_inspect.environment.staging import stage_workspace
 from researcharena_inspect.prompts import format_hours, resume_agent
 
-# eval.yaml sits in the package folder, one above this module.
 EVAL_VERSION = load_eval_version(Path(__file__).parent.parent / "eval.yaml")
 
 CHECK_METADATA_KEY = "environment_check"
 
-# Upstream's own build step for the kernels: compile.py builds bindings.cpp and kernels/*.cu
-# into one PyTorch extension under /tmp and reports COMPILE_STATUS.
+# Upstream's kernel build step; it builds under /tmp, so the workspace stays as staged.
 BUILD_COMMAND = ["python3", "compile.py", "--check", "--verbose"]
 
 TORCH_PROBE = (
@@ -217,9 +203,6 @@ def environment_check(
     time_limit: int = 3600,
 ) -> Task:
     """Check the agent's environment on a GPU without an agent or a model call.
-
-    Runs in the built-in Docker sandbox (`environment.sandbox_spec`) on the local machine's
-    GPU, in one container (no evaluator's service).
 
     Args:
         setting: setting whose workspace is staged and evaluated.
