@@ -33,7 +33,7 @@ NOT_FOUND = "Error code: 404 - {'error': {'message': 'model not found'}}"
 
 
 class ModelNotFoundError(Exception):
-    """What OpenRouter's 404 looked like on Hawk; the bridge forwards its status to the CLI."""
+    """What OpenRouter's 404 looked like in a live run; the bridge forwards its status to the CLI."""
 
     status_code = 404
 
