@@ -5,10 +5,12 @@ published snapshot was taken after upstream's scorer ran in it, and CUDA's `eval
 `bench.py` read back results left there (D-001; `evaluate.py:32-53`, `bench.py:190-194`). So
 `as_published` replays it as it is, as upstream's `src/reeval_only.sh` does, and `fresh` (D-098,
 the default) leaves those files out so this GPU measures. Other settings read back nothing.
+Side-task evaluators read none of these files, so side verdicts are the same in both modes.
 
 Warnings:
 - A published inference snapshot's compile caches (`.vllm_cache/` and the like) may hold what
-  the published evaluation wrote (D-110). A cache from another vLLM version is not checked.
+  the published evaluation wrote (D-110). vLLM keys them by version, so one from another
+  version should go unused (not checked; `c17312128` and `c17360448` carry them).
 - Post-training models are published apart from the trajectories and put back in place
   (`published_model_files`, D-172). Files go in by pieces or bounded tars, so the host never
   holds a whole model in memory.
