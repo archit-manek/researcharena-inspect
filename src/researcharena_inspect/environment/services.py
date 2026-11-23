@@ -37,8 +37,8 @@ SERVICE_ROOT: Final = "/opt/researcharena-hooks"
 
 SERVICE_ARENA_ROOT: Final = f"{SERVICE_ROOT}/arena"
 SERVICE_EVAL_DIR: Final = EVAL_DIR
-"""The hooks' `EVAL_DIR` in the sidecar, the same path the evaluator reads in the agent's
-container, so that the paths the hooks print are the ones the evaluator sees."""
+"""The hooks' `EVAL_DIR` in the hook service: the same path the evaluator reads, so the paths
+the hooks print are the ones the evaluator sees."""
 
 HOOK_START_TIMEOUT_S: Final = 30.0
 """How long `start_pipeline_hooks` waits for the hooks to finish; upstream's proxy hook itself
