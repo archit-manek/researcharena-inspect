@@ -1,27 +1,11 @@
-"""The red-team agent as upstream runs it: Claude Code, through Inspect SWE.
+"""The red-team agent as upstream runs it: Claude Code (`agents/claude/solve.sh:97-100`).
 
-Upstream runs each round as (`agents/claude/solve.sh:97-100` at the pinned commit)
-
-    timeout --signal=TERM --kill-after=30s "${remaining}s" \
-      claude --print --verbose --output-format stream-json --model "$AGENT_CONFIG" \
-             --effort "$EFFORT" --thinking-display summarized \
-             --dangerously-skip-permissions [--continue "<resume prompt>"]
-
-with the first prompt on stdin, in `/home/user/task`, after installing the CLI. Inspect SWE's
-`claude_code()` runs `claude --session-id <id> --dangerously-skip-permissions --model <model>
---print --output-format stream-json --verbose -- <prompt>` and, when called again on the same
-state with a new user message, `claude --resume <id> ... -- <message>`: the same session
-continued, as `--continue` does with the only session in the folder (upstream's runs keep one
-session id across all rounds too). `prompt_on_stdin` takes a new session's prompt off that
-command line and sends it on stdin, as upstream does. The model calls go through Inspect's
-bridge to the task's model. What cannot be passed as upstream passes it is marked below with
-its deviation id: the login (D-076), the effort and thinking flags (D-077), `--continue`
-(D-078), the CLI build (D-079) and Inspect SWE's own settings (D-080).
-
-Inspect SWE keeps none of the CLI's stdout, which upstream saves as `red_team/solve_out.json`
-and turns into the monitor's transcripts. `capture_cli_output` copies each stdout line and
-stderr chunk of the CLI as Inspect SWE reads them, and its exit code, for the rounds run
-inside it.
+Inspect SWE resumes with `--resume <session id>` where upstream uses `--continue`; both continue
+the run's one session. The model calls go through Inspect's bridge. Two patches to Inspect SWE
+live here: `capture_cli_output` keeps the CLI's stdout (upstream's `solve_out.json`), which
+Inspect SWE discards, and `prompt_on_stdin` sends a new session's prompt on stdin, as upstream
+does. Deviations: D-076 (login), D-077 (effort flags), D-078 (`--continue`), D-079 (CLI build),
+D-080 (Inspect SWE's settings).
 """
 
 import importlib
@@ -40,8 +24,8 @@ CLI_INSTALL_PATH = "/usr/local/bin/claude"
 """Where the installed CLI is linked, so `claude` is on the agent's PATH (upstream puts
 `$HOME/.agent_cli/bin` first, `solve.sh:37`) and Inspect SWE finds it without reinstalling."""
 
-# The bash tool limits of upstream's agent: solve.sh:26 exports BASH_MAX_TIMEOUT_MS=36000000
-# (over the pipeline's 3600000); pipeline_redteam.sh:369 passes BASH_DEFAULT_TIMEOUT_MS.
+# solve.sh:26 exports BASH_MAX_TIMEOUT_MS=36000000, over pipeline_redteam.sh:368's 3600000;
+# pipeline_redteam.sh:369 passes BASH_DEFAULT_TIMEOUT_MS.
 BASH_TIMEOUT_ENV = {"BASH_MAX_TIMEOUT_MS": "36000000", "BASH_DEFAULT_TIMEOUT_MS": "3600000"}
 
 
@@ -52,16 +36,11 @@ Claude CUDA runs the agent read or wrote `~/.claude/projects/-home-user-task/mem
 
 
 def claude_code_env(model: str, effort: str, redruntime: str, resume: bool) -> dict[str, str]:
-    """The variables upstream sets for the agent process, which its tools can also read.
+    """The job settings upstream passes to the agent process (`pipeline_redteam.sh:362-365`).
 
-    `pipeline_redteam.sh:362-365` passes the job's settings into the container and `solve.sh`
-    reads them; the agent sees them too (`env` in its shell). Credentials (`CLAUDE_OAUTH_TOKEN`,
-    `HF_TOKEN`, `ANTHROPIC_API_KEY=""`) are not passed: the port authenticates through the
-    bridge. Container-wide variables (`PATH`, `HF_HOME`, `CUDA_VISIBLE_DEVICES`) belong to the
-    sandbox.
+    The agent sees them too. Container-wide variables belong to the sandbox.
     """
-    # D-076: no OAuth token and no ANTHROPIC_API_KEY="" (solve.sh:11-24); the bridge
-    # authenticates with Inspect's API key.
+    # D-076: no OAuth token and no ANTHROPIC_API_KEY="" (solve.sh:11-24).
     return {
         **BASH_TIMEOUT_ENV,
         **AUTO_MEMORY_ENV,
@@ -85,37 +64,24 @@ def red_team_claude_code(
     resumes that session.
 
     Args:
-        effort: the resolved effort (`default` sets none). Applied to the served model as
-            `reasoning_effort`, which Inspect's Anthropic provider sends as adaptive thinking
-            with `output_config.effort` and summarized thinking (`--effort`,
-            `--thinking-display summarized` upstream).
+        effort: the resolved effort (`default` sets none), set on the served model.
         env: variables for the CLI process (`claude_code_env`).
-        small_model: model for Claude Code's background and Haiku-class calls (web page
-            summaries, some subagents). The task passes Haiku 4.5, which upstream's CLI used
-            by default (`pins.CLAUDE_CODE_SMALL_MODEL`); `None` sends them to the task's
-            model, which is Inspect SWE's default.
+        small_model: model for Claude Code's background calls; `None` sends them to the
+            task's model.
         user: sandbox user to run as; `None` for the sandbox's default.
     """
     from inspect_swe import claude_code
 
-    # D-077: `--effort` and `--thinking-display summarized` (solve.sh:99) are not CLI flags
-    # here; the effort is set on the served model and the bridge drops the CLI's own
-    # generation settings. D-078: later rounds use `--resume <session id>` for `--continue`;
-    # the first prompt goes on stdin as upstream's does only inside `prompt_on_stdin`, which
-    # the solver opens (D-257: otherwise `ps` in the sandbox shows the whole prompt). D-105:
-    # Inspect SWE resumes only once the conversation has an assistant message; after a round
-    # with none, the next round gets a new agent and so a new session (`solver.AgentRounds`),
-    # since the same `--session-id` again would be refused ("Session ID ... is already in use").
-    # D-080: Inspect SWE adds its own environment (IS_SANDBOX,
-    # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
-    # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, MCP settings, the bridge's URL and model names).
-    # The experimental-betas switch is kept: clearing it changes no tool the model is offered
-    # through the bridge, and forcing tool search on hides most tools from the model (see
-    # monitor/agents.py; measured with a mock model). Haiku-class calls go to `small_model`.
+    # D-077: the effort is set on the served model, not with `--effort` and
+    # `--thinking-display` (solve.sh:99). D-078: `--resume` for `--continue`; the first prompt
+    # goes on stdin only inside `prompt_on_stdin`, which the solver opens (D-257). D-105: see
+    # `solver.AgentRounds`. D-080: Inspect SWE's own environment is kept, including
+    # CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: clearing it adds no tool through the bridge, and
+    # forcing tool search on hides most tools from the model (see monitor/agents.py).
     return claude_code(
         cwd=TASK_DIR,
         effort=None if effort == "default" else effort,  # type: ignore[arg-type]
-        # Installed before the budget starts (install_claude_code); "sandbox" reuses it.
+        # Installed before the budget starts (install_claude_code).
         version="sandbox",
         env=env,
         haiku_model=small_model,
@@ -140,16 +106,15 @@ async def install_claude_code(version: str, user: str | None = None) -> Installe
 
     Args:
         version: `latest`, `stable`, a version such as `2.1.162`, or `sandbox`/`auto` to use a
-            `claude` already in the image. Upstream installs the latest npm release unless
+            `claude` already in the image. Upstream installs `latest` unless
             `CLAUDE_CLI_VERSION` is set (`src/utils/update_agent_cli.sh:38-43`).
         user: sandbox user to install for.
     """
     from inspect_swe._claude_code.agentbinary import claude_code_binary_source
     from inspect_swe._util.agentbinary import ensure_agent_binary_installed
 
-    # D-079: Anthropic's native build of the same version, not the npm package; linked into
-    # /usr/local/bin rather than installed in ~/.agent_cli. A failed install fails the sample
-    # (D-083), where upstream's solve.sh exits 1 and the untouched workspace is scored.
+    # D-079: Anthropic's native build, not the npm package. D-083: a failed install fails the
+    # sample; upstream scores the untouched workspace.
     sbox = sandbox()
     path = await ensure_agent_binary_installed(claude_code_binary_source(), version, user, sbox)
     if path != CLI_INSTALL_PATH:
@@ -173,12 +138,10 @@ _SWE_MODULE = "inspect_swe._claude_code.claude_code"
 
 
 def _install_tee() -> None:
-    """Wrap the function through which Inspect SWE reads the CLI's output, once.
+    """Wrap Inspect SWE's `claude_code_event_stream` (0.2.x), once.
 
-    `inspect_swe._claude_code.claude_code.claude_code_event_stream` (inspect_swe 0.2.x) turns
-    the CLI's stdout into JSON events. The wrapper passes every event on unchanged and, when a
-    capture is open in the current context, also keeps each stdout line, stderr chunk and exit
-    code. Outside a capture (the monitor, other tasks) it changes nothing.
+    Every event passes on unchanged; inside a capture, each stdout line, stderr chunk and exit
+    code is also kept. Outside one (the monitor, other tasks) nothing changes.
     """
     module = importlib.import_module(_SWE_MODULE)
     original = module.claude_code_event_stream
@@ -210,11 +173,10 @@ def capture_cli_output(
 ) -> Iterator[None]:
     """Append the CLI's stdout lines, stderr chunks and exit codes to the given lists while open.
 
-    Stdout lines are kept as Inspect SWE splits them: one JSON event per line, stripped, blank
-    lines dropped. Joined with newlines they are the `stream-json` that upstream's
-    `solve_out.json` holds after its non-JSON preamble. `exit_codes` gets one entry per CLI
-    process that exited (none for one cancelled before it exited), including the exit that
-    Inspect SWE does not raise for: 1 after a refusal (see `solver.AgentRounds`, D-084).
+    Stdout lines are as Inspect SWE splits them (stripped, blank lines dropped); joined with
+    newlines they are upstream's `solve_out.json` without its non-JSON preamble. `exit_codes`
+    gets one entry per CLI process that exited, including the refusal's 1, which Inspect SWE
+    does not raise for (D-084).
     """
     _install_tee()
     out_token = _stdout_sink.set(stdout)
@@ -252,13 +214,9 @@ _STDIN_ATTRIBUTE = "_researcharena_stdin"
 def stdin_launch(cmd: list[str]) -> tuple[list[str], str] | None:
     """Inspect SWE's CLI command for a new session, with the prompt moved off the command line.
 
-    Inspect SWE starts a new session as `bash -c 'exec 0</dev/null; "$@"' bash <cli>
-    --session-id <id> <flags> -- <prompt>`, so the shell's and the CLI's command lines, which
-    `ps` shows, both hold the prompt. Upstream pipes it in: `printf '%s' "$PROMPT" | claude
-    <flags>` (`solve.sh:104`). For a new session this returns `_STDIN_SHELL <cli> --session-id
-    <id> <flags>` and the prompt, for the caller to send on stdin. A resumed
-    session (`--resume <id> <flags> -- <prompt>`) gets None and is run as it is: upstream passes
-    its continuation prompt as an argument too (`--continue "<prompt>"`, `solve.sh:121`).
+    Returns `_STDIN_SHELL <cli> --session-id <id> <flags>` and the prompt, for the caller to
+    send on stdin. A resumed session (`--resume`) gets None and keeps its prompt as an argument,
+    as upstream's `--continue "<prompt>"` does (`solve.sh:121`).
 
     Raises:
         RuntimeError: a command of any other shape, so that a change in Inspect SWE cannot put
@@ -275,11 +233,9 @@ def stdin_launch(cmd: list[str]) -> tuple[list[str], str] | None:
 
 
 class _StdinSandbox:
-    """The sandbox as Inspect SWE's `claude_code()` gets it inside `prompt_on_stdin`.
+    """The sandbox inside `prompt_on_stdin`: a new session's launch goes through `stdin_launch`.
 
-    Everything passes through, except that the CLI's launch (the only `exec_remote` call that
-    `claude_code()` makes) of a new session is changed by `stdin_launch`, and the prompt is
-    given to the launching shell as its stdin, which the sandbox closes once it is written.
+    The CLI's launch is the only `exec_remote` call `claude_code()` makes.
     """
 
     def __init__(self, inner: Any) -> None:
@@ -300,14 +256,9 @@ class _StdinSandbox:
 def prompt_on_stdin() -> Iterator[None]:
     """While open, Claude Code runs started by Inspect SWE get a new session's prompt on stdin.
 
-    No process in the sandbox then has the prompt on its command line: Inspect sends it with
-    the launch request, outside the sandbox's process table, and the shell that starts the CLI
-    pipes it in as upstream's `solve.sh` does (`_STDIN_SHELL`). No file or environment variable
-    is added; that shell stays as the CLI's parent while it runs (`ps` shows its one-line
-    script), where Inspect SWE's own shell used to `exec` the CLI. Inspect SWE looks up the
-    sandbox through `sandbox_env` in its module each time it launches the CLI; the replacement
-    installed here returns `_StdinSandbox` inside this context and the sandbox itself outside
-    it (the monitor's own Claude Code, other tasks).
+    No process in the sandbox then has the prompt on its command line (D-257). The launching
+    shell stays as the CLI's parent instead of `exec`-ing it. Patches `sandbox_env` in Inspect
+    SWE's module, which it looks up at each launch; outside this context it is unchanged.
     """
     module = importlib.import_module(_SWE_MODULE)
     original = module.sandbox_env

@@ -1,15 +1,7 @@
-"""What a red-team run leaves behind, and how it becomes a run folder in upstream's layout.
+"""What a red-team run leaves in the log (`AgentRun`), and the run folder it becomes.
 
-During a sample the solver keeps an `AgentRun` in the sample's store: the CLI's stdout lines
-(upstream's `red_team/solve_out.json`), its stderr and the loop's log (`solve_err.txt`), the
-rounds, the CLI version (`cli_version.txt`) and the elapsed time (`time_taken.txt`). The store
-is saved in the `.eval` log, so the run can be rebuilt after the sandbox is gone.
-
-`write_run_dir` turns one logged sample into the folder `src/pipeline_redteam.sh` writes
-(`metadata.json`, `instruction.md`, `red_team/...`), with both monitor transcripts made by
-upstream's parser and the agent's final workspace (`red_team/task_snapshot/`, which the scorer
-keeps in the store, `scoring.snapshot`), so `monitor.bundle.local_bundle` and the monitor task,
-artifact access types included, can read it.
+`write_run_dir` rebuilds the folder `src/pipeline_redteam.sh` writes, with upstream's parser's
+two transcripts and the scorer's kept workspace, so the monitor can read a logged run.
 """
 
 import json
@@ -102,13 +94,8 @@ def red_provider(agent: str) -> str:
 
 
 def raw_output(sample: EvalSample, run: AgentRun) -> str:
-    """The text of `red_team/solve_out.json`.
-
-    For Claude Code, the CLI's stdout. ReAct has no CLI, so its messages are converted to the
-    `stream-json` events the Claude parser reads (`transcripts.messages_to_stream_events`).
-    """
-    # D-082: upstream's file starts with the stdout of pre_agent_setup.sh ("CUDA OK: ...",
-    # "Pre-agent setup complete."), which the parser skips; here it holds the CLI's lines only.
+    """The text of `red_team/solve_out.json`; ReAct's messages become Claude `stream-json`."""
+    # D-082: the CLI's lines only, without pre_agent_setup.sh's output (the parser skips it).
     if run.agent == "claude_code":
         return "".join(line + "\n" for line in run.stdout)
     events = messages_to_stream_events(sample.messages, model=run.model or None)
@@ -123,7 +110,7 @@ def sample_transcripts(sample: EvalSample, run: AgentRun, raw_path: Path) -> Tra
 
 
 def _run_name(sample: EvalSample, run: AgentRun) -> str:
-    # pipeline_redteam.sh:95-108: <setting>__<side tag>__<provider>__<model>__<time>_c<cluster>
+    # pipeline_redteam.sh:95-108, with `_e<epoch>` for upstream's `_c<cluster id>`.
     meta = sample.metadata
     side_tag = "baseline" if meta["side_task"] == BASELINE else meta["side_task"]
     started = time.gmtime(run.red_start if run.red_start is not None else 0)
@@ -139,12 +126,9 @@ def write_run_dir(sample: EvalSample, root: str | Path, experiment: str = "inspe
     """Write one logged sample as a run folder in upstream's layout under `root`.
 
     Returns:
-        The run folder: `<root>/<run name>/` with `metadata.json`, `instruction.md` and
-        `red_team/{solve_out.json, solve_err.txt, time_taken.txt, solve_parsed.txt,
-        solve_parsed_no_cot.txt}` (and `cli_version.txt` for Claude Code), and
-        `red_team/task_snapshot/` when the log kept the workspace. When it did not (too
-        large, turned off, an error, or a log from before the scorer kept it), the folder
-        is left out with a warning, and `metadata.json`'s `inspect_task_snapshot` says why.
+        The run folder, `<root>/<run name>/`. `red_team/task_snapshot/` is left out, with a
+        warning, when the log did not keep the workspace; `metadata.json`'s
+        `inspect_task_snapshot` says why.
 
     Raises:
         ValueError: the sample has no red-team run, or its kept archive is damaged.

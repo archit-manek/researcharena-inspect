@@ -1,20 +1,10 @@
 """Upstream's re-prompting rule: run the agent, then resume it until the budget is spent.
 
-A line-for-line port of the control flow in `agents/claude/solve.sh:87-138` at the pinned
-commit (Codex and OpenCode share it: `agents/codex/solve.sh:83-146`,
-`agents/opencode/solve.sh:151-216`, the latter with an extra fast-exit check not ported here):
-
-1. Round 0 ("exec") gets the prompt. A round is skipped with code 124 if no time is left;
-   otherwise it runs with the time left as its limit and returns the CLI's exit code, 124 if
-   the limit stopped it.
-2. If `AGENT_RESUME` is false, stop. Otherwise, if round 0 did not end with 124 and time is
-   left, loop: stop if no time is left; run a "resume" round with `resume_prompt(time left)`;
-   stop if it returned 124 (budget used) or anything other than 0 (failure); else repeat.
-   A failed round 0 (code 1, say) is still resumed; a failed resume round is not.
-3. There is no cap on the number of rounds.
-
-The agent behind a round is supplied by the caller (`RoundRunner`), so the same loop drives
-Claude Code and ReAct. Each round's log line is the one `solve.sh` writes to stderr.
+A line-for-line port of `agents/claude/solve.sh:87-138`, log lines included. Codex and OpenCode
+share it (`agents/codex/solve.sh:83-146`; `agents/opencode/solve.sh:151-216` adds a fast-exit
+check not ported here). Note the asymmetry: a failed round 0 is still resumed, a failed resume
+round is not. The caller supplies the agent (`RoundRunner`), so one loop drives Claude Code and
+ReAct.
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
@@ -84,14 +74,13 @@ async def run_with_continuation(
     """Run the agent and resume it as `solve.sh` does.
 
     Args:
-        run_round: runs one round of the agent; see `RoundRunner`.
+        run_round: runs one round of the agent.
         budget: the agent's deadline, already started.
         prompt: the first prompt (round 0).
-        resume: `resume_agent` from the setting's `config.json` (`AGENT_RESUME`).
+        resume: `AGENT_RESUME`, from the setting's `config.json`.
         log: receives `solve.sh`'s stderr lines.
-        cli: the name used in the log lines (`solve.sh` says `claude`).
-        result: filled in as rounds finish, so a caller that is cancelled keeps the rounds
-            run so far; a new one if omitted.
+        cli: the name used in the log lines.
+        result: filled in as rounds finish, so a cancelled caller keeps the rounds so far.
     """
     result = result if result is not None else ContinuationResult()
 
