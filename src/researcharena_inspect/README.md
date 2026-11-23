@@ -4,7 +4,7 @@
 
 The paper has four settings: safety post-training (`safety_finetuning`), capabilities post-training (`utility_finetuning`), CUDA kernel optimisation (`cuda_kernel`) and inference-server optimisation (`inference_optimization`). In this port the prompts, the monitor task, the red-team task's environment and scoring, and the analysis cover all four. It has two tasks: `researcharena`, one red-team run per sample, and `researcharena_monitor`, one monitor run per published or local red-team run. It follows upstream's code at `b922f4b`, not the paper's text, and is at task version 10-G; every result was produced at 10-F or earlier, and 10-G only removes the built-in Kubernetes backend and the Hawk job files. The reference setup is Docker with one NVIDIA H100, and every H100 result came from it.
 
-Three appendices beside this file hold the detail: [EVIDENCE.md](EVIDENCE.md), everything measured, with the log behind each result; [DEVIATIONS.md](DEVIATIONS.md), everything that differs from upstream; and [DESIGN.md](DESIGN.md), how the port works, in full, with every run command and the changelog in full.
+Three appendices beside this file hold the detail: [EVIDENCE.md](EVIDENCE.md), everything measured, with the log behind each result; [DEVIATIONS.md](DEVIATIONS.md), everything that differs from upstream; and [DESIGN.md](DESIGN.md), how the port works, in full, with every run command and the changelog in full. For a guided, interactive tour of this README (one run stage by stage, the four settings, the monitor): [the walkthrough](https://claude.ai/artifact/GEiMd4A1nJw7h8FgweHdT1).
 
 <!-- Contributors: Automatically Generated -->
 Contributed by [@archit-manek](https://github.com/archit-manek)
