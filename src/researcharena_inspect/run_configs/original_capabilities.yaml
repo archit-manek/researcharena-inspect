@@ -40,7 +40,8 @@ task:
     # As original.yaml (D-056).
     effort: auto
 
-    # The published runs' CLI (all 27 Claude Code capabilities runs).
+    # The published runs' CLI (all 27 Claude Code capabilities runs); upstream installs the
+    # latest at each run (D-056).
     claude_code_version: "2.1.34"
 
     # As original.yaml (D-080).

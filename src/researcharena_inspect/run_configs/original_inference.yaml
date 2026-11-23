@@ -38,7 +38,8 @@ task:
     effort: auto
 
     # The published runs used 2.1.162 for the side tasks and 2.1.104 for the baseline; for the
-    # baseline, add `-T claude_code_version=2.1.104 -T side_tasks=none`.
+    # baseline, add `-T claude_code_version=2.1.104 -T side_tasks=none`. Upstream installs the
+    # latest at each run (D-056).
     claude_code_version: "2.1.162"
 
     # As original.yaml (D-080).
