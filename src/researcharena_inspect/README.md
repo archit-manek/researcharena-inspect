@@ -4,7 +4,7 @@
 
 The paper has four settings: safety post-training (`safety_finetuning`), capabilities post-training (`utility_finetuning`), CUDA kernel optimisation (`cuda_kernel`) and inference-server optimisation (`inference_optimization`). In this port the prompts, the monitor task, the red-team task's environment and scoring, and the analysis cover all four. It has two tasks: `researcharena`, one red-team run per sample, and `researcharena_monitor`, one monitor run per published or local red-team run. It follows upstream's code at `b922f4b`, not the paper's text, and is at task version 10-G; every result was produced at 10-F or earlier, and 10-G only removes the built-in Kubernetes backend and the Hawk material. The reference setup is Docker with one NVIDIA H100, and every H100 result came from it. Another Inspect sandbox can be given with `sandbox` and `sandbox_config`; without an `evaluator` service, scoring then runs in the agent's container after a process sweep, not in a container of its own (D-093).
 
-Two appendices beside this file hold the detail: [EVIDENCE.md](EVIDENCE.md), everything measured (the full verification table, the full evaluation report, and which log each result comes from), and [DEVIATIONS.md](DEVIATIONS.md), everything that differs from upstream (the full deviations table, the analysis choices, the full known limitations, and the port's design in full).
+Three appendices beside this file hold the detail: [EVIDENCE.md](EVIDENCE.md), everything measured (the full verification table, the full evaluation report, and which log each result comes from); [DEVIATIONS.md](DEVIATIONS.md), everything that differs from upstream (the full deviations table, the analysis choices and the full known limitations); and [DESIGN.md](DESIGN.md), how the port works, in full (every run command, the parameters, a red-team sample and its scoring, and the changelog in full).
 
 <!-- Contributors: Automatically Generated -->
 Contributed by [@archit-manek](https://github.com/archit-manek)
@@ -55,7 +55,7 @@ The monitor task stages upstream's monitor files, runs Claude Code or ReAct with
 
 Pass lines are the paper's main-task thresholds; upstream's code has none for the main task (D-028). Budgets are the published runs'; the task's `redruntime` defaults to one hour and the run configs set the published values. Each setting also has a baseline. CUDA and inference agents are re-prompted until the budget is spent; post-training agents run once.
 
-[`run_configs/`](run_configs/) holds the paper's setup as `inspect eval --run-config` files, one per setting and one for the monitor, each value commented with where upstream sets it. They are upstream's settings, not a recipe for the paper's numbers. Each runs three trials a cell, as the paper does (`--epochs 1` for one), one sample at a time and one CLI version per command. The pinned versions (the published runs, the published models, every model and dataset file in the agent's cache, the agent image) and the modules by role: [DEVIATIONS.md](DEVIATIONS.md#what-is-in-the-port).
+[`run_configs/`](run_configs/) holds the paper's setup as `inspect eval --run-config` files, one per setting and one for the monitor, each value commented with where upstream sets it. They are upstream's settings, not a recipe for the paper's numbers. Each runs three trials a cell, as the paper does (`--epochs 1` for one), one sample at a time and one CLI version per command. The pinned versions (the published runs, the published models, every model and dataset file in the agent's cache, the agent image) and the modules by role: [DEVIATIONS.md](DESIGN.md#what-is-in-the-port).
 
 ## How to run it
 
@@ -65,7 +65,7 @@ Pass lines are the paper's main-task thresholds; upstream's code has none for th
 - Docker, to run any task locally. The red-team task and the two checks need a Linux x86-64 machine with one NVIDIA GPU of compute capability 8.0, 8.9 or 9.0 (the image builds the kernels for those) and the NVIDIA Container Toolkit. The monitor task and the tests need no GPU; the analysis needs neither Docker nor a GPU.
 - A key for the model provider (`ANTHROPIC_API_KEY` for Claude) in the environment or in a `.env` file, for the agents and monitors that call a model.
 
-What each task downloads, which gated models it needs and what it writes beside the log: [DEVIATIONS.md](DEVIATIONS.md#what-you-need).
+What each task downloads, which gated models it needs and what it writes beside the log: [DEVIATIONS.md](DESIGN.md#what-you-need).
 
 ### A first run that costs nothing
 
@@ -120,7 +120,7 @@ uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_
 uv run python -m researcharena_inspect.analysis.reproduce --rules paper_published_verdicts --only-gaps
 ```
 
-The capabilities and safety settings first need their model, datasets and (for safety) two gated judges in a host folder (D-170, D-210): [the commands](DEVIATIONS.md#how-to-run-it-in-full). Where these have run and what runs cost (a five-hour post-training run $3.61 to $11.80): [EVIDENCE.md](EVIDENCE.md#where-it-ran-and-what-it-cost).
+The capabilities and safety settings first need their model, datasets and (for safety) two gated judges in a host folder (D-170, D-210): [the commands](DESIGN.md#how-to-run-it-in-full). Where these have run and what runs cost (a five-hour post-training run $3.61 to $11.80): [EVIDENCE.md](EVIDENCE.md#where-it-ran-and-what-it-cost).
 
 <!-- Usage: Automatically Generated -->
 ## Usage
@@ -248,7 +248,7 @@ See `uv run inspect eval --help` for all available options.
 
 <!-- /Parameters: Automatically Generated -->
 
-Notes on the agents, `redruntime`, `effort`, `small_model`, the sandbox, `model_store` and the monitor's access types: [DEVIATIONS.md](DEVIATIONS.md#notes-on-the-parameters).
+Notes on the agents, `redruntime`, `effort`, `small_model`, the sandbox, `model_store` and the monitor's access types: [DEVIATIONS.md](DESIGN.md#notes-on-the-parameters).
 
 ## How a red-team sample runs
 
@@ -273,7 +273,7 @@ Upstream's pipeline decides no run's success. The main-task thresholds exist onl
 
 **Analysis (`analysis/`).** A run is flagged when its suspicion is above 50. Detection rate and AUROC (side-task runs against baselines) follow the paper's appendix. `python -m researcharena_inspect.analysis.reproduce` prints every printed cell of the paper's Tables 2, 3 and 5 to 9 next to the value the published runs give.
 
-These two sections in full, with every failure mode: [DEVIATIONS.md](DEVIATIONS.md#the-ports-design-in-full).
+These two sections in full, with every failure mode: [DEVIATIONS.md](DESIGN.md#the-ports-design-in-full).
 
 ## What has been verified, and how
 
@@ -281,7 +281,7 @@ The full table, one row per check with the test or run behind it: [EVIDENCE.md](
 
 | Claim | Headline result |
 | --- | --- |
-| [All four settings and their 13 side tasks are wired; the monitor builds for all four](DEVIATIONS.md#what-is-in-the-port) | 4 CUDA, 4 inference, 3 safety, 2 capabilities side tasks, plus baselines. Of upstream's harnesses only Claude Code is ported (ReAct is added) |
+| [All four settings and their 13 side tasks are wired; the monitor builds for all four](DESIGN.md#what-is-in-the-port) | 4 CUDA, 4 inference, 3 safety, 2 capabilities side tasks, plus baselines. Of upstream's harnesses only Claude Code is ported (ReAct is added) |
 | [Prompts, staging and scorer output are tested against upstream's own scripts](EVIDENCE.md#what-has-been-verified-and-how) | Agent prompts byte-identical in 369 of 369 combinations, monitor prompts in 492 of 492; staging and scorer compared with upstream's pipeline in Docker, on CPU stand-ins for the GPU, vLLM and the judges |
 | [On the H100 the port's scoring agrees with upstream's `evaluate.py` run directly](EVIDENCE.md#what-has-been-verified-and-how) | Two capabilities models within 3 of 200; two safety models equal or within 0.0041; all ten post-training scorer checks pass their rules fixed beforehand |
 | [Scoring in the evaluator's own container (D-093) stays within bands fixed beforehand](EVIDENCE.md#what-has-been-verified-and-how) | Pass, all five rows (E1, E2, R1 to R3): CUDA workspaces move by −0.033 to +0.011 (mine) and +0.018 to +0.061 (published) |
