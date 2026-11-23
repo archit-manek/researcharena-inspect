@@ -14,11 +14,13 @@ Contributed by [@archit-manek](https://github.com/archit-manek)
 
 The port follows upstream's code at `b922f4b`, as agreed with Generality Labs on 16 Nov 2026, not the paper's text. Upstream's task files, evaluators, monitor templates and helper scripts are used unchanged from a checkout of that commit (`upstream.upstream_dir()`); only upstream's bash orchestration (`pipeline_redteam.sh`, `pipeline_monitor.sh`, the agents' `solve.sh`) is rewritten as Inspect code, and the port adds what upstream has no counterpart for (ReAct, the `null` and `replay` agents, the model bridge, Inspect's metrics). Where the port re-implements something, a test runs upstream's own script from the checkout and requires the same output: the same bytes for prompt text and staged files, the same values after normalising times and paths for scorer outputs on CPU stand-ins (each row of [What has been verified](#what-has-been-verified-and-how) says which). Upstream's behaviour is the default, flaws included; a bug is fixed only if it stops a run or a score from being produced.
 
-Three consequences a reviewer should know:
+Where the port differs from the paper:
 
-- `b922f4b` is 13 commits newer than the paper's release. It fixes some flaws the published runs had (monitors now see the workspace's `.git`, ledger D-003) and changes the post-training settings' prompts and evaluation data (D-054, D-055). For `cuda_kernel` the scoring files are unchanged between the two commits.
+- `b922f4b` is 13 commits newer than the paper's release. It fixes some flaws the published runs had (monitors now see the workspace's `.git`, ledger D-003) and changes the post-training settings' prompts and evaluation data (D-054, D-055; safety is now graded on 200 HarmBench prompts, not 520 AdvBench prompts), so those settings cannot match the paper's numbers. For `cuda_kernel` the scoring files are unchanged between the two commits.
 - Upstream's latest defaults differ from what the published runs used: `xhigh` reasoning effort and the latest Claude Code release (D-056). `run_configs/original.yaml` sets the published runs' values where they are known.
 - The published runs themselves came from code earlier than the release in places (for example, stored CUDA scores are the speedup divided by 2, D-004). They are the second check, not the reference.
+- Of the paper's agent harnesses only Claude Code is ported; Inspect's ReAct agent is added.
+- The image built from `b922f4b` has vLLM 0.19.1, where the published inference runs show 0.17.0 (D-133, D-134); on 0.19.1, 19 of the 104 published passes score 0.0 ([re-scored published submissions](#what-has-been-verified-and-how)).
 
 Deviations are tagged in the code with their ledger id (`# D-NNN`) and listed [below](#deviations-from-upstream). The ledger itself is in my audit notes, which are not public; the ids are its entry numbers.
 
@@ -342,13 +344,11 @@ The other 43 deviations change how a run is set up or recorded (the containers, 
 
 ## Known limitations
 
-The ones a reviewer most needs, besides D-093 and D-078 above; all of them, in full: [DEVIATIONS.md](DEVIATIONS.md#known-limitations).
+The ones a reviewer most needs, besides D-093, D-078 and the differences from the paper above; all of them, in full: [DEVIATIONS.md](DEVIATIONS.md#known-limitations).
 
 - **Inspect Evals checklist exceptions.** The 10% line on invalid samples is not shown to be met; the evaluation report cannot be regenerated from this repository, since its logs are not in it: they are on Generality Labs' Hawk ([EVIDENCE.md](EVIDENCE.md) maps each table to its logs); the trajectory analysis covers Sonnet 4.6 only; and no positive known-good fixture runs by default on the GPU path, because the untouched starter faults in upstream's scorer.
 - **Upstream's RoPE starter faults on the H100, and so do some agents' kernels** (D-037): a 0.0 from this fault is upstream's score.
 - **Upstream's flaws are kept by default**: a CUDA score can be read from a file the agent wrote (D-001), the baseline is plain PyTorch (D-002), there is no correctness check on the kernels (D-013), and the inference gates are weak (D-139).
-- **`inference_optimization` runs on upstream's vLLM 0.19.1, not the published runs' 0.17.0** (D-133, D-134); see the re-scored published submissions above.
-- **Post-training settings at `b922f4b` differ from the paper** in prompts and evaluation data (D-054, D-055).
 - **Three live inference scores do not hold on replay** (D-255): their submissions bundle a vLLM compile cache that points into the agent's home.
 
 ## Where to start reading the code
