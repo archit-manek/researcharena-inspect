@@ -1,44 +1,31 @@
-"""The sandbox the agent runs in, for Docker or Kubernetes, with one GPU.
+"""The sandbox the agent runs in: Docker, with one GPU.
 
 Upstream asks its cluster for one "NVIDIA H100 80GB HBM3", 8 CPUs, 64 GB (`run.sub`) or 256 GB
 (`run_redteam.sub`) of memory and 100-200 GB of disk, and runs the agent with `apptainer exec
 --nv` (all GPUs of the job, made visible as device 0 by `CUDA_VISIBLE_DEVICES=0`) and no
-network limit (ledger D-029). The configs here keep the single GPU and the open network:
-
-- `k8s_values_l4.yaml`: Hawk's L4 pool (AWS g6). The node we got has 8 CPUs and about 32 GB, so
-  the requests are 6 CPUs and 24 GiB (D-094); not the paper's GPU.
-- `k8s_values_h100.yaml`: Hawk's H100 pool (p5.4xlarge, 16 vCPUs); upstream's 8 CPUs and 64 GiB.
-- `compose.yaml`: a single-GPU Docker machine with the NVIDIA Container Toolkit; upstream's
-  8 CPUs and 64 GB.
-
-Hawk accepts only the values its validator has reviewed (`hawk/runner/sandbox_values.py` in
-METR/hawk v4.1.0): these use `services.default.{image, nodeSelector, resources}` and
-`allowEntities`, all on its allowlist. Hawk adds the GPU pool's toleration itself and runs a
-GPU service on the node's default runtime (gVisor cannot pass a GPU through).
+network limit (ledger D-029). `compose.yaml` keeps the single GPU and the open network: a
+single-GPU Docker machine with the NVIDIA Container Toolkit; upstream's 8 CPUs and 64 GB.
 
 For a setting whose servers run vLLM (`inference_optimization`, and the two post-training
 settings, whose scorers serve the agent's model with vLLM and whose agents train with PyTorch
 data loaders; `model_cache.PROVISIONED_SETTINGS`), the
 Docker sandbox is `compose.yaml` with two additions (`vllm_compose`): a larger `/dev/shm` (D-132)
 and, if given, a host Hugging Face cache mounted read-only at `model_cache.SEED_MOUNT` (D-130).
-Kubernetes gets the same values as every other setting; the model is then downloaded at staging.
 
-Every Docker sandbox of the red-team task also gets the evaluator service (`with_evaluator`,
-D-093): a second container of the same image with the same GPU, CPUs, memory and `/dev/shm`,
+Every sandbox this module builds for the red-team task also gets the evaluator service
+(`with_evaluator`, D-093): a second container of the same image with the same GPU, CPUs, memory and `/dev/shm`,
 which shares two named volumes with the agent's container and nothing else: the Hugging Face
 cache at `HF_HOME` (upstream's per-run overlay) and the run folder at `EVAL_DIR`. Upstream's
 evaluator runs there after the agent's container has been stopped (`environment.evaluation`).
-On Kubernetes each service would be a pod of its own, which cannot share the one GPU and these
-folders, so the evaluator stays in the agent's container there.
+A custom `sandbox` with no `evaluator` service scores in the agent's container instead.
 
 A setting with a `pipeline_pre_agent.sh` hook (`utility_finetuning`, `safety_finetuning`) also
 gets the hook service (`with_hook_service`, `environment.services`): a second container of the
-same image that joins the agent container's network namespace and nothing else. Kubernetes
-cannot do that, and a run that needs the service is refused there (`task.py`).
+same image that joins the agent container's network namespace and nothing else.
 """
 
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final
 
 import yaml
 from inspect_ai.util import (
@@ -52,18 +39,8 @@ from researcharena_inspect.environment.layout import EVAL_DIR, EVALUATOR_SERVICE
 from researcharena_inspect.environment.model_cache import PROVISIONED_SETTINGS, SEED_MOUNT
 from researcharena_inspect.environment.services import SERVICE_NAME, setting_has_hooks
 
-Backend = Literal["docker", "k8s"]
-GpuName = Literal["l4", "h100"]
-
 _HERE = Path(__file__).parent
 COMPOSE_FILE: Final = _HERE / "compose.yaml"
-K8S_VALUES: Final[dict[str, Path]] = {
-    "l4": _HERE / "k8s_values_l4.yaml",
-    "h100": _HERE / "k8s_values_h100.yaml",
-}
-
-# Karpenter's label for the GPU model of an AWS node; Hawk's validator allows `nodeSelector`.
-GPU_NAME_LABEL: Final = "karpenter.k8s.aws/instance-gpu-name"
 
 VLLM_SHM_SIZE: Final = "16gb"
 """`/dev/shm` for a sandbox that runs vLLM (D-132). Docker's default is 64 MB; vLLM's Docker
@@ -164,53 +141,34 @@ def without_network(config: ComposeConfig) -> ComposeConfig:
 
 
 def sandbox_spec(
-    backend: Backend = "k8s",
-    gpu: GpuName | None = None,
+    *,
     setting: str | None = None,
     hf_seed: str | None = None,
     offline: bool = False,
     evaluator: bool = True,
 ) -> SandboxEnvironmentSpec:
-    """The Inspect sandbox for the agent.
+    """The Inspect sandbox for the agent: Docker on the local machine's GPU.
 
     Args:
-        backend: "k8s" for a Kubernetes cluster such as Hawk, "docker" for one Docker machine.
-        gpu: the GPU model to ask Kubernetes for ("l4" if None). With Docker the machine's GPU
-            is used, so a model cannot be chosen and must be None.
-        setting: the setting the sandbox is for; with Docker, a setting whose servers run vLLM
-            gets `vllm_compose`, plus the hook service if the setting has
-            `pipeline_pre_agent.sh` hooks; every other one gets `compose.yaml`.
-        hf_seed: Docker only: a host Hugging Face cache to mount read-only (see `vllm_compose`).
-        offline: Docker only, for scorer checks with no agent: the sandbox has no network
+        setting: the setting the sandbox is for; a setting whose servers run vLLM gets
+            `vllm_compose`, plus the hook service if the setting has `pipeline_pre_agent.sh`
+            hooks; every other one gets `compose.yaml`.
+        hf_seed: a host Hugging Face cache to mount read-only (see `vllm_compose`).
+        offline: for scorer checks with no agent: the sandbox has no network
             (`without_network`, D-185). Off by default.
-        evaluator: Docker only: add the evaluator's service (`with_evaluator`, D-093), where
-            the red-team scorer runs upstream's evaluator. The diagnostic tasks, which run
-            `evaluate.py` on a staged workspace with no agent, keep one container (False).
-
-    Raises:
-        ValueError: an unknown backend or GPU, a GPU model with Docker, or `hf_seed` or
-            `offline` with Kubernetes.
+        evaluator: add the evaluator's service (`with_evaluator`, D-093), where the red-team
+            scorer runs upstream's evaluator. The diagnostic tasks, which run `evaluate.py` on
+            a staged workspace with no agent, keep one container (False).
     """
-    if backend == "docker":
-        if gpu is not None:
-            raise ValueError("the docker backend uses the machine's GPU; pass gpu=None")
-        hooks = setting is not None and setting_has_hooks(setting)
-        if setting in PROVISIONED_SETTINGS or hf_seed is not None:
-            config = vllm_compose(hf_seed)
-        elif hooks or offline or evaluator:
-            config = _load_compose()
-        else:
-            return SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
-        if evaluator:
-            config = with_evaluator(config)  # D-093
-        if hooks:
-            config = with_hook_service(config)
-        return SandboxEnvironmentSpec("docker", without_network(config) if offline else config)
-    if hf_seed is not None or offline:
-        raise ValueError("hf_seed and offline need backend='docker'")
-    if backend == "k8s":
-        chosen = gpu or "l4"
-        if chosen not in K8S_VALUES:
-            raise ValueError(f"unknown GPU {chosen!r}; available: {sorted(K8S_VALUES)}")
-        return SandboxEnvironmentSpec("k8s", str(K8S_VALUES[chosen]))
-    raise ValueError(f"unknown sandbox backend {backend!r}; use 'docker' or 'k8s'")
+    hooks = setting is not None and setting_has_hooks(setting)
+    if setting in PROVISIONED_SETTINGS or hf_seed is not None:
+        config = vllm_compose(hf_seed)
+    elif hooks or offline or evaluator:
+        config = _load_compose()
+    else:
+        return SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+    if evaluator:
+        config = with_evaluator(config)  # D-093
+    if hooks:
+        config = with_hook_service(config)
+    return SandboxEnvironmentSpec("docker", without_network(config) if offline else config)

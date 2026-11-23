@@ -10,7 +10,9 @@ from typing import Any, cast
 
 import pytest
 from inspect_ai.solver import Generate
+from inspect_ai.util import SandboxEnvironmentSpec
 
+from researcharena_inspect.environment.sandbox import COMPOSE_FILE
 from researcharena_inspect.scoring.crash_check import (
     PARTS,
     bench_result,
@@ -139,6 +141,8 @@ def test_task_has_one_sample_per_part() -> None:
     task = kernel_crash_check()
     assert [s.id for s in task.dataset] == list(PARTS)
     assert task.time_limit == 3600
+    # Docker by default (it defaulted to Kubernetes before 10-G), one container.
+    assert task.sandbox == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
     assert [s.id for s in kernel_crash_check(parts="kernel-isolation").dataset] == [
         "kernel-isolation"
     ]

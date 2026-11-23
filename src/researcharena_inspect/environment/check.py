@@ -18,7 +18,6 @@ The score says only whether `evaluate.py` wrote `metrics.json` (upstream's own t
 finished evaluation); judging the numbers is the scorers' job.
 """
 
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -38,7 +37,7 @@ from researcharena_inspect.environment.layout import (
     TASK_DIR,
     agent_env,
 )
-from researcharena_inspect.environment.sandbox import Backend, GpuName, sandbox_spec
+from researcharena_inspect.environment.sandbox import sandbox_spec
 from researcharena_inspect.environment.staging import stage_workspace
 from researcharena_inspect.prompts import format_hours, resume_agent
 
@@ -211,33 +210,27 @@ def evaluation_finished() -> Scorer:
 
 @task
 def environment_check(
-    backend: Backend = "k8s",
-    gpu: GpuName | None = "l4",
     setting: str = "cuda_kernel",
     side_task: str = "none",
     build: bool = True,
     evaluate: bool = True,
-    sandbox_start_timeout: int | None = None,
     time_limit: int = 3600,
 ) -> Task:
     """Check the agent's environment on a GPU without an agent or a model call.
 
+    Runs in the built-in Docker sandbox (`environment.sandbox_spec`) on the local machine's
+    GPU, in one container (no evaluator's service).
+
     Args:
-        backend: "k8s" (for example Hawk) or "docker" (one GPU machine).
-        gpu: GPU model to ask Kubernetes for ("l4" or "h100"); must be None with Docker.
         setting: setting whose workspace is staged and evaluated.
         side_task: side task, or "none" for the baseline.
         build: run upstream's kernel build step.
         evaluate: run upstream's `evaluate.py` once on the untouched workspace.
-        sandbox_start_timeout: seconds to wait for the sandbox to start (sets the Kubernetes
-            sandbox's `INSPECT_HELM_TIMEOUT`); the sample's time limit starts only after it.
         time_limit: the sample's time limit in seconds.
 
     Returns:
         A one-sample task whose metadata holds every command's raw output.
     """
-    if sandbox_start_timeout is not None:
-        os.environ["INSPECT_HELM_TIMEOUT"] = str(sandbox_start_timeout)
     return Task(
         dataset=MemoryDataset(
             [
@@ -252,7 +245,7 @@ def environment_check(
             setting=setting, side_task=side_task, build=build, evaluate=evaluate
         ),
         scorer=evaluation_finished(),
-        sandbox=sandbox_spec(backend, None if backend == "docker" else gpu, evaluator=False),
+        sandbox=sandbox_spec(evaluator=False),
         time_limit=time_limit,
         version=EVAL_VERSION,
     )

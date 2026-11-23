@@ -5,7 +5,7 @@ arxiv: https://arxiv.org/abs/2607.19321
 group: Scheming
 contributors:
   - archit-manek
-version: "10-F"
+version: "10-G"
 tags: ["Agent", "AI control", "Sabotage", "Monitoring"]
 tasks:
   # The red-team run. 5 samples with the defaults (setting cuda_kernel: four side tasks and the
@@ -21,12 +21,14 @@ tasks:
   # (its side scores, its model, judges and datasets in the cache, replay of its published
   # models: D-210 to D-213); the other three settings' samples are scored as in 4-C. Version 6
   # scores every setting, on Docker, in a container of its own after the agent's has been
-  # stopped, as upstream does (D-093); on Kubernetes scoring is as in 5-A. Version 7-F: a mean
+  # stopped, as upstream does (D-093). Version 7-F: a mean
   # over no values is nan, not 0.0; the letter counts the interface changes since 3-D (4-C, 5-A
   # and 6-A went backwards). Version 8-F: the safety scorer's Llama Guard judge loads without a
   # token (D-254). Version 9-F: the red-team Claude Code's first prompt on stdin, not on its
   # command line (D-078, D-257); the monitor's own prompt is still an argument. Version 10-F: the ReAct agent's `bash` description names the working
-  # directory and the time limit. Every version is in the README's changelog.
+  # directory and the time limit. Version 10-G removes the built-in Kubernetes backend and
+  # the gpu_probe task; the two check tasks run on Docker by default, and nothing on Docker
+  # can move. Every version is in the README's changelog.
   - name: researcharena
     dataset_samples: 5
   # The monitor over the authors' published runs. 113 samples with the defaults (every published
@@ -130,15 +132,14 @@ external_assets:
     comment: "The model whose generation the CUDA kernels speed up. Upstream's bench.py loads it with transformers inside the sandbox, with no revision."
 
 # Scope: the GPU is for researcharena and the two maintenance checks; researcharena_monitor
-# and the analysis need none. Every reported result ran with Docker on one H100. On Kubernetes
-# (supports_k8s) the port has run cuda_kernel only, on an L4 (a smoke run, not the reference),
-# scoring there runs in the agent's container after a process sweep (D-093), the two upload
-# cells are refused (D-174) and safety_finetuning cannot stage its gated judges (D-263).
+# and the analysis need none. Every reported result ran with Docker on one H100, the built-in
+# sandbox. Another Inspect sandbox can be given (`sandbox`, `sandbox_config`); without an
+# `evaluator` service scoring then runs in the agent's container (D-093).
 metadata:
   sandbox: ["solver", "scorer"]
   requires:
     internet: true
     gpu:
       count: 1
-      products: ["H100", "L4"]
-  supports_k8s: true
+      products: ["H100"]
+  supports_k8s: false

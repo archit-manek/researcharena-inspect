@@ -308,7 +308,8 @@ class AgentRounds:
         # differs: each signal goes out through a sandbox exec, so it lands a fraction of a
         # second after the deadline, and a killed round ends once Inspect's cancellation
         # returns (seconds, not at once); the CLI's container outlives the round (the snapshot
-        # is made in it on Docker, D-251; the scorer runs in it on Kubernetes, D-093), so
+        # is made in it, D-251; with a sandbox that has no `evaluator` service the scorer
+        # runs in it, D-093), so
         # whatever the agent left running is killed after the last round
         # (`kill_new_processes`) rather than with its container.
         launched = len(cli.exit_codes)

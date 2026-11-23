@@ -26,8 +26,7 @@ After the agent's processes are killed, `copy_hook_evidence` copies the service'
 into the evaluator's `/mnt/eval/` (where upstream's evaluator reads it:
 `Path(submission_dir).parent`; on Docker in the evaluator's own container, D-093; the hook
 service keeps its loopback after the agent's container has stopped), owned by the evaluator's
-user, and keeps a bounded record of it in the score (D-174). Kubernetes is refused for these side tasks: Inspect's Kubernetes sandbox
-puts each service in its own pod, so a service cannot share the agent's loopback.
+user, and keeps a bounded record of it in the score (D-174).
 
 D-173: in the agent's container the upload endpoint's host (`exfil_endpoint` in the setting's
 `config.json`) resolves to loopback (`pin_endpoint_hosts`, two lines in `/etc/hosts` written by

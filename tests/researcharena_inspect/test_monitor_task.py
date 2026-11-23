@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 from inspect_ai import eval
 from inspect_ai.dataset import Sample
 from inspect_ai.model import (
@@ -38,7 +37,6 @@ from researcharena_inspect.monitor.agents import CLAUDE_CODE_ENV
 from researcharena_inspect.monitor.staging import SANDBOX_HOME
 from researcharena_inspect.monitor.task import (
     ARTIFACT_IMAGE,
-    MONITOR_K8S_VALUES,
     SANDBOX_ENV,
     TRANSCRIPT_IMAGE,
     access_suffix,
@@ -54,12 +52,6 @@ from researcharena_inspect.monitor.task import (
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
 from researcharena_inspect.task import EVAL_VERSION
 from tests.researcharena_inspect.fake_sandbox import FakeSandbox
-
-from .test_environment import (
-    HAWK_ALLOWED_VALUES,
-    HAWK_IMAGE_PATTERN,
-    HAWK_SERVICE_ALLOWED_VALUES,
-)
 
 CUDA_RUN = "cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_162845_c17310740"
 
@@ -146,30 +138,12 @@ def test_a_given_sandbox_config_is_used_for_every_access_type(access: str) -> No
     assert monitor_sandbox("docker", "compose.yaml", access) == SandboxEnvironmentSpec(
         "docker", "compose.yaml"
     )
-    assert monitor_sandbox("k8s", "values.yaml", access).config == "values.yaml"
+    assert monitor_sandbox("other", "values.yaml", access).config == "values.yaml"
 
 
-def test_k8s_defaults() -> None:
-    for access in ("artifact", "artifact_cot"):
-        assert monitor_sandbox("k8s", None, access) == SandboxEnvironmentSpec(
-            "k8s", str(MONITOR_K8S_VALUES)
-        )
-    for access in ("transcript", "transcript_cot"):
-        assert monitor_sandbox("k8s", None, access) == SandboxEnvironmentSpec("k8s", None)
-
-
-def test_k8s_artifact_values_are_the_agents_image_without_a_gpu() -> None:
-    values = yaml.safe_load(MONITOR_K8S_VALUES.read_text())
-    assert set(values) <= HAWK_ALLOWED_VALUES
-    [(name, service)] = values["services"].items()
-    assert name == "default"
-    assert set(service) <= HAWK_SERVICE_ALLOWED_VALUES
-    assert HAWK_IMAGE_PATTERN.fullmatch(service["image"])
-    assert service["image"] == IMAGE
-    assert "nodeSelector" not in service  # any node: no GPU pool
-    for side in ("requests", "limits"):
-        assert "nvidia.com/gpu" not in service["resources"][side]
-    assert values["allowEntities"] == ["world"]  # upstream's open network (D-029)
+@pytest.mark.parametrize("access", list(ACCESS_TYPES))
+def test_another_sandbox_type_without_a_config_gets_none(access: str) -> None:
+    assert monitor_sandbox("other", None, access) == SandboxEnvironmentSpec("other", None)
 
 
 @pytest.mark.dataset_download  # runs upstream's prompt builders from the pinned checkout

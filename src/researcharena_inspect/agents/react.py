@@ -10,7 +10,7 @@ Inspect's standard tools allow:
   provider) and no subagents;
 - both run as the agent's user; `bash` also gets the agent's environment and starts in the
   workspace, as Claude Code's shell does (Inspect's own `bash()` takes a user but no
-  environment or working directory, and Kubernetes' `runuser` resets `PATH` and `HOME`);
+  environment or working directory);
 - three sentences in `bash`'s description (`react_bash_description`), a tool every model
   reads: where commands start, absolute paths for the editor (it resolves relative ones from
   `/`), and the per-command limit. Claude Code's model is told the starting directory, absolute

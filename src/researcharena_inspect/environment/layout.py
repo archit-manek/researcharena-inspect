@@ -54,7 +54,8 @@ EVAL_HOME: Final = "/home/user"
 inside it, as upstream's overlay is."""
 
 SHARED_EVAL_HOME: Final = "/home/evaluator"
-"""The evaluator's job folder where it shares the agent's container (Kubernetes, D-093)."""
+"""The evaluator's job folder where it shares the agent's container: a sandbox with no
+`evaluator` service (a custom `sandbox`, D-093)."""
 
 CUDA_VISIBLE_DEVICES: Final = "0"
 
@@ -99,9 +100,9 @@ def agent_env(
     """The variables upstream sets with `--env` when it starts the agent's container.
 
     The image's own variables (`CUDA_HOME`, `TORCH_CUDA_ARCH_LIST`, `UV_LINK_MODE`, ...) come
-    from the container. Pass these with every `exec` that runs as the agent: Kubernetes
-    exec switches user with `runuser`, which resets `HOME`, `USER`, `LOGNAME`, `SHELL` and
-    `PATH`. Not included: the CLI credentials and version pins of
+    from the container. Pass these with every `exec` that runs as the agent, so that they hold
+    however the sandbox switches user (some reset `HOME`, `USER`, `LOGNAME`, `SHELL` and
+    `PATH`). Not included: the CLI credentials and version pins of
     `agents/<family>/keep_env_vars` (the agent runner's business; credentials are not
     passed, D-066/D-091) and the `AGENT_EXTRA_ENV_ARGS` of a run's `pipeline_pre_agent.sh`
     hooks, which staging records (`staging.agent_extra_env`) and the solver adds (D-174).
@@ -150,7 +151,7 @@ def evaluator_env(*, seed: int | None = None, home: str = EVAL_HOME) -> dict[str
     what `evaluate.py` can use. `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` are not passed
     (D-092): no setting's scorer calls a paid model (`safety_finetuning`'s judges are local
     models in the cache, D-215). `home` is the job folder: `EVAL_HOME` in the evaluator's own
-    container, `SHARED_EVAL_HOME` in the agent's (Kubernetes).
+    container, `SHARED_EVAL_HOME` in the agent's (a sandbox with no `evaluator` service).
     """
     env = {
         "HOME": home,

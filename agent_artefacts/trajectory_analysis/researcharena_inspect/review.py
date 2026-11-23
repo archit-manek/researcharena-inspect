@@ -263,7 +263,8 @@ VERSIONS_NOTE: dict[str, str] = {
         "runs here (`inf-full-embedded-2`, `-embedded-3`, `-embedded2-3`, `-embedded3-2`, "
         "`-embedded3-3`); the scanners see the side task anyway (this eval's are told it, and it "
         "is in the first prompt), so that changes none of their questions. 10-F changes only "
-        "ReAct's `bash` description; nothing for Claude Code."
+        "ReAct's `bash` description; nothing for Claude Code. 10-G removes only the built-in "
+        "Kubernetes backend; nothing for these logs, which all ran on Docker."
     ),
     "claude-sonnet-4-6-react": (
         "Since the newest logs: 9-F changes only how Claude Code receives its prompt; nothing for "
@@ -271,7 +272,8 @@ VERSIONS_NOTE: dict[str, str] = {
         "`/home/user/task`, absolute paths in the file editor, the per-command limit of 3600 s). "
         "Before it, ReAct models began with editor calls on paths under `/` (eval README, "
         "changelog), so a ReAct run at 10-F may start differently from these four; none of their "
-        "scanners flagged that start."
+        "scanners flagged that start. 10-G removes only the built-in Kubernetes backend; nothing "
+        "for these logs, which all ran on Docker."
     ),
 }
 

@@ -6,9 +6,10 @@ as upstream stages it, the agent runs in the sandbox for upstream's time budget 
 re-prompted as upstream re-prompts it, and the workspace is then scored by upstream's
 `evaluate.py`. By default each part comes from the environment and scoring packages:
 
-- `sandbox`: `environment.sandbox_spec(backend, gpu)`, upstream's image with one GPU (Docker on
-  a GPU machine, or Kubernetes such as Hawk with `backend="k8s"`). `sandbox="docker"` without a
-  config gives a CPU-only Debian image for tests.
+- `sandbox`: `environment.sandbox_spec()`, upstream's image with one GPU in Docker on the
+  local machine, with the evaluator's own container (D-093). The `sandbox` option replaces it
+  with another Inspect sandbox; `sandbox="docker"` without a config gives a CPU-only Debian
+  image for tests.
 - `setup`: `environment.stage_agent_workspace`, upstream's staging and pre-agent hooks
   (`pipeline_redteam.sh:169-309`), for `inference_optimization` and the two post-training
   settings the model (and their datasets, and `safety_finetuning`'s judges) in the agent's
@@ -25,7 +26,6 @@ agent's work; one sample per replayed run).
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
 
-import os
 import re
 from pathlib import PurePosixPath
 
@@ -44,12 +44,7 @@ from researcharena_inspect.environment.model_cache import (
     PROVISIONED_SETTINGS,
     ModelCacheMode,
 )
-from researcharena_inspect.environment.sandbox import (
-    Backend,
-    GpuName,
-    sandbox_spec,
-    with_evaluator,
-)
+from researcharena_inspect.environment.sandbox import sandbox_spec, with_evaluator
 from researcharena_inspect.environment.services import pipeline_hooks
 from researcharena_inspect.environment.staging import stage_agent_workspace
 from researcharena_inspect.pins import CLAUDE_CODE_SMALL_MODEL
@@ -211,25 +206,6 @@ def dataset_setting(dataset: MemoryDataset) -> str | None:
     return None
 
 
-def check_hook_backend(dataset: MemoryDataset, backend: Backend, sandbox: object) -> None:
-    """Refuse Kubernetes for a run that needs the hook service (`environment.services`).
-
-    The service must share the agent container's network namespace; Inspect's Kubernetes
-    sandbox gives each service a pod of its own.
-
-    Raises:
-        ValueError: a sample sources a `pipeline_pre_agent.sh` hook and `backend` is `k8s`.
-    """
-    if backend != "k8s" or sandbox is not None:
-        return
-    needing = _hook_samples(dataset)
-    if needing:
-        raise ValueError(
-            f"{needing} source upstream's pipeline_pre_agent.sh (the upload capture), whose "
-            "service must share the agent's network namespace: use backend='docker'"
-        )
-
-
 def _hook_samples(dataset: MemoryDataset) -> list[str]:
     """The samples whose side task has a `pipeline_pre_agent.sh` hook (the upload capture)."""
     return sorted(
@@ -275,17 +251,16 @@ def check_hook_cli(dataset: MemoryDataset, agent: str, claude_code_version: str)
 def check_offline_run(
     agent: str,
     model_cache: str,
-    backend: str,
     sandbox: object = None,
     settings: frozenset[str] = frozenset(),
 ) -> None:
     """Refuse `check_offline` where it would not be a scorer check with every input staged.
 
     Raises:
-        ValueError: a model agent (it needs its provider), a cache that may download, a backend
-            other than Docker, a `sandbox` given (it would replace the network-off sandbox), a
-            host Hugging Face client that is not offline, or a replayed `safety_finetuning`
-            model (its judges load only while the Hub answers, D-254).
+        ValueError: a model agent (it needs its provider), a cache that may download, a
+            `sandbox` given (it would replace the network-off sandbox), a host Hugging Face
+            client that is not offline, or a replayed `safety_finetuning` model (its judges
+            load only while the Hub answers, D-254).
     """
     from huggingface_hub import constants as hub_constants
 
@@ -293,8 +268,6 @@ def check_offline_run(
         raise ValueError("check_offline is for scorer checks: agent must be 'null' or 'replay'")
     if model_cache not in ("seed", "none"):
         raise ValueError("check_offline needs model_cache='seed' (or 'none'): nothing may download")
-    if backend != "docker":
-        raise ValueError("check_offline needs backend='docker'")
     if sandbox is not None:
         raise ValueError("check_offline builds its own network-off sandbox: do not give `sandbox`")
     if not hub_constants.HF_HUB_OFFLINE:
@@ -339,8 +312,6 @@ def researcharena(
     claude_code_version: str = "latest",
     small_model: str | None = CLAUDE_CODE_SMALL_MODEL,
     react_compaction: bool = True,
-    backend: Backend = "docker",
-    gpu: GpuName | None = None,
     sandbox: str | SandboxEnvironmentSpec | None = None,
     sandbox_config: str | None = None,
     setup: Solver | list[Solver] | None = None,
@@ -348,7 +319,6 @@ def researcharena(
     replay: str | list[str] | None = None,
     replay_mode: ReplayMode = "fresh",
     time_limit: int | None = None,
-    sandbox_start_timeout: int | None = None,
     model_cache: ModelCacheMode = "auto",
     hf_seed: str | None = None,
     fail_on_no_model_output: bool = True,
@@ -380,14 +350,11 @@ def researcharena(
         small_model: model for Claude Code's own background calls: Haiku 4.5, as in the
             published runs; `None` sends them to the task's model.
         react_compaction: let the ReAct agent summarise its conversation near the context limit.
-        backend: `docker` (a machine with an NVIDIA GPU) or `k8s` (for example Hawk).
-        gpu: the GPU model to ask Kubernetes for (`l4` or `h100`; `l4` if omitted); must be
-            omitted with Docker.
-        sandbox: overrides `backend` and `gpu`: a sandbox type (with `sandbox_config`) or a
-            full spec. `docker` without a config is a CPU-only image for tests. A Docker
-            sandbox given here needs the evaluator's service (`sandbox.with_evaluator`, D-093)
-            for scoring in a container of its own; without it, scoring runs in the agent's
-            container, as on Kubernetes.
+        sandbox: replaces the built-in Docker sandbox (one NVIDIA GPU on the local machine):
+            a sandbox type (with `sandbox_config`) or a full spec. `docker` without a config is
+            a CPU-only image for tests. A sandbox given here needs an `evaluator` service
+            (`sandbox.with_evaluator`, D-093) for scoring in a container of its own; without
+            one, scoring runs in the agent's container.
         sandbox_config: sandbox config file for `sandbox`.
         setup: solver(s) run before the agent; the environment's staging if omitted, `[]` for
             none.
@@ -398,8 +365,6 @@ def researcharena(
             `bench.py` would read back) or `as_published`. See `agents.replay`.
         time_limit: the sample's time limit in seconds; Inspect gives scoring half of it, which
             can cut upstream's evaluation attempts short (D-099). None for no limit.
-        sandbox_start_timeout: seconds to wait for a Kubernetes sandbox to start (sets
-            `INSPECT_HELM_TIMEOUT`).
         model_cache: `inference_optimization`, `utility_finetuning` and `safety_finetuning`:
             how the model (and the post-training settings' datasets, and `safety_finetuning`'s
             two judges) reaches the agent's Hugging Face cache before the agent starts
@@ -407,7 +372,7 @@ def researcharena(
             from `hf_seed` if that holds it, else downloads it in the sandbox; `seed` and
             `download` force one; `none` leaves the cache empty. `safety_finetuning`'s judges
             include two gated repositories, which only a seed filled with a token can hold.
-        hf_seed: with Docker, for those settings: absolute path on the Docker host of a
+        hf_seed: for those settings: absolute path on the Docker host of a
             Hugging Face cache holding the pinned repositories, mounted read-only.
         fail_on_no_model_output: end the sample with an error, unscored, when `claude_code` or
             `react` got no response from any model call (an outage, a wrong model name, an
@@ -451,8 +416,6 @@ def researcharena(
         raise ValueError(f"replay_mode must be one of {REPLAY_MODES}, got {replay_mode!r}")
     if model_cache not in MODEL_CACHE_MODES:
         raise ValueError(f"model_cache must be one of {MODEL_CACHE_MODES}, got {model_cache!r}")
-    if sandbox_start_timeout is not None:
-        os.environ["INSPECT_HELM_TIMEOUT"] = str(sandbox_start_timeout)
     dataset = (
         replay_dataset(replay)
         if replay is not None
@@ -460,11 +423,10 @@ def researcharena(
     )
     if cuda_baseline_process:  # D-160
         check_baseline_process(dataset, scorer)
-    check_hook_backend(dataset, backend, sandbox)
     check_hook_cli(dataset, agent, claude_code_version)  # D-256
     if check_offline:  # D-185
         settings = frozenset((s.metadata or {}).get("setting", "") for s in dataset)
-        check_offline_run(agent, model_cache, backend, sandbox, settings)
+        check_offline_run(agent, model_cache, sandbox, settings)
     return Task(
         dataset=dataset,
         setup=(
@@ -494,8 +456,6 @@ def researcharena(
         ),
         sandbox=(
             sandbox_spec(
-                backend,
-                gpu,
                 setting=dataset_setting(dataset),
                 hf_seed=hf_seed,
                 offline=check_offline,

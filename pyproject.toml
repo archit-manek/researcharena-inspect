@@ -52,7 +52,6 @@ include = ["researcharena_inspect*"] # examples/ stays out of the wheel
     "data/*.json.gz",
     # environment/: the agent's sandbox configs and the Dockerfile they were built from
     "compose.yaml",
-    "k8s_values_*.yaml",
     "Dockerfile",
 ]
 

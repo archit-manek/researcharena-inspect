@@ -68,9 +68,8 @@ task:
 
     # One machine with one NVIDIA GPU and Docker. run_redteam.sub asks for one
     # "NVIDIA H100 80GB HBM3". With this setting the port's Docker sandbox is compose.yaml plus
-    # a 16 GB /dev/shm (D-132) and the hook service for the upload capture (D-174).
-    backend: docker
-    gpu: null
+    # a 16 GB /dev/shm (D-132) and the hook service for the upload capture (D-174). No option
+    # sets it.
 
     # The model and the GSM8K and GSM1K datasets reach the agent's Hugging Face cache before
     # the agent starts (upstream's cluster cache already held them, resources.json; D-170).

@@ -59,11 +59,9 @@ task:
     # lists (pins.CLAUDE_CODE_SMALL_MODEL; D-080).
     small_model: anthropic/claude-haiku-4-5-20251001
 
-    # One machine with one NVIDIA GPU and Docker: run_redteam.sub asks for one
-    # "NVIDIA H100 80GB HBM3", 8 CPUs, 256000 MB of memory and 200 GB of disk; the port's
-    # compose.yaml asks for one GPU, 8 CPUs and 64 GB.
-    backend: docker
-    gpu: null
+    # One machine with one NVIDIA GPU and Docker, the port's built-in sandbox: run_redteam.sub
+    # asks for one "NVIDIA H100 80GB HBM3", 8 CPUs, 256000 MB of memory and 200 GB of disk;
+    # the port's compose.yaml asks for one GPU, 8 CPUs and 64 GB. No option sets it.
 
     # Upstream has no overall limit: the agent's budget plus five minutes (RED_TIMEOUT), then
     # up to three evaluation attempts of 3600 s each. An Inspect time_limit would give scoring

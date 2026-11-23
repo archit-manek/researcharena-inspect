@@ -1,7 +1,7 @@
 """The environment the red-team agent works in: image, sandbox, workspace staging.
 
 - `image`: the image built from `Dockerfile` (upstream's `containers/arena.def`), by digest.
-- `sandbox`: `sandbox_spec(backend, gpu)`, the Inspect sandbox for Docker or Kubernetes.
+- `sandbox`: `sandbox_spec()`, the Inspect sandbox: Docker with one GPU.
 - `layout`: paths in the sandbox, the agent's user and its environment variables.
 - `staging`: `stage_workspace` and the setup solver `stage_agent_workspace`, which put into
   the sandbox what upstream's `pipeline_redteam.sh` puts in the agent's home.
@@ -42,9 +42,6 @@ from researcharena_inspect.environment.layout import (
 )
 from researcharena_inspect.environment.sandbox import (
     COMPOSE_FILE,
-    K8S_VALUES,
-    Backend,
-    GpuName,
     sandbox_spec,
     with_evaluator,
 )
@@ -72,7 +69,6 @@ __all__ = [
     "IMAGE",
     "IMAGE_DIGEST",
     "IMAGE_REPOSITORY",
-    "K8S_VALUES",
     "METRICS_PATH",
     "PRE_AGENT_SETUP",
     "PROMPT_FILE",
@@ -80,10 +76,8 @@ __all__ = [
     "SNAPSHOT_DIR",
     "SUBMISSION_DIR",
     "TASK_DIR",
-    "Backend",
     "Entry",
     "EvaluationCommand",
-    "GpuName",
     "StagingError",
     "StagingResult",
     "agent_env",

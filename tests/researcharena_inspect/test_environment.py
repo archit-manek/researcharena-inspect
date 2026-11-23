@@ -5,9 +5,9 @@ The staged tree is checked against upstream's own pipeline in Docker by
 neither Docker nor a GPU.
 """
 
+import inspect
 import io
 import json
-import os
 import re
 import tarfile
 import time
@@ -32,7 +32,6 @@ from researcharena_inspect.environment import (
     HF_HOME,
     IMAGE,
     IMAGE_DIGEST,
-    K8S_VALUES,
     StagingError,
     agent_env,
     evaluation,
@@ -49,47 +48,6 @@ from researcharena_inspect.pins import UPSTREAM_COMMIT
 from researcharena_inspect.prompts import agent_instruction_file
 from researcharena_inspect.task import red_team_sandbox
 from tests.researcharena_inspect.fake_sandbox import Call, FakeSandbox
-
-# Hawk v4.1.0, hawk/runner/sandbox_values.py: ALLOWED_VALUES and SERVICE_ALLOWED_VALUES.
-HAWK_ALLOWED_VALUES = {
-    "services",
-    "labels",
-    "allowDomains",
-    "allowEntities",
-    "allowCIDR",
-    "additionalResources",
-    "annotations",
-    "extraContainers",
-    "networkPolicy",
-    "volumes",
-    "imagePullSecrets",
-    "networks",
-    "corednsReadyPort",
-}
-HAWK_SERVICE_ALLOWED_VALUES = {
-    "additionalDnsRecords",
-    "args",
-    "command",
-    "dnsRecord",
-    "env",
-    "image",
-    "imagePullPolicy",
-    "initContainers",
-    "livenessProbe",
-    "networkIsolated",
-    "networks",
-    "nodeSelector",
-    "ports",
-    "readinessProbe",
-    "resources",
-    "runtimeClassName",
-    "securityContext",
-    "tolerations",
-    "volumeMounts",
-    "volumes",
-    "workingDir",
-}
-HAWK_IMAGE_PATTERN = re.compile(r"[A-Za-z0-9_.:/@-]+")
 
 DOCKERFILE = Path(COMPOSE_FILE).with_name("Dockerfile")
 
@@ -114,30 +72,6 @@ def test_dockerfile_pins_base_image_and_upstream_commit() -> None:
     assert "--checksum=sha256:" in text
 
 
-@pytest.mark.parametrize("gpu", sorted(K8S_VALUES))
-def test_k8s_values_pass_hawks_allowlists(gpu: str) -> None:
-    values = yaml.safe_load(K8S_VALUES[gpu].read_text())
-    assert set(values) <= HAWK_ALLOWED_VALUES
-    [(name, service)] = values["services"].items()
-    assert name == "default"
-    assert set(service) <= HAWK_SERVICE_ALLOWED_VALUES
-    assert HAWK_IMAGE_PATTERN.fullmatch(service["image"])
-    assert service["image"] == IMAGE
-    assert service["nodeSelector"] == {"karpenter.k8s.aws/instance-gpu-name": gpu}
-    for side in ("requests", "limits"):
-        assert service["resources"][side]["nvidia.com/gpu"] == 1
-    assert "runtimeClassName" not in service  # Hawk keeps a GPU service on the default runtime
-    assert values["allowEntities"] == ["world"]  # upstream's open network (D-029)
-
-
-def test_l4_requests_fit_the_node_hawk_gave_us() -> None:
-    requests = yaml.safe_load(K8S_VALUES["l4"].read_text())["services"]["default"]["resources"][
-        "requests"
-    ]
-    assert int(requests["cpu"]) < 8  # 8 vCPUs on the node, some taken by its daemons
-    assert int(requests["memory"].removesuffix("Gi")) < 30  # about 32 GB on the node
-
-
 def test_compose_asks_for_one_gpu() -> None:
     compose = yaml.safe_load(COMPOSE_FILE.read_text())
     service = compose["services"]["default"]
@@ -151,24 +85,27 @@ def test_compose_asks_for_one_gpu() -> None:
 
 
 def test_sandbox_spec() -> None:
-    assert sandbox_spec() == SandboxEnvironmentSpec("k8s", str(K8S_VALUES["l4"]))
-    assert sandbox_spec("k8s", "h100") == SandboxEnvironmentSpec("k8s", str(K8S_VALUES["h100"]))
     # The diagnostic tasks' Docker sandbox is the file; the red-team task's adds the evaluator.
-    assert sandbox_spec("docker", evaluator=False) == SandboxEnvironmentSpec(
-        "docker", str(COMPOSE_FILE)
-    )
-    with pytest.raises(ValueError, match="machine's GPU"):
-        sandbox_spec("docker", "l4")
-    with pytest.raises(ValueError, match="unknown GPU"):
-        sandbox_spec("k8s", "t4")  # pyright: ignore[reportArgumentType]
-    with pytest.raises(ValueError, match="unknown sandbox backend"):
-        sandbox_spec("podman")  # pyright: ignore[reportArgumentType]
+    assert sandbox_spec(evaluator=False) == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+    assert sandbox_spec().type == "docker"
+
+
+def test_sandbox_spec_has_no_backend() -> None:
+    # Docker is the only built-in sandbox (10-G): no backend or GPU to choose, and the options
+    # are keyword-only, so an old positional backend cannot be taken for a setting.
+    parameters = inspect.signature(sandbox_spec).parameters
+    assert list(parameters) == ["setting", "hf_seed", "offline", "evaluator"]
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in parameters.values())
+    with pytest.raises(TypeError):
+        sandbox_spec("docker")  # pyright: ignore[reportCallIssue]
+    with pytest.raises(TypeError):
+        sandbox_spec(backend="docker")  # pyright: ignore[reportCallIssue]
 
 
 def test_every_docker_sandbox_of_the_task_gets_the_evaluator() -> None:
     # D-093: a second service of the same image and GPU, sharing only the cache and the run
     # folder with the agent's, as upstream's evaluator container shares only those two.
-    config = sandbox_spec("docker", setting="cuda_kernel").config
+    config = sandbox_spec(setting="cuda_kernel").config
     assert isinstance(config, ComposeConfig)
     default, evaluator = config.services["default"], config.services["evaluator"]
     for field in ("image", "platform", "deploy", "cpus", "mem_limit", "shm_size", "network_mode"):
@@ -177,7 +114,7 @@ def test_every_docker_sandbox_of_the_task_gets_the_evaluator() -> None:
     shared = ["hf_cache:/home/user/hf_cache", "eval_dir:/mnt/eval"]
     assert default.volumes == evaluator.volumes == shared
     assert config.volumes == {"hf_cache": {}, "eval_dir": {}}
-    offline = sandbox_spec("docker", setting="utility_finetuning", offline=True).config
+    offline = sandbox_spec(setting="utility_finetuning", offline=True).config
     assert isinstance(offline, ComposeConfig)
     assert offline.services["evaluator"].network_mode == "none"
     assert offline.services["aux"].network_mode == "service:default"
@@ -192,7 +129,7 @@ def test_package_data_ships_the_configs() -> None:
 
     pyproject = tomllib.loads((Path(__file__).parents[2] / "pyproject.toml").read_text())
     patterns = pyproject["tool"]["setuptools"]["package-data"]["*"]
-    for name in ("compose.yaml", "k8s_values_l4.yaml", "k8s_values_h100.yaml", "Dockerfile"):
+    for name in ("compose.yaml", "Dockerfile"):
         assert any(fnmatch(name, pattern) for pattern in patterns), name
 
 
@@ -427,14 +364,13 @@ def test_image_check_parses_upstreams_requirements() -> None:
 # --- the GPU check task ------------------------------------------------------------------------
 
 
-def test_environment_check_task_builds_without_a_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("INSPECT_HELM_TIMEOUT", raising=False)
-    task = environment_check(sandbox_start_timeout=1800)
-    assert task.sandbox == SandboxEnvironmentSpec("k8s", str(K8S_VALUES["l4"]))
+def test_environment_check_task_builds_without_a_gpu() -> None:
+    # Docker by default (it defaulted to Kubernetes before 10-G), one container.
+    task = environment_check()
+    assert task.sandbox == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
     assert task.time_limit == 3600
-    assert os.environ["INSPECT_HELM_TIMEOUT"] == "1800"
-    docker = environment_check(backend="docker", gpu=None)
-    assert docker.sandbox == SandboxEnvironmentSpec("docker", str(COMPOSE_FILE))
+    for removed in ("backend", "gpu", "sandbox_start_timeout"):
+        assert removed not in inspect.signature(environment_check).parameters
 
 
 # --- stopping the agent's container (D-093) -------------------------------------------------

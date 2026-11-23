@@ -25,9 +25,9 @@ image with the GPU, which shares only `HF_HOME` and `EVAL_DIR` with the agent's
 folder. Steps 1 and 2 run in the agent's container (upstream runs them on the host, which sees
 the agent's `task/`), the snapshot landing on the shared `EVAL_DIR`; then the agent's container
 is stopped, with every process in it, and step 3, step 4 and everything after it run in the
-evaluator's (`evaluator_sandbox`), with the job folder at upstream's `/home/user`. On
-Kubernetes, where a second pod cannot share the GPU and these folders, there is no such
-service: everything runs in the agent's container, the job folder at `SHARED_EVAL_HOME`.
+evaluator's (`evaluator_sandbox`), with the job folder at upstream's `/home/user`. With a
+sandbox that has no `evaluator` service (a custom `sandbox`), everything runs in the agent's
+container, the job folder at `SHARED_EVAL_HOME`.
 """
 
 import shlex
@@ -137,10 +137,10 @@ def evaluator_entries(setting: str, side_task: str, upstream: Path | None = None
 
 
 def evaluator_sandbox() -> SandboxEnvironment:
-    """Where upstream's evaluator runs: its own container on Docker, the agent's on Kubernetes."""
+    """Where upstream's evaluator runs: its own container, or the agent's if there is none."""
     try:
         return sandbox_env(EVALUATOR_SERVICE)
-    except ValueError:  # no such service: Kubernetes (D-093)
+    except ValueError:  # no such service: a custom `sandbox` (D-093)
         return sandbox_env()
 
 
@@ -211,8 +211,8 @@ async def prepare_evaluation(
 
     Call once, after the agent has finished. Leaves the agent's (cleaned) `task/` in place, its
     copy at `/mnt/eval/red_team/task_snapshot`, and the evaluator's job folder at `EVAL_HOME` in
-    the evaluator's container, the agent's container stopped (Docker); or at `SHARED_EVAL_HOME`
-    in the agent's container (Kubernetes). All of it belongs to the agent's user, as upstream's
+    the evaluator's container, the agent's container stopped; or at `SHARED_EVAL_HOME` in the
+    agent's container (a sandbox with no `evaluator` service). All of it belongs to the agent's user, as upstream's
     belongs to the job's account.
 
     Args:
