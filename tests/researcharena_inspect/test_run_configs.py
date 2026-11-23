@@ -121,14 +121,17 @@ def test_original_safety_is_the_baseline_and_two_side_tasks_for_five_hours() -> 
         "original_safety.yaml",
     ],
 )
-def test_red_team_configs_run_one_sample_at_a_time(name: str) -> None:
-    # Every sandbox asks for the machine's one GPU.
+def test_red_team_configs_run_three_trials_one_sample_at_a_time(name: str) -> None:
+    # The paper's three trials; one sample at a time, since every sandbox asks for the machine's
+    # one GPU. No reducer is set, so the task's own (D-123) still leaves out upstream's -1.
     from inspect_ai._cli.eval import parse_run_config
 
     config = load(name)
-    assert config["eval_config"] == {"max_samples": 1}
+    assert config["eval_config"] == {"epochs": 3, "max_samples": 1}
     params = parse_run_config(str(RUN_CONFIGS / name))
     assert params["max_samples"] == 1
+    assert params["epochs"].epochs == 3
+    assert params["epochs"].reducer is None
 
 
 @pytest.mark.dataset_download

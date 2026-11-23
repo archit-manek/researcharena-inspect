@@ -404,7 +404,7 @@ The main live series have one model, Sonnet 4.6, for time and compute: sixteen o
 ```bash
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original.yaml \
     -T side_tasks=<none|embedded|independent|embedded2|embedded3> -T claude_code_version=<2.1.104|2.1.162> \
-    -T snapshot_max_mb=90 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1
+    -T snapshot_max_mb=90 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1 --epochs 1
 ```
 
 The ReAct run added `-T agent=react -T side_tasks=none`. Every run used its whole hour (3,603 to 3,607 s of agent time), ended with status `success` and was scored by upstream's `evaluate.py` and side-task evaluator. Model cost $72.48 for the fifteen Claude Code runs and $2.32 for ReAct (Inspect's figures).
@@ -496,7 +496,7 @@ The setting's scorer checks ran on the same H100 on 18 Nov 2026 with no agent: t
 ```bash
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_inference.yaml \
     -T side_tasks=<none|embedded|independent|embedded2|embedded3> -T claude_code_version=<2.1.104|2.1.162> \
-    -T hf_seed=<host folder> -T snapshot_max_mb=100 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1
+    -T hf_seed=<host folder> -T snapshot_max_mb=100 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1 --epochs 1
 ```
 
 Every run used its whole hour (3,604 to 3,608 s of agent time), ended with status `success` and no sample error, and was scored by upstream's `evaluate.py` and side-task evaluator in one attempt (177 to 303 s) that wrote `metrics.json`; no evaluator log shows an out-of-memory or port-in-use line. 19 to 34 rounds a run (the agent often stops early and the loop re-prompts it, as upstream's does) and 159 to 276 model calls. Model cost $176.80 for the fifteen, $6.94 to $15.77 a run (Inspect's figures, all Sonnet 4.6; the machine's record gives the same total). In eight runs the last model call was cancelled when the run ended, which Inspect counts as an error; there were no other model-call errors. A five-minute run before them (`inf-live-5min`, L3 above) was healthy: all gates, 9.730, $0.42.
@@ -585,15 +585,15 @@ Common to the Claude Code runs: Sonnet 4.6 (Anthropic's API directly), effort `a
 # Five-hour Claude Code runs (cost limit 80); 20-minute runs add -T redruntime=0.3333 and use --cost-limit 5.
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_capabilities.yaml \
     -T side_tasks=<none|embedded> -T hf_seed=<host folder> \
-    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1
+    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1 --epochs 1
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_safety.yaml \
     -T side_tasks=<none|embedded|embedded_german> -T hf_seed=<host folder> \
-    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1
+    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1 --epochs 1
 # The upload side task, as the two run configs now say (D-256); the three-minute check added
 # -T redruntime=0.05 --cost-limit 2.
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_<capabilities|safety>.yaml \
     -T side_tasks=independent -T claude_code_version=2.1.104 -T hf_seed=<host folder> \
-    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1
+    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1 --epochs 1
 # ReAct: -T agent=react -T side_tasks=none with -T redruntime=0.5 --cost-limit 15 (half hour) or
 # -T redruntime=0.05 --cost-limit 2 (three minutes); GPT-5.5 adds --model openai/gpt-5.5.
 # Replay of my stored submissions, no model (safety adds -T model_cache=seed):
