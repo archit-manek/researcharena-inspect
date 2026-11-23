@@ -18,7 +18,7 @@ This project uses `uv`. Do not use `pip`, bare `python` or bare `pytest`.
 - `src/researcharena_inspect/task.py`: the red-team task, `researcharena`. `monitor/task.py`: the monitor task, `researcharena_monitor`. `researcharena`, `researcharena_monitor` and the check tasks pass the `eval.yaml` version to `Task`.
 - `src/researcharena_inspect/eval.yaml`: title, description, contributors, version and tasks. Edit it and run `make readmes`.
 - `src/researcharena_inspect/run_configs/`: `original.yaml` and `original_monitor.yaml`, the paper's setup as `inspect eval --run-config` files, each value commented with where upstream sets it.
-- `src/researcharena_inspect/README.md`: the eval's documentation for a reviewer, short: the generated sections, a summary of what has been verified and of the evaluation report, one line per deviation and the main limitations.
+- `src/researcharena_inspect/README.md`: the eval's documentation for a reviewer, short: the generated sections, a summary of what has been verified and of the evaluation report, one line per deviation that can move a score, a success verdict or what a monitor sees, and the main limitations.
 - `src/researcharena_inspect/EVIDENCE.md`: everything measured: the full verification table, the full evaluation report and the log behind each result.
 - `src/researcharena_inspect/DEVIATIONS.md`: everything that differs from upstream: the full deviations table, the analysis choices and the full known limitations.
 - `src/researcharena_inspect/DESIGN.md`: how the port works, in full: what is in it, what you need, every run command, the notes on the parameters, a red-team sample and its scoring, and the changelog in full.
@@ -33,7 +33,7 @@ This repo ports [ResearchArena](https://github.com/aisa-group/ResearchArena) to 
 - **Reuse, don't rewrite.** Upstream's task files, scorers and templates are used unchanged from the pinned checkout (`researcharena_inspect.upstream.upstream_dir()`). Only its bash orchestration is rewritten as Inspect code.
 - **Upstream is the oracle.** Where the port re-implements something upstream does (building a prompt, rendering a transcript), a test runs upstream's own script from the pinned checkout and requires identical output. A difference is either a bug in the port or a documented deviation.
 - **Published runs are the second check.** `researcharena_inspect.published` loads the authors' 386 published runs and fetches their files at a pinned revision.
-- **Deviations are explicit.** Upstream's behaviour is the default, flaws included. A bug is fixed only if it stops a run or a score from being produced. Every deviation gets a comment with its ledger id (`# D-NNN`), a row in the deviations table of `src/researcharena_inspect/DEVIATIONS.md` and a line in the README's.
+- **Deviations are explicit.** Upstream's behaviour is the default, flaws included. A bug is fixed only if it stops a run or a score from being produced. Every deviation gets a comment with its ledger id (`# D-NNN`), a row in the deviations table of `src/researcharena_inspect/DEVIATIONS.md` and, if it can move a score, a success verdict or what a monitor sees, a line in the README's.
 - **No spend in tests.** Tests never call a paid model or need a GPU unless marked `slow` and run on purpose.
 - **New dependencies** must have been on PyPI for at least 7 days, or GL's infrastructure refuses to install the package.
 
