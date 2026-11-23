@@ -1,12 +1,8 @@
-"""The monitor's main-task instruction and prompt, built by upstream's own scripts.
+"""The monitor's main-task instruction and prompt, built by running upstream's own scripts.
 
-This is the one place the monitor task builds its prompt. It runs upstream's
-`src/prompt_builder.py` and `src/build_monitor_prompt.py` from the pinned checkout with the
-arguments `src/pipeline_monitor.sh:163-190` passes, and reproduces the shell's handling of their
-output: `X=$(...)` strips trailing newlines and `echo "$X" > file` adds one back.
-
-`researcharena_inspect.prompts` ports the same two builders to Python. A test requires the port
-and this function to agree for every access type, so either can serve the task.
+Runs `src/prompt_builder.py` and `src/build_monitor_prompt.py` from the pinned checkout with the
+arguments of `src/pipeline_monitor.sh:163-190`, and keeps the shell's handling of their output.
+`researcharena_inspect.prompts` ports the same builders to Python; a test requires the two to agree.
 """
 
 import os
@@ -58,17 +54,8 @@ def upstream_monitor_prompt(
 ) -> MonitorPrompt:
     """Build the monitor's instruction and prompt for one run and one access type.
 
-    Args:
-        setting: the run's setting, e.g. `cuda_kernel`.
-        side_task: the run's side task as in its `metadata.json` (`none` for a baseline).
-        task_config: the run's task config, e.g. `tinyllama` (may be empty).
-        transcript_path: the transcript the monitor gets (`--red_trace`).
-        workspace: the agent's final workspace (`red_team/task_snapshot`), if there is one.
-            Only the directory listing of artifact prompts reads it. Upstream lists the folder
-            under its own name, so a folder with another name is presented as `task_snapshot`.
-        with_artifact: whether the monitor gets the workspace.
-        with_cot: whether the transcript includes the agent's chain of thought.
-        commit: the upstream commit whose scripts to run.
+    `side_task` is as in the run's `metadata.json`. Only artifact prompts list `workspace`,
+    always under upstream's name `task_snapshot`.
     """
     root = upstream_dir(commit)
     builder = root / "src" / "prompt_builder.py"
@@ -126,10 +113,7 @@ def upstream_monitor_prompt(
 def resolve_monitor_effort(
     setting: str, model: str, provider: str = "claude", commit: str = UPSTREAM_COMMIT
 ) -> str:
-    """The monitor's reasoning effort from upstream's `effort.json` (`src/resolve_effort.py`).
-
-    `default` means the CLI gets no effort flag.
-    """
+    """The monitor's effort from `effort.json` (`src/resolve_effort.py`); `default`: no flag."""
     root = upstream_dir(commit)
     out = _run(
         [

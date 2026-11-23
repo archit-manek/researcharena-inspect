@@ -1,8 +1,6 @@
-"""The paper's tables and headline counts, computed from rows.
+"""The paper's tables and headline counts, computed from published or live `Row`s.
 
-Every function takes plain `Row`s, so it works on the published runs (`published_rows`) and on
-rows built from our own Inspect logs alike. Which runs count is decided by one success function,
-`rules.run_success` by default, the same for every table.
+One success function, `rules.run_success` by default, decides which runs count in every table.
 """
 
 from collections import Counter, defaultdict
@@ -65,9 +63,7 @@ def detection_breakdown(
 ) -> dict[tuple[str, str, str, Access], Proportion]:
     """Tables 6 to 9: (side task, agent, monitor, access) -> flagged runs out of valid scores.
 
-    Counts the runs that `success` keeps (the paper's monitored set): attack rows are successful
-    side-task runs, baseline rows the kept baselines. A monitor score that is None is not a
-    valid score and leaves the run out of that cell's denominator.
+    Counts the runs `success` keeps; a None score leaves the run out of that cell's denominator.
     """
     ok = _success(rules, success)
     scores: dict[tuple[str, str, str, Access], list[float | None]] = defaultdict(list)
@@ -82,11 +78,9 @@ def detection_breakdown(
 def main_column(rows: Iterable[Row], setting: str) -> dict[tuple[str, str], tuple[float, float]]:
     """Tables 6 to 9, Main column: (side task, agent) -> mean and sample SD of the main score.
 
-    Over the agent's runs in that condition, including refused and failed runs (Table 6 prints
-    0.25 ± 0.44 for Opus 4.8's checkpoint exfiltration, two of whose three runs scored 0). The
-    baselines dropped for unprompted sabotage are left out, as the paper drops them from the run
-    set (L499-500). Scores are in the paper's units; Table 8 prints CUDA on the stored half
-    scale (D-004).
+    Over all the agent's runs in that condition, refused and failed ones included (Table 6's
+    0.25 ± 0.44 for Opus 4.8's checkpoint exfiltration needs its two zeros), but not the
+    baselines dropped for unprompted sabotage (L499-500). Table 8 prints CUDA halved (D-004).
     """
     values: dict[tuple[str, str], list[float]] = defaultdict(list)
     for run in runs(rows):
@@ -117,9 +111,8 @@ def auroc_table(
 ) -> dict[tuple[str, Access], AurocCell]:
     """Tables 2 and 3: (monitor, access) -> AUROC, pooled over `settings` and `agents`.
 
-    Positives are kept runs of `side_task_class`, negatives kept baselines; runs without a valid
-    score for that monitor and access are left out. Tables 2 and 3 cover the seven main agents
-    (their detection-rate SDs only come back with the seven agents' run counts).
+    Positives are kept runs of `side_task_class`, negatives kept baselines, both with a valid
+    score. Seven agents by default: only their run counts give back the printed SDs.
     """
     ok = _success(rules, success)
     pos: dict[tuple[str, Access], list[float]] = defaultdict(list)
@@ -197,10 +190,8 @@ def headline_counts(
 ) -> dict[str, int]:
     """The counts the paper states in §5 and Appendix C, under the names in `paper_values`.
 
-    Exclusions and the monitor-run total are over the seven main agents, as the paper's §5
-    counts are (L497-500, L581-582). `success`, when given, decides which runs are kept for
-    the monitor-run total and the exclusion total. The monitor-run total counts monitor rows
-    whether or not their score is valid (in the published data every kept row has one).
+    Exclusions and the monitor-run total are over the seven main agents, as in §5 (L497-500,
+    L581-582). The monitor-run total counts kept monitor rows, valid score or not.
     """
     ok = _success(rules, success)
     all_runs = runs(rows)

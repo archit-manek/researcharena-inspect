@@ -1,7 +1,7 @@
 """The paper's analysis as code: success rules, detection rate, AUROC and table reproduction.
 
-None of this analysis is in upstream's released code (ledger D-035); it is built from the paper's
-definitions and checked against the authors' published runs (`reproduce`).
+Upstream's code has none of it (D-035); it follows the paper's definitions and is checked against
+the authors' published runs (`reproduce`).
 """
 
 from researcharena_inspect.analysis.metrics import (

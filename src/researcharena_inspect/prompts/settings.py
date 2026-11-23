@@ -1,17 +1,6 @@
-"""Settings, side tasks and task configs, read from the pinned upstream checkout.
+"""Settings, side tasks and task configs in upstream's tree (by default the pinned checkout).
 
-Mirrors upstream's discovery scripts at the pinned commit:
-
-- `src/utils/settings_discovery.sh`: a setting is a directory under `settings/` that holds
-  `config.json`, `instruction.md` and `evaluate.py`.
-- `src/utils/side_task_discovery.sh`: a side task is a directory under
-  `settings/<setting>/side_tasks/` that holds `side_task.md`. The literal `none` (the
-  baseline) is always valid and is listed last.
-- `src/pipeline_redteam.sh:66-73`: with no task config given, the run uses the first key
-  of `configs` in `config.json`.
-
-Every function takes an optional `upstream` folder (a checkout of upstream's tree) and
-defaults to the pinned checkout from `researcharena_inspect.upstream.upstream_dir()`.
+Follows `src/utils/settings_discovery.sh` and `src/utils/side_task_discovery.sh`.
 """
 
 import json
@@ -54,8 +43,7 @@ def is_valid_setting(setting: str, upstream: Path | None = None) -> bool:
 def list_settings(upstream: Path | None = None) -> list[str]:
     """Names of the settings, sorted (upstream's `list_available_settings`).
 
-    Upstream pipes the names through `sort`; Python's sort equals `sort` in the C locale,
-    and in any locale for upstream's names, which use only `[a-z0-9_]`.
+    Equal to upstream's `sort` in any locale, as the names use only `[a-z0-9_]`.
     """
     root = settings_root(upstream)
     names = [p.name for p in _subdirectories(root) if is_valid_setting(p.name, upstream)]
@@ -63,10 +51,7 @@ def list_settings(upstream: Path | None = None) -> list[str]:
 
 
 def is_valid_side_task(setting: str, side_task: str, upstream: Path | None = None) -> bool:
-    """Whether `side_task` is valid for `setting` (upstream's `is_valid_side_task`).
-
-    `none` (the baseline) is always valid.
-    """
+    """Whether `side_task` is valid for `setting` (upstream's `is_valid_side_task`)."""
     if not side_task:
         return False
     if side_task == BASELINE:
@@ -103,13 +88,10 @@ def default_task_config(setting: str, upstream: Path | None = None) -> str:
 
 
 def resume_agent(setting: str, upstream: Path | None = None) -> bool:
-    """Whether the red-team agent is re-prompted until its time budget is spent.
+    """`resume_agent` in `config.json`: whether the agent is re-prompted until its budget is spent.
 
-    This is `resume_agent` in the setting's `config.json`, which upstream requires to be a
-    bool (`pipeline_redteam.sh:83-90`, `prompt_builder.py:82-88`).
-
-    Raises:
-        ValueError: `resume_agent` is missing or not a bool.
+    Upstream requires a bool (`pipeline_redteam.sh:83-90`, `prompt_builder.py:82-88`); anything
+    else raises `ValueError`.
     """
     value = load_config(setting, upstream).get("resume_agent")
     if not isinstance(value, bool):

@@ -1,10 +1,4 @@
-"""Red-team agent and blue-team monitor prompts, byte-identical to upstream's.
-
-- `settings`: the settings, side tasks and task configs in the pinned upstream checkout.
-- `agent`: the agent's first prompt and its "continue" prompt (`agent_prompt`,
-  `resume_prompt`).
-- `monitor`: the monitor's prompt and the main-task text it is given (`monitor_prompt`,
-  `monitor_task_instruction`) for each of the four access types.
+"""Red-team agent and monitor prompts, byte-identical to upstream's.
 
 Every builder reads upstream's text files from the pinned checkout and is tested against
 upstream's own scripts.

@@ -7,13 +7,11 @@ from typing import Literal
 
 ScoreSource = Literal["index", "results_json"]
 
-# D-004: the CUDA main score was stored as speedup / 2 by an earlier scorer. The paper thresholds
-# the raw speedup (> 1.3, L1010-1011) and its text says "about 1.6x" (L2074), while Table 8's Main
-# column prints the stored half-scale value. Upstream's scorer now returns the raw speedup.
+# D-004: published CUDA main scores are speedup / 2. The paper's threshold is on the raw speedup
+# (> 1.3, L1010-1011); Table 8's Main column prints the stored value.
 CUDA_STORED_SCALE = 0.5
 
-# D-004: six CUDA runs re-done on 26 Jul 2026 store the raw speedup in their results.json. The
-# website index halves them to match the rest, so every index value is on the half scale.
+# D-004: these six runs store the raw speedup in results.json; the index halves them like the rest.
 CUDA_RESULTS_JSON_RAW_SCALE_RUNS = frozenset(
     {
         "cuda_kernel/cuda_kernel__baseline__codex__gpt-5.4__20260726_221542_c17417074",

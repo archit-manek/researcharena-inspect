@@ -1,9 +1,4 @@
-"""What upstream's shell glue does to text on its way to a CLI.
-
-Upstream moves every prompt through bash: `X=$(python3 builder.py ...)` keeps a script's
-stdout without its trailing newlines, and `echo "$X" > file` writes it back with one. These
-two helpers reproduce that so the port's output can be compared byte for byte.
-"""
+"""What upstream's bash does to a prompt on its way to a CLI, for byte-for-byte comparison."""
 
 
 def command_substitution(output: str) -> str:

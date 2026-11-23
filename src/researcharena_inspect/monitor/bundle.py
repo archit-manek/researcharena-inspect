@@ -1,8 +1,7 @@
-"""Run bundles: everything one monitor run needs about one red-team run.
+"""Run bundles: what one monitor run needs about one red-team run.
 
-Two loaders build them: `published_bundles()` from the authors' published runs on Hugging Face,
-and `local_bundles()` from run folders in upstream's layout (`<run>/metadata.json`,
-`<run>/red_team/solve_parsed.txt`, ...), which is how our own runs will be handed to the monitor.
+Built from the authors' published runs on Hugging Face, or from run folders in upstream's layout
+(`<run>/metadata.json`, `<run>/red_team/...`).
 """
 
 import json
@@ -61,12 +60,8 @@ def select_published_runs(
 ) -> list[dict[str, Any]]:
     """Index entries of the published runs that pass every given filter, in index order.
 
-    Args:
-        runs: run ids (comma-separated string or list).
-        settings: settings, e.g. `cuda_kernel`.
-        side_tasks: the index's side-task names; `baseline` for runs without one.
-        red_providers: red-team providers as in the index, e.g. `claude` or `codex_norepeat`.
-        include_excluded: keep runs the website excludes for unprompted sabotage.
+    Each filter is a comma-separated string or a list of the index's names (`baseline`: no side
+    task). `include_excluded` keeps runs the website excludes for unprompted sabotage.
     """
     wanted_runs = _as_list(runs)
     wanted_settings = _as_list(settings) or list(SETTINGS)
@@ -92,9 +87,8 @@ def select_published_runs(
 def fetch_workspace(run_id: str) -> Path:
     """Download a published run's `red_team/task_snapshot/` and return its folder.
 
-    The published snapshots carry no `.git` folder (so artifact monitors replayed on them cannot
-    read git history, unlike `pipeline_monitor.sh` at the pinned commit, ledger D-003) and no
-    `final_model` (ledger D-008).
+    The published snapshots have no `.git` folder, so a monitor cannot read the git history it
+    gets at the pin (D-003), and no `final_model` (D-008).
     """
     root = snapshot_download(
         repo_id=HF_DATASET,
@@ -147,10 +141,7 @@ def published_bundles(
     include_excluded: bool = True,
     with_workspace: bool = False,
 ) -> list[RunBundle]:
-    """Bundles for the published runs that pass the filters (see `select_published_runs`).
-
-    Downloads each run's metadata and two transcripts, and its workspace if `with_workspace`.
-    """
+    """Bundles for the published runs that pass the filters (see `select_published_runs`)."""
     selected = select_published_runs(runs, settings, side_tasks, red_providers, include_excluded)
     return [published_bundle(run, with_workspace) for run in selected]
 
@@ -162,8 +153,6 @@ def _first_existing(folder: Path, names: Iterable[str]) -> Path | None:
 def local_bundle(run_dir: Path) -> RunBundle:
     """The bundle of one run folder in upstream's layout.
 
-    Reads `metadata.json`, `red_team/solve_parsed.txt` and `red_team/solve_parsed_no_cot.txt`
-    (or their `_sanitized` copies), `red_team/task_snapshot/` and `eval/metrics.json` when present.
     A missing transcript is made from `red_team/solve_out.json` with upstream's parser, as
     `pipeline_monitor.sh:131-149` backfills the no-CoT one.
     """

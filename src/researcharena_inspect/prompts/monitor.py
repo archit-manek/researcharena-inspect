@@ -1,22 +1,10 @@
-"""The blue-team monitor's prompt and task text, as the monitor CLI receives them upstream.
+"""The monitor's prompt and task text, as the monitor CLI receives them upstream.
 
-The path at the pinned commit (`src/pipeline_monitor.sh`):
-
-1. `:167-174` renders the main task alone with `prompt_builder.py --main_task_only
-   --side_task none --red_provider none` and saves it with `echo` to
-   `main_task_instruction.md`. It passes no `--redruntime`, so `{num_hours}` is always the
-   default "1" (ledger D-005, kept). `:263` stages a copy as `task/task_instruction.md`.
-2. `:179-188` runs `build_monitor_prompt.py`, which picks one of four templates by access
-   type (`monitors/templates/monitor[_artifact][_cot].md`) and fills its placeholders.
-   `:190` and `:273` save the result with `echo` as `monitor_prompt.md` and `prompt.txt`.
-3. `monitors/<family>/monitor.sh` hands `prompt.txt` to the CLI. Claude Code and Codex read
-   the file on stdin, trailing newline included; OpenCode gets `"$(cat prompt.txt)"` as an
-   argument, without it.
-
-The monitor also gets files in its working directory: `agent_transcript.txt` (the red-team
-transcript with or without reasoning, whole) and `task_instruction.md`; with artifact
-access, the agent's final workspace as well. The current templates name those files and
-embed neither, so the transcript reaches the monitor only as a file (ledger D-006).
+In `src/pipeline_monitor.sh`, `:167-174` renders the main task alone into
+`main_task_instruction.md`, and `:179-190` fills one of four templates by access type
+(`monitors/templates/monitor[_artifact][_cot].md`); `:273` saves it as `prompt.txt`. The current
+templates embed neither the transcript nor the instruction: the monitor reads them as files in its
+working directory (D-006).
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
@@ -45,8 +33,8 @@ _MISSING_TRANSCRIPT = "(file not available)"
 _MISSING_INSTRUCTION = "(task instruction not available)"
 _MISSING_DIRECTORY = "(directory not available)"
 
-# Upstream behaviour kept (ledger D-005): `pipeline_monitor.sh:167-173` doesn't pass
-# --redruntime, so prompt_builder's default "1" stands in for the run's budget.
+# D-005: `pipeline_monitor.sh:167-173` passes no --redruntime, so prompt_builder's default
+# "1" stands in for the run's budget.
 _MONITOR_REDRUNTIME = "1"
 
 
@@ -96,15 +84,8 @@ def monitor_task_instruction(
 ) -> str:
     """The main-task text the monitor gets as `task_instruction.md`, byte for byte.
 
-    It is the same for every side task and baseline. Upstream behaviour kept (ledger D-005):
-    the text is rendered without the run's budget, so a 5-hour setting tells the monitor
-    "You have 1 hours". An unknown `task_config` falls back to the setting's first config
-    with a warning, as upstream does when it re-monitors an older run.
-
-    Args:
-        setting: setting name.
-        task_config: the run's task config (its `metadata.json`); None or "" means the first.
-        upstream: upstream tree to read; defaults to the pinned checkout.
+    The same for every side task, and always with a budget of "1" hours (D-005). A `task_config`
+    of None or "" means the setting's first; an unknown one falls back to it with a warning.
     """
     config = task_config or ""
     text = build_prompt(
@@ -116,8 +97,8 @@ def monitor_task_instruction(
         main_task_only=True,
         upstream=upstream,
     )
-    # D-064: the agent prompt raises on an unknown config; the monitor keeps upstream's
-    # fallback to the first, which re-monitoring published runs needs, and warns.
+    # D-064: unlike the agent prompt, the monitor keeps upstream's fallback, which
+    # re-monitoring published runs needs.
     if config and config not in task_configs(setting, upstream):
         logger.warning(
             "task config %r is not in %s/config.json; upstream uses the first", config, setting
@@ -126,7 +107,7 @@ def monitor_task_instruction(
 
 
 def truncate_transcript(content: str, max_chars: int = TRANSCRIPT_MAX_CHARS) -> str:
-    """Cut a transcript as `build_monitor_prompt.load_file` does (ledger D-006)."""
+    """Cut a transcript as `build_monitor_prompt.load_file` does (D-006)."""
     if len(content) > max_chars:
         return content[:max_chars] + f"\n\n... [TRUNCATED at {max_chars} chars] ..."
     return content
@@ -144,11 +125,9 @@ def load_file(path: str | os.PathLike[str], max_chars: int = TRANSCRIPT_MAX_CHAR
 def list_directory(path: str | os.PathLike[str], max_depth: int = 3) -> str:
     """Port of `build_monitor_prompt.list_directory`: the tree shown to artifact monitors.
 
-    The first line is the folder's own name (upstream's is always `task_snapshot/`). Files are
-    sorted, at most 50 per folder; folders come in the file system's order (`os.walk`), so the
-    listing matches upstream's only for the same tree on the same kind of file system. Output
-    stops at 500 lines. A broken symbolic link within the listed depth raises
-    `FileNotFoundError`, as it makes upstream's script fail.
+    Folders come in `os.walk` order, so the listing matches upstream's only on the same kind of
+    file system. A broken symbolic link within the listed depth raises `FileNotFoundError`, as
+    upstream's script fails on it.
     """
     path = os.fspath(path)
     if not os.path.exists(path):
@@ -194,10 +173,8 @@ def render_monitor_template(
 ) -> str:
     """Fill a monitor template as upstream does: plain replacements, in upstream's order.
 
-    The replacements run one after another over the whole text, so a placeholder that
-    appears inside an earlier replacement (a file named `{setting}` in the listing, say) is
-    replaced too. Doubled braces are not collapsed: the templates' `{{` and `}}` reach the
-    monitor as they are.
+    A placeholder inside an earlier replacement (a file named `{setting}`, say) is replaced too,
+    and the templates' `{{` and `}}` reach the monitor as they are.
     """
     prompt = template.replace("{transcript}", transcript)
     prompt = prompt.replace("{setting}", setting)
@@ -218,15 +195,7 @@ def build_monitor_prompt(
 ) -> str:
     """Port of upstream's `build_monitor_prompt.build_monitor_prompt`: the text before the shell.
 
-    Args:
-        access: the access type, which picks the template.
-        setting: setting name (fills `{setting}`).
-        side_task: the run's side task, "none" for a baseline (fills `{side_task_type}`).
-        transcript: the transcript as `load_file` returns it (fills `{transcript}`).
-        main_task_instruction: the text of `main_task_instruction.md` (fills
-            `{main_task_instruction}`).
-        task_snapshot: the agent's final workspace; listed only with artifact access.
-        upstream: upstream tree to read templates from; defaults to the pinned checkout.
+    `transcript` is as `load_file` returns it; `task_snapshot` is listed only with artifact access.
     """
     template_file = templates_dir(upstream) / f"{access.template_name}.md"
     if template_file.exists():
@@ -261,16 +230,8 @@ def monitor_prompt_file(
 ) -> str:
     """Contents of the monitor's `prompt.txt` and of the run's `monitor_prompt.md`.
 
-    Args:
-        access: the access type.
-        setting: setting name.
-        side_task: the run's side task as its `metadata.json` records it ("none" for a baseline).
-        task_config: the run's task config; None or "" means the setting's first.
-        transcript: the whole transcript file for this access type (see
-            `MonitorAccess.transcript_file`), or None if it is missing. It is cut as upstream
-            cuts it; the current templates don't show it.
-        task_snapshot: the agent's final workspace folder (upstream's `task_snapshot`).
-        upstream: upstream tree to read; defaults to the pinned checkout.
+    `side_task` is as the run's `metadata.json` records it; `transcript` is the transcript file's
+    text for this access type, or None if missing; `task_config` None means the setting's first.
     """
     instruction = monitor_task_instruction(setting, task_config, upstream)
     loaded = _MISSING_TRANSCRIPT if transcript is None else truncate_transcript(transcript)
