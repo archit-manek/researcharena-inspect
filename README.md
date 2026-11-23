@@ -4,7 +4,7 @@ An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://resea
 
 **Reference setup:** the four-setting evaluation is run and evidenced on Docker with one NVIDIA H100, the port's built-in sandbox. Another Inspect sandbox can be given with `sandbox` and `sandbox_config`; without an `evaluator` service the scorer then runs in the agent's own container instead of a separate one.
 
-The eval's documentation, written for a reviewer, is [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md): what the port is and what "the original" means, how to run it, how a sample is scored, what has been verified, the evaluation report, one line per deviation from upstream and the main limitations. Two appendices beside it hold the detail: [EVIDENCE.md](src/researcharena_inspect/EVIDENCE.md), everything measured (the full verification table, the full evaluation report and the log behind each result), and [DEVIATIONS.md](src/researcharena_inspect/DEVIATIONS.md), everything that differs from upstream (the full deviations table and known limitations).
+The eval's documentation, written for a reviewer, is [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md): what the port is and what "the original" means, how to run it, how a sample is scored, what has been verified, the evaluation report, one line per deviation from upstream and the main limitations. Three appendices beside it hold the detail: [EVIDENCE.md](src/researcharena_inspect/EVIDENCE.md), everything measured (the full verification table, the full evaluation report and the log behind each result); [DEVIATIONS.md](src/researcharena_inspect/DEVIATIONS.md), everything that differs from upstream (the full deviations table and known limitations); and [DESIGN.md](src/researcharena_inspect/DESIGN.md), how the port works, in full (every run command, the parameters, a sample and its scoring, the changelog in full).
 
 Where things stand (version 10-G, 23 Nov 2026; every result was produced at 10-F or earlier, and 10-G only removes the built-in Kubernetes backend and the Hawk material):
 
@@ -62,7 +62,8 @@ src/researcharena_inspect/        the eval
   run_configs/                    the paper's setup as `inspect eval --run-config` files: one per setting, one for the monitor
   pins.py, upstream.py, published.py   pinned versions, the upstream checkout, the published runs
   eval.yaml, README.md            the eval's metadata and documentation
-  EVIDENCE.md, DEVIATIONS.md      the README's appendices: everything measured; everything that differs from upstream
+  EVIDENCE.md, DEVIATIONS.md,     the README's appendices: everything measured; everything that
+  DESIGN.md                       differs from upstream; how the port works, in full
 tests/researcharena_inspect/      its tests
 agent_artefacts/                  the validity report, the review summary, and the trajectory analysis (Scout scanners, runner, results, ..._ANALYSIS.md)
 NOTICE                            attribution for the code adapted from ResearchArena (MIT)

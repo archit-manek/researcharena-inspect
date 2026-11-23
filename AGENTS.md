@@ -20,7 +20,8 @@ This project uses `uv`. Do not use `pip`, bare `python` or bare `pytest`.
 - `src/researcharena_inspect/run_configs/`: `original.yaml` and `original_monitor.yaml`, the paper's setup as `inspect eval --run-config` files, each value commented with where upstream sets it.
 - `src/researcharena_inspect/README.md`: the eval's documentation for a reviewer, short: the generated sections, a summary of what has been verified and of the evaluation report, one line per deviation and the main limitations.
 - `src/researcharena_inspect/EVIDENCE.md`: everything measured: the full verification table, the full evaluation report and the log behind each result.
-- `src/researcharena_inspect/DEVIATIONS.md`: everything that differs from upstream: the full deviations table, the analysis choices, the full known limitations and the port's design in full.
+- `src/researcharena_inspect/DEVIATIONS.md`: everything that differs from upstream: the full deviations table, the analysis choices and the full known limitations.
+- `src/researcharena_inspect/DESIGN.md`: how the port works, in full: what is in it, what you need, every run command, the notes on the parameters, a red-team sample and its scoring, and the changelog in full.
 - `tests/researcharena_inspect/`: the tests.
 - `agent_artefacts/trajectory_analysis/inspect_scout/`: Scout scanners for the transcript audit.
 - `agent_artefacts/trajectory_analysis/researcharena_inspect/`: this eval's Scout scanners, the one-command runner for the trajectory analysis (manifest of live logs, dry run, known answers, validity with the paper's success rule) and its `..._ANALYSIS.md` files; see its README.

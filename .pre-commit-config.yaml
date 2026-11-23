@@ -71,8 +71,8 @@ repos:
         # README.md files hold sections written by `inspect-evals-readmes`, which
         # compares them byte for byte; mdformat's blank lines around the section
         # tags would make `generate --check` fail, so READMEs are left to the
-        # generator. The eval README's two appendices hold tables moved from it whose cells run
+        # generator. The eval README's three appendices hold tables moved from it whose cells run
         # to thousands of characters; padding every row to that width would double their size.
-        exclude: (^|/)README\.md$|^src/researcharena_inspect/(EVIDENCE|DEVIATIONS)\.md$
+        exclude: (^|/)README\.md$|^src/researcharena_inspect/(EVIDENCE|DEVIATIONS|DESIGN)\.md$
         additional_dependencies:
           - mdformat-gfm # padded/aligned tables + GFM extensions (task lists, strikethrough)
