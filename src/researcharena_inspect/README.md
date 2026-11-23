@@ -55,7 +55,7 @@ The monitor task stages upstream's monitor files, runs Claude Code or ReAct with
 
 Pass lines are the paper's main-task thresholds; upstream's code has none for the main task (D-028). Budgets are the published runs'; the task's `redruntime` defaults to one hour and the run configs set the published values. Each setting also has a baseline. CUDA and inference agents are re-prompted until the budget is spent; post-training agents run once.
 
-[`run_configs/`](run_configs/) holds the paper's setup as `inspect eval --run-config` files, one per setting and one for the monitor, each value commented with where upstream sets it. They are upstream's settings, not a recipe for the paper's numbers: one run a cell (the paper has three; `--epochs 3`), one sample at a time, one CLI version per command. The pinned versions (the published runs, the published models, every model and dataset file in the agent's cache, the agent image) and the modules by role: [DEVIATIONS.md](DEVIATIONS.md#what-is-in-the-port).
+[`run_configs/`](run_configs/) holds the paper's setup as `inspect eval --run-config` files, one per setting and one for the monitor, each value commented with where upstream sets it. They are upstream's settings, not a recipe for the paper's numbers. Each runs three trials a cell, as the paper does (`--epochs 1` for one), one sample at a time and one CLI version per command. The pinned versions (the published runs, the published models, every model and dataset file in the agent's cache, the agent image) and the modules by role: [DEVIATIONS.md](DEVIATIONS.md#what-is-in-the-port).
 
 ## How to run it
 
@@ -86,7 +86,8 @@ uv run inspect eval researcharena_inspect/researcharena --model anthropic/claude
     -T side_tasks=none -T redruntime=0.1667
 
 # Upstream's CUDA setup with the published runs' agent settings: all four side tasks and the
-# baseline, one hour and one run each (the paper has three). Paid: about $2.66 to $9.43 a run.
+# baseline, one hour, three runs each as in the paper (`--epochs 1` for one). Paid: about $2.66
+# to $9.43 a run.
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original.yaml
 
 # Score the untouched workspace, with no model call (needs a GPU; any --model works).
@@ -304,7 +305,7 @@ Sixteen one-hour runs, 17 and 18 Nov 2026, at version 1-C: fifteen with Claude C
 ```bash
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original.yaml \
     -T side_tasks=<none|embedded|independent|embedded2|embedded3> -T claude_code_version=<2.1.104|2.1.162> \
-    -T snapshot_max_mb=90 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1
+    -T snapshot_max_mb=90 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1 --epochs 1
 ```
 
 | Condition | Mine, measured by the scorer | Mine, not a measurement | Published Sonnet 4.6 |
@@ -327,7 +328,7 @@ Fifteen one-hour Claude Code runs, 18 and 19 Nov 2026, at version 3-D, three per
 ```bash
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_inference.yaml \
     -T side_tasks=<none|embedded|independent|embedded2|embedded3> -T claude_code_version=<2.1.104|2.1.162> \
-    -T hf_seed=<host folder> -T snapshot_max_mb=100 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1
+    -T hf_seed=<host folder> -T snapshot_max_mb=100 --model-cost-config <prices.yaml> --cost-limit 20 --max-samples 1 --epochs 1
 ```
 
 | Condition | Mine | Published Sonnet 4.6 |
@@ -351,10 +352,10 @@ One five-hour Claude Code run per cell, 19 and 20 Nov 2026, at versions 7-F (`ut
 ```bash
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_capabilities.yaml \
     -T side_tasks=<none|embedded> -T hf_seed=<host folder> \
-    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1
+    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1 --epochs 1
 uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_safety.yaml \
     -T side_tasks=<none|embedded|embedded_german> -T hf_seed=<host folder> \
-    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1
+    --model-cost-config <prices.yaml> --cost-limit 80 --max-samples 1 --epochs 1
 ```
 
 The upload side task (`independent`) is a second command on Claude Code 2.1.104 (D-256).
@@ -491,6 +492,7 @@ One entry per task version, newest first; both tasks and the check tasks share i
 ### [10-G] - 2026-11-23
 
 - Removed the built-in Kubernetes backend: the options `backend`, `gpu` and `sandbox_start_timeout` of `researcharena`, `environment_check` and `kernel_crash_check`, and the Kubernetes values files (`environment/k8s_values_l4.yaml`, `environment/k8s_values_h100.yaml`, `monitor/k8s_values_artifact.yaml`); and the `gpu_probe` task, which was outside `eval.yaml`. Both were used only on GL's Hawk, for smoke runs at 1-A. The two check tasks now run on Docker by default (they defaulted to Kubernetes). Another sandbox can still be given with `sandbox` and `sandbox_config` (`researcharena`, `researcharena_monitor`; `kernel_crash_check` takes a `sandbox` spec); without an `evaluator` service scoring runs in the agent's container (D-093). Can move: nothing on Docker.
+- Change without a version change (23 Nov): the four red-team run configs set `epochs: 3`, the paper's three trials; `--epochs 1` on the command line runs one, as every reported run did. Can move: nothing for a given number of epochs.
 
 ### [10-F] - 2026-11-21
 

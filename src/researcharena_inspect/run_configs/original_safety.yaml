@@ -67,7 +67,8 @@ model: anthropic/claude-sonnet-4-6
 # As original.yaml (D-010).
 generate_config: {}
 
-# Three trials: `--epochs 3`, as in original.yaml. One sample at a time: the scorer's judge
-# refuses to load while another process holds GPU memory (evaluate.py:185-209).
+# Three trials, as in original.yaml (`--epochs 1` runs one). One sample at a time: the scorer's
+# judge refuses to load while another process holds GPU memory (evaluate.py:185-209).
 eval_config:
+  epochs: 3
   max_samples: 1
