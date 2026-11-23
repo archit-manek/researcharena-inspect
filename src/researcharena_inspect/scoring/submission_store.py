@@ -1,47 +1,21 @@
-"""The submitted model, kept on the host beside the log, so that the run can be re-scored later.
+"""A post-training run's folder, model included, copied to the host beside the log (D-172).
 
-A post-training run submits `final_model/`, about 1 GB, inside the workspace upstream keeps as
-`red_team/task_snapshot/` (`src/pipeline_redteam.sh:433-438`, pinned commit; the authors
-published those models in a separate dataset, `pins.OUTPUT_MODELS_DATASET`). The `.eval` log
-cannot hold it (D-110 keeps a workspace only up to `snapshot_max_mb`, 20 MiB by default), and it
-is lost with the sandbox. So, for the settings in `MODEL_SETTINGS`, after the score is decided the
-scorer copies the post-evaluation run folder out of the sandbox into a run folder in upstream's
-layout on the host (D-172):
+The submitted `final_model/` (about 1 GB) is too large for the `.eval` log and is lost with the
+sandbox. For `MODEL_SETTINGS` (any setting if `model_store` names a folder), once the score is
+decided, the scorer copies the run folder in upstream's layout to
+`<store>/<sample>__e<epoch>__<uuid8>/`: `metadata.json`, `red_team/task_snapshot/`
+(`src/pipeline_redteam.sh:433-438`), `eval/`, `side_task_evidence/` and `manifest.json`. By
+default `<store>` is `<log without .eval>.submissions/`. `eval/` and `side_task_evidence/` let a
+replay of an `independent` run put its capture log back.
 
-    <store>/<sample>__e<epoch>__<uuid8>/metadata.json             setting, side task, config
-    <store>/<sample>__e<epoch>__<uuid8>/red_team/task_snapshot/   the folder upstream's run keeps
-    <store>/<sample>__e<epoch>__<uuid8>/eval/                     metrics.json and attempt logs
-    <store>/<sample>__e<epoch>__<uuid8>/side_task_evidence/       the capture log, if any
-    <store>/<sample>__e<epoch>__<uuid8>/manifest.json             status and every entry
+- Everything is written under `.<name>.incomplete/` and renamed once every listed file has
+  arrived with its SHA-256; replay refuses an `.incomplete` folder. Nothing is overwritten.
+- `final_model/` is listed and hashed first, so the caps cut the rest of the workspace first.
+- A link pointing outside `task_snapshot/`, and FIFOs, sockets and devices, are not made; they
+  are listed in `left_out`.
+- Status: `stored`, `partial` (something left out) or `error`. Replay accepts only `stored`.
 
-`eval/` and `side_task_evidence/` are where upstream's run folder keeps them (`$EVAL_DIR/eval`,
-`$EVAL_DIR/side_task_evidence`), so the stored run carries its raw `metrics.json`, and a replay of
-a stored `independent` run can put its capture log back where the side task's evaluator reads it.
-
-`<store>` is, by default (`model_store="auto"`), `<log file without .eval>.submissions/` beside
-the log; another folder can be given. The folder name carries the sample's uuid, so retries and
-sample ids that sanitise to the same name do not collide; an existing folder is never
-overwritten.
-
-How it is written (round A of the review, D-172):
-
-- **Atomically.** Everything goes into `.<name>.incomplete/`; `manifest.json` is written last,
-  and the folder is renamed to `<name>` only when every listed file has arrived with its
-  SHA-256. A copy that fails leaves the `.incomplete` folder, which replay refuses.
-- **Model first, then the caps.** The sandbox lists `final_model/` before anything else and
-  stops at `max_files` entries; files are hashed, in that order, while their total is within
-  `max_bytes`. So a cap cuts the rest of the workspace, never the model unless the model alone
-  is too large, and neither the listing nor the hashing is unbounded.
-- **Links.** A symbolic link whose target stays inside `task_snapshot/` is made again on the
-  host, as `cp -r` keeps it; a link that points outside it (an absolute path, or one that climbs
-  out) is not made and is listed in `left_out` with its reason. FIFOs, sockets and devices
-  likewise.
-- **Status.** `stored` when nothing was left out; `partial` when anything was (a cap, an
-  outside link); `error` when the copy failed. Replay accepts only `stored`.
-
-The score's metadata (`submission_store`) carries the folder, the status, the totals, the model's
-entries with their SHA-256 and the first `MANIFEST_IN_LOG` others. A failure is recorded there
-and never raised: the score is already decided and is not changed by it.
+A failure is recorded in the score's metadata and never raised.
 """
 
 import hashlib
@@ -107,7 +81,6 @@ def default_store_root() -> Path:
     Raises:
         StoreError: no running sample, or the log is not a local file.
     """
-    # Inspect 0.3.290 has no public accessor for the running sample's log location.
     from inspect_ai.log._samples import (  # inspect-evals-lint: ignore[private_api_imports] -- no public accessor for the log location
         sample_active,
     )
@@ -125,10 +98,9 @@ def default_store_root() -> Path:
 
 
 def store_root(option: str, setting: str) -> Path | None:
-    """Where this sample's run folder goes, from the task's `model_store` option.
+    """Where this sample's run folder goes, from the `model_store` option.
 
-    `auto`: beside the log for `MODEL_SETTINGS`, nowhere for the others. `none`: nowhere. Any
-    other value: that folder.
+    `auto`: beside the log for `MODEL_SETTINGS`, nowhere for the others; `none`; or a folder.
     """
     if option == "none":
         return None
@@ -138,7 +110,10 @@ def store_root(option: str, setting: str) -> Path | None:
 
 
 def run_folder_name(sample_id: str | int, epoch: int, uuid: str | None = None) -> str:
-    """`<sample id, sanitised>__e<epoch>`, and `__<first 8 of the sample's uuid>` when given."""
+    """`<sample id, sanitised>__e<epoch>__<uuid8>`.
+
+    The uuid keeps apart retries and sample ids that sanitise to the same name.
+    """
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(sample_id)).strip("._") or "sample"
     tail = f"__{re.sub(r'[^A-Za-z0-9]', '', uuid)[:8]}" if uuid else ""
     return f"{safe}__e{epoch}{tail}"
@@ -152,11 +127,7 @@ def _safe_rel(path: str) -> Path:
 
 
 def link_stays_inside(rel: str, target: str) -> bool:
-    """Whether a link at `rel` (relative to the tree) to `target` resolves inside the tree.
-
-    Lexical only (the target is never followed): an absolute target, or one whose path climbs
-    above the tree's root, is outside.
-    """
+    """Whether a link at `rel` to `target` stays inside the tree, lexically (never followed)."""
     if not target or target.startswith("/"):
         return False
     joined = posixpath.normpath(posixpath.join(posixpath.dirname(rel), target))
@@ -171,15 +142,12 @@ async def keep_submission(
     max_bytes: int = DEFAULT_MAX_BYTES,
     max_files: int = DEFAULT_MAX_FILES,
 ) -> dict[str, Any]:
-    """Copy the sandbox's run folder into `root/name/` (see the module docstring).
-
-    Never raises: any failure is the record's `status: error`, with what was done so far.
+    """Copy the sandbox's run folder into `root/name/`. Never raises: a failure is `error`.
 
     Returns:
-        The record for the score's metadata: `status` (`stored`, `partial` or `error`),
-        `folder`, `files`, `bytes`, `model` (the `final_model/` entries with size and SHA-256),
-        `entries` (the first `MANIFEST_IN_LOG` others), `left_out` (with reasons), `records`
-        (the `eval/` and evidence files kept), `manifest_sha256`, `seconds` and `error`.
+        The record for the score's metadata: `status`, `folder`, totals, `model` (the
+        `final_model/` entries with SHA-256), the first `MANIFEST_IN_LOG` other `entries`,
+        `left_out` with reasons, `records` (`eval/` and evidence), `manifest_sha256` and `error`.
     """
     start = time.monotonic()
     folder = root / name
@@ -265,7 +233,7 @@ async def _keep(
     work = root / f".{name}.incomplete"
     if await anyio.Path(final).exists() or await anyio.Path(work).exists():
         raise StoreError(f"{final} (or its .incomplete folder) exists; it is never overwritten")
-    # Whatever the evaluator left running could still write into the folder.
+    # The evaluator's leftovers could still write into the folder.
     await stop_agent_processes(evaluator_sandbox())
     box = evaluator_sandbox()
     entries, truncated = await list_tree(
@@ -278,7 +246,7 @@ async def _keep(
     (work / "metadata.json").write_text(json.dumps(run_metadata, indent=4) + "\n", "utf-8")
     copied, left_out = await _copy_tree(entries, SNAPSHOT_DIR, snapshot, part_dir, record)
 
-    # The run's raw records, as upstream's run folder keeps them beside red_team/.
+    # `eval/` and `side_task_evidence/`, beside `red_team/` as upstream keeps them.
     records: list[dict[str, Any]] = []
     for source, dest in RECORD_FOLDERS:
         present = await box.exec(["test", "-d", source], user="root")

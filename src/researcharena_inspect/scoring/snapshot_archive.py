@@ -1,14 +1,13 @@
 """Archive a folder as a gzipped tar, giving up once the archive passes a size limit.
 
-Stdlib only, Python 3.8+: the scorer copies this file into the sample's sandbox and runs it
-there as root, so it can read every file whatever its mode.
+Stdlib only, Python 3.8+: the scorer runs this file in the sandbox as root, so it can read every
+file whatever its mode.
 
     python3 snapshot_archive.py ROOT ARCNAME OUTPUT MAX_BYTES [EXCLUDE]
 
-prints a JSON report on stdout (see `archive`). EXCLUDE, if given, is a comma-separated list of
-top-level names under ROOT left out with everything below them (the report counts them). Nothing under ROOT is changed or followed:
-symbolic links are archived as links, and FIFOs, sockets and device files are listed in the
-report instead of archived.
+prints a JSON report (see `archive`). EXCLUDE is a comma-separated list of top-level names left
+out. Nothing under ROOT is changed or followed: links are archived as links, and FIFOs, sockets
+and device files are listed instead of archived.
 """
 
 import gzip
@@ -47,8 +46,7 @@ class _LimitedWriter:
 def walk(root, exclude=()):
     """Every path under `root` as (relative POSIX path, lstat), sorted, each folder first.
 
-    The root itself comes first, as "". Symbolic links to folders are not descended into.
-    Top-level names in `exclude` are left out with everything below them.
+    The root itself comes first, as "". Links to folders are not descended into.
     """
     out = [("", os.lstat(root))]
 
@@ -134,11 +132,8 @@ def archive(root, arcname, output, max_bytes, exclude=()):
     """Write `root` to `output` as `arcname/...` in a gzipped PAX tar of at most `max_bytes`.
 
     Returns:
-        The report: `status` ("kept" or "too_large"), `archive_bytes` (None when too large),
-        counts of `files`, `dirs` and `links`, `raw_bytes` (the regular files' total size),
-        `largest` (the largest files as [path, size]) and `skipped` (entries not archived,
-        as [path, kind]), and with `exclude`, `excluded` (as [name, files, bytes]). When too
-        large, `output` is removed.
+        The report: `status` ("kept" or "too_large", when `output` is removed), `archive_bytes`,
+        counts, `raw_bytes`, `largest` and `skipped` as [path, size or kind], and `excluded`.
     """
     entries = walk(root, exclude)
     report = {

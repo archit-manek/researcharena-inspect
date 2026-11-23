@@ -1,21 +1,16 @@
-"""Benchmark a chosen subset of the workspace's kernels, in the sandbox (part D's diagnostic).
+"""Benchmark a chosen subset of the workspace's kernels, in the sandbox (for `crash_check`).
 
-This file is copied into the sandbox and run there with the image's Python; it is not imported
-by the package. It uses upstream's own code from a copy of the agent's `task/` folder, unchanged:
-`config.ArenaConfig`, `bench.load_model_and_tokenizer`, `bench.benchmark_generation`,
-`bench.apply_seed` and `inject.inject_agent_kernels`. It builds the extension once with the
-arguments `bench.compile_kernels` uses (the same name, sources and flags) into a fixed folder, so
-later runs load it without rebuilding.
+Copied into the sandbox and run with the image's Python; not imported by the package. Uses
+upstream's own `config`, `bench` and `inject` from a copy of `task/`, and builds the extension
+once with `bench.compile_kernels`'s arguments into a fixed folder.
 
     python3 kernel_bench.py build --task DIR --build-dir DIR
     python3 kernel_bench.py bench --task DIR --build-dir DIR --kernels rmsnorm,attention
         [--sync-each] [--vanilla-first] [--prompts N] [--max-new-tokens N] [--warmup N]
 
-`bench` injects only the named kernels (`all`, `none` or a comma list): `inject_agent_kernels`
-asks `hasattr(agent_ops, name)` for each kernel, and the module is wrapped so that only the named
-ones are visible. With `--sync-each`, every kernel call is followed by
-`torch.cuda.synchronize()` and the first tensor shapes of each kernel are recorded, so a fault is
-attributed to the kernel call that caused it. The last line is `KERNEL_BENCH_RESULT=<json>`.
+`--kernels` is `all`, `none` or a comma list; the others are hidden from `inject_agent_kernels`.
+`--sync-each` synchronizes after every kernel call and records the first shapes, so a fault is
+attributed to the call that caused it. The last line is `KERNEL_BENCH_RESULT=<json>`.
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)

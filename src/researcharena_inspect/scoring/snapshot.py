@@ -1,27 +1,14 @@
-"""The agent's final workspace (`red_team/task_snapshot/`), kept in the `.eval` log.
+"""The agent's final workspace (`red_team/task_snapshot/`), kept in the `.eval` log (D-110).
 
-Upstream keeps it as files in the run folder: `src/pipeline_redteam.sh` (pinned commit)
-empties model caches except `final_model` and copies the agent's `task/` to
-`red_team/task_snapshot/` (`:433-438`), and Phase 4 then runs `evaluate.py` with
-`--submission-dir red_team`, so the evaluators read the snapshot and can write into it (Python
-writes `__pycache__/` there when they import the snapshot's `bench.py` or `config.py`, and
-`bench.py` writes `workspace/last_bench.json`). The folder after Phase 4 is what the run keeps,
-what the authors published and what `pipeline_monitor.sh:265-269` copies into an artifact
-monitor's workspace.
+Upstream keeps the folder in the run folder (`src/pipeline_redteam.sh:433-438`) as Phase 4 leaves
+it: the evaluators read it and write into it (`__pycache__/`, `workspace/last_bench.json`). It is
+what the authors published and what an artifact monitor gets (`pipeline_monitor.sh:265-269`).
+The port archives it from the sandbox after the last attempt, once leftover processes are killed
+and the score is decided, keeps the archive in the sample's store, and
+`agents.record.write_run_dir` unpacks it.
 
-The port builds the same folder in the sandbox (`environment.prepare_evaluation`), where it is
-lost with the sandbox. So, after the last evaluation attempt, `keep_task_snapshot` archives it
-from the sandbox (`snapshot_archive.py`, run there as root) and keeps the archive in the
-sample's store (`TaskSnapshot`), and `agents.record.write_run_dir` unpacks it to
-`red_team/task_snapshot/` (`restore_snapshot`). Doing it after Phase 4 gives the folder upstream
-keeps, and nothing runs beside `evaluate.py`: the archive is made after its last attempt has
-exited and after the processes it may have left are killed, and the score is already decided.
-
-What the archive carries (D-110): every file, folder and symbolic link with its path, bytes,
-permission bits and modification time. Not carried: owners, hard links (each is a separate
-file, as `cp -r` makes them), and FIFOs, sockets and device files (listed in the record).
-Restoring drops setuid, setgid and sticky bits. An archive larger than the limit is not kept;
-the record then says so, with the folder's size and largest files.
+Not carried: owners, hard links (`cp -r` makes none), FIFOs, sockets and device files (listed in
+the record), and setuid, setgid and sticky bits on restore.
 """
 
 import base64
@@ -95,7 +82,7 @@ class TaskSnapshot(StoreModel):
 
     def summary(self) -> dict[str, Any]:
         """The record without the archive, for the sample's metadata."""
-        # `excluded` only when something was left out, so other settings' records are unchanged.
+        # `excluded` only when non-empty, so other settings' records keep their keys.
         return {
             k: v
             for k, v in self.model_dump().items()
@@ -110,11 +97,10 @@ async def keep_task_snapshot(
     enabled: bool = True,
     exclude: tuple[str, ...] = (),
 ) -> TaskSnapshot:
-    """Archive the sandbox's `task_snapshot` into `store` (the sample's) and return the record.
+    """Archive the sandbox's `task_snapshot` into the sample's `store` and return the record.
 
-    Call after the last evaluation attempt. Never raises for a failure of its own: the record's
-    `status` is then `error`, with the reason, so the score is never lost to it. Top-level names
-    in `exclude` are left out of the archive and counted in `excluded`.
+    Call after the last evaluation attempt. Never raises: a failure is `status` `error`, so the
+    score is never lost to it. Top-level names in `exclude` are left out and counted.
     """
     record = TaskSnapshot(store=store)
     record.max_bytes = max_bytes
@@ -146,8 +132,8 @@ async def keep_task_snapshot(
 async def _archive_in_sandbox(
     record: TaskSnapshot, max_bytes: int, exclude: tuple[str, ...] = ()
 ) -> None:
-    # Processes the evaluator may have left (it runs as the agent's user) could still be
-    # writing into the folder; upstream's evaluator container is gone at this point.
+    # The evaluator's leftovers (the agent's user) could still write into the folder;
+    # upstream's evaluator container is gone at this point.
     await stop_agent_processes(evaluator_sandbox())
     box = evaluator_sandbox()
     prepared = await box.exec(["install", "-d", "-m", "700", _SCRATCH], user="root")
@@ -214,14 +200,11 @@ def _member_path(name: str) -> PurePosixPath:
 def restore_snapshot(archive: bytes, parent: Path) -> dict[str, Any]:
     """Unpack an archive from `keep_task_snapshot` to `parent/task_snapshot`.
 
-    Files, folders and symbolic links come back with their paths, bytes, permission bits
-    (setuid, setgid and sticky dropped) and times; link targets are written as they were and
-    never followed. Only paths below `task_snapshot`, each inside a folder the archive made
-    earlier, are accepted.
+    Link targets are written as they were and never followed. Only paths below `task_snapshot`,
+    each inside a folder the archive made earlier, are accepted.
 
     Returns:
-        Counts of what was restored, and the paths whose setuid, setgid or sticky bit was
-        dropped or whose kind was not restored.
+        Counts of what was restored, and the paths with dropped mode bits or not restored.
 
     Raises:
         FileExistsError: `parent/task_snapshot` exists.

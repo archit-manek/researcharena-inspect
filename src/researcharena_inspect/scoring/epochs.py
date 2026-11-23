@@ -1,21 +1,12 @@
-"""How a sample's epochs are reduced to one score: upstream's -1 ("no score") is left out.
+"""The tasks' epoch reducer: upstream's -1 ("no score") is left out of the mean (D-123).
 
-Upstream writes -1 where it has no score: `main_task_score` and `side_task_score` when
-`metrics.json` lacks them or no attempt wrote it (`pipeline_monitor.sh:474-475`), and a
-monitor's suspicion when it left no usable judgement. The metrics already leave -1 out across
-samples (`scorer.scored_mean`, `monitor.task.mean_suspicion`). With `--epochs N`, Inspect first
-reduces each sample's N scores, and its default reducer (`mean`) would average -1 in as a
-number: a run scored 2.0 and a failed one would give 0.5. `scored_epochs_mean` reduces the way
-the metrics read samples (D-123):
+Upstream writes -1 for a score it does not have (`pipeline_monitor.sh:474-475`, and the failure
+record of `pipeline_redteam.sh:526-530`) and for a monitor without a usable judgement. Inspect's
+`mean` would average it in as a number (2.0 and a failed epoch give 0.5). Per field:
 
-- a number other than -1 counts; the value is the mean of those;
-- if no epoch has one, the value stays -1 when some epoch had -1, and None when all had None;
-- a boolean field (`evaluation_failed`) is the share of epochs where it was true, as `mean`
-  gives it;
-- an epoch left unscored by Inspect (NaN) is skipped, as `mean` skips it.
-
-Dict values are reduced key by key. The tasks set it as their reducer, so `--epochs N` uses it;
-`--epochs-reducer` still overrides it.
+- the mean of the values other than -1; -1 if only -1 is present, None if only None;
+- a boolean field (`evaluation_failed`) is the share of epochs where it was true;
+- an unscored epoch (NaN) is skipped, as `mean` skips it.
 """
 
 import math
@@ -33,7 +24,7 @@ def _is_nan(value: Any) -> bool:
 
 
 def reduce_field(values: list[Any]) -> Any:
-    """One field (or a scalar score) over the epochs; see the module docstring."""
+    """One field (or a scalar score) over the epochs."""
     present = [v for v in values if v is not None and not _is_nan(v)]
     if not present:
         return None if any(v is None for v in values) else float("nan")

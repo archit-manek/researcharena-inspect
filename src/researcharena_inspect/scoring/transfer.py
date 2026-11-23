@@ -1,20 +1,12 @@
-"""Copying large files between the sample's sandbox and the host, in bounded pieces.
+"""Copying large files between the sandbox and the host in bounded pieces, checked by SHA-256.
 
-Inspect's `read_file` and `write_file` move a whole file at once, and `read_file` refuses one
-over 100 MiB (`INSPECT_SANDBOX_MAX_READ_FILE_SIZE`). A post-training submission's weights are
-about 1 GB. These helpers move a file in pieces of at most `CHUNK_BYTES`, so memory on both sides
-stays bounded, every exec has a time limit, and every file is checked by its SHA-256 at the end:
-the sandbox's own hash (`list_tree`) against the bytes that arrived. Nothing here follows a
-symbolic link.
+Inspect's `read_file` refuses a file over 100 MiB (`INSPECT_SANDBOX_MAX_READ_FILE_SIZE`), and a
+post-training model is about 1 GB. Used by `submission_store` (out) and `agents.replay` (in).
+Nothing here follows a symbolic link.
 
-Partly written files never take a name a workspace file could have (D-172, round A): on the
-host they go in a transfer folder the caller gives, outside the copied tree; in the sandbox they
-are assembled under `/var/tmp`, written only by their owner (D-253), and moved into place once
-their hash matches. (Before, the part was `<file>.part` beside its destination, so copying
-`result` removed a sibling `result.part`.)
-
-Used by the submission store (`submission_store`, sandbox to host) and the replay agent
-(`agents.replay`, host to sandbox).
+A partly written file never takes a name a workspace file could have (D-172): on the host it is
+in a transfer folder outside the copied tree; in the sandbox it is assembled under `/var/tmp`,
+written only by its owner (D-253), and moved into place once its hash matches.
 """
 
 import hashlib
@@ -44,12 +36,9 @@ class TransferError(RuntimeError):
     """A copy failed, or the bytes that arrived do not match the source's SHA-256."""
 
 
-# Lists ROOT without following links, as JSON: the top-level names in FIRST (in that order),
-# then the rest, each folder before its contents, sorted by name. Stops after LIMIT entries.
-# Regular files are hashed here, in the sandbox, in listing order, while their total stays within
-# HASH_BYTES; a file past that budget is listed with its size and no hash (it will not be
-# copied), so neither the listing nor the hashing is unbounded. The listing therefore puts the
-# model first before any cap applies.
+# Lists ROOT without following links: the names in FIRST, then the rest, each folder before its
+# contents. Stops after LIMIT entries; hashes files in that order while their total stays within
+# HASH_BYTES (a file past it gets no hash and is not copied).
 _LIST = """
 import hashlib, json, os, stat, sys
 root, limit, hash_bytes = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
@@ -144,7 +133,7 @@ async def list_tree(
     Args:
         box: the sandbox.
         root: the folder in the sandbox.
-        max_entries: stop after this many entries (the top-level names in `first` come first).
+        max_entries: stop after this many entries.
         max_hash_bytes: hash files, in listing order, while their total stays within this;
             a file past it is marked `over_budget` and has no `sha256`.
         first: top-level names to list before the others (for example `final_model`).
@@ -190,8 +179,8 @@ async def copy_out(
 ) -> None:
     """Copy one sandbox file to `dest` on the host, piece by piece, and check its SHA-256.
 
-    The bytes go to a uniquely named file in `part_dir` (a folder outside the copied tree) and
-    are moved to `dest` once the hash matches.
+    The bytes go to a uniquely named file in `part_dir` (outside the copied tree) and are moved
+    to `dest` once the hash matches.
 
     Raises:
         TransferError: a piece failed or the bytes do not match `sha256`.
@@ -250,13 +239,12 @@ async def copy_in(
 ) -> str:
     """Copy one host file into the sandbox as `user`, piece by piece; return its SHA-256.
 
-    `user` creates a uniquely named file in `temp_dir` (outside every workspace), appends each
-    piece to it, and moves it to `dest` once the sandbox's hash of the whole file equals the
-    host's. `dest`'s folder must exist and be writable by `user`.
+    `user` assembles the file in `temp_dir` and moves it to `dest` (whose folder `user` must be
+    able to write) once the sandbox's hash equals the host's.
 
-    Only the file's owner writes to it (D-253): where the kernel's `fs.protected_regular` is on
-    (Ubuntu's default), nobody else, root included, may open for writing a file in a sticky
-    world-writable folder such as `/var/tmp`, and a container gets its host's setting.
+    D-253: only the owner writes it, because with `fs.protected_regular` on (Ubuntu's default,
+    inherited by containers) not even root may open another user's file in sticky `/var/tmp`
+    for writing.
 
     Raises:
         TransferError: a piece failed or the file in the sandbox does not match.
