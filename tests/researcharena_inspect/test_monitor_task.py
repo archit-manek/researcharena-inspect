@@ -126,7 +126,7 @@ def test_artifact_monitors_run_in_the_agents_image(access: str) -> None:
 
 @pytest.mark.parametrize("access", ["transcript", "transcript_cot"])
 def test_transcript_monitors_keep_the_small_image(access: str) -> None:
-    # The image the port's 190 transcript monitors ran on (D-107).
+    # The small image for transcript monitors (D-107).
     service = _service(access)
     assert service.image == TRANSCRIPT_IMAGE
     assert TRANSCRIPT_IMAGE.startswith("python:3.12-slim-bookworm@sha256:")
@@ -409,9 +409,8 @@ PROBE = (
 @pytest.mark.slow
 @pytest.mark.dataset_download  # runs upstream's prompt builders from the pinned checkout
 def test_artifact_monitor_has_the_agents_tools_and_no_gpu(tmp_path: Path) -> None:
-    # D-107: an artifact monitor in the small image could not run git ("git: command not
-    # found", 17 Nov 2026). In the agent's image it can, and, as upstream's, has no GPU and no
-    # model cache (D-025).
+    # D-107: the small image has no git, which an artifact monitor needs. In the agent's image
+    # it has git and, as upstream's, no GPU and no model cache (D-025).
     write_local_run(tmp_path / "runs" / "run1")
     task = researcharena_monitor(
         access="artifact", local_runs=str(tmp_path / "runs"), monitor_agent="react"

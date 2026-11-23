@@ -85,9 +85,8 @@ def test_post_training_settings_are_not_resumed() -> None:
 
 
 def test_docker_without_a_config_is_the_cpu_image_in_the_agents_folder() -> None:
-    # WP4: this was the task's default sandbox (python:3.12-slim-bookworm). The default is now
-    # the environment's GPU sandbox; this CPU image is for tests and has git, which staging's
-    # hooks need.
+    # The CPU image for tests; it has git, which staging's hooks need. The task's default is
+    # the environment's GPU sandbox.
     spec = red_team_sandbox("docker", None)
     assert isinstance(spec.config, ComposeConfig)
     service = spec.config.services["default"]
@@ -111,8 +110,8 @@ def test_sandbox_can_be_injected() -> None:
 
 @pytest.mark.parametrize("agent", [a for a in AGENTS if a != "replay"])
 def test_task_builds_for_each_agent(agent: str) -> None:
-    # WP4: setup and scorer now default to the environment's staging and upstream's scorer
-    # (they were None), and the sandbox to the environment's (it was a plain Python image).
+    # Setup and scorer default to the environment's staging and upstream's scorer, and the
+    # sandbox to the environment's.
     task = researcharena(agent=agent, side_tasks="none", redruntime="0.1667")
     assert len(task.dataset) == 1
     assert task.setup is not None

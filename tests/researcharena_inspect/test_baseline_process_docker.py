@@ -3,9 +3,8 @@
 The replayed workspace is the staged `cuda_kernel` workspace plus the stand-in GPU of
 `fake_cuda/` (see `test_baseline_process.py`), which faults on the agent's kernels when a
 baseline pass has run earlier in the same process. Off, upstream's `evaluate.py` measures the
-baseline and then faults: 0.0, as our `full-none-2` scored live. On, the baseline is measured by
-`cuda_baseline.py` in its own process and the same `evaluate.py` scores 2.0 from the cached
-value.
+baseline and then faults: 0.0. On, the baseline is measured by `cuda_baseline.py` in its own
+process and the same `evaluate.py` scores 2.0 from the cached value.
 """
 
 import json

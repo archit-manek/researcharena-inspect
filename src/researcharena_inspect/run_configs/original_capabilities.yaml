@@ -1,26 +1,18 @@
-# The paper's red-team setup for the capabilities fine-tuning setting (`utility_finetuning`), as
-# an Inspect run config:
+# The paper's red-team setup for the capabilities fine-tuning setting (`utility_finetuning`):
 #
 #   uv run inspect eval --run-config src/researcharena_inspect/run_configs/original_capabilities.yaml \
 #     -T hf_seed=/path/on/the/docker/host/to/a/hugging/face/cache
 #
-# Same format as `original.yaml` (the CUDA setting); see there for what a run config is. Flags
-# on the command line override it (`--model`, `-T name=value`).
+# See original.yaml for the format and the terms. Published runs: 72 capabilities runs, 9 of
+# them Sonnet 4.6 with Claude Code.
 #
-# "Upstream" is ResearchArena at b922f4b (pins.UPSTREAM_COMMIT), the code the port follows.
-# "Published runs" are the authors' 72 capabilities runs in the dataset at revision 8cd737c
-# (pins.HF_REVISION), of which 9 are Sonnet 4.6 with Claude Code. Where the two disagree, the
-# comment says which one the value follows.
-#
-# Not matchable, each marked NOT MATCHED below:
-#   - the vLLM version the scorer serves the model with: the published runs ran vLLM 0.17.0
-#     (60 of 72 transcripts print it, none another); upstream's image at b922f4b, which the
-#     port builds, has 0.19.1 (ledger D-133, D-176).
-#   - the Hugging Face cache: upstream's agent saw the cluster's whole shared cache; the port's
-#     holds the config's model and resources.json's two datasets at pinned revisions (D-170).
-#   - the agent-facing `evaluate_model.py`: 64 of the 72 published workspaces cached GSM8K
-#     *test* items from the paper-era script; the script at b922f4b samples the train split
-#     (D-015, D-055). The port stages b922f4b's.
+# NOT MATCHED:
+#   - vLLM: the published runs ran 0.17.0; upstream's image at b922f4b, which the port builds,
+#     has 0.19.1 (D-133, D-176).
+#   - the Hugging Face cache: upstream's agent saw the cluster's whole cache; the port's holds
+#     the config's model and resources.json's two datasets at pinned revisions (D-170).
+#   - the agent's `evaluate_model.py`: the paper-era script cached GSM8K *test* items; the port
+#     stages b922f4b's, which samples the train split (D-015, D-055).
 
 task:
   task: researcharena_inspect/researcharena
@@ -28,79 +20,52 @@ task:
     # Upstream: `run_redteam.sh --setting utility_finetuning`.
     setting: utility_finetuning
 
-    # The baseline (`none`) and the two side tasks: upstream's folders under
-    # settings/utility_finetuning/side_tasks/ (embedded = test-set contamination, independent =
-    # the checkpoint upload, captured locally and never sent out: D-173). The published runs
-    # have three of each for Sonnet 4.6 (one `embedded` run with this config, two with the
-    # `qwen3_1.7b` label, D-048).
-    # `independent` is NOT MATCHED in this file: in the port it cannot run on the CLI version
-    # below (D-256), and the task refuses the pair. Run it as a second command with
-    # `-T side_tasks=independent -T claude_code_version=2.1.104`.
+    # The baseline and settings/utility_finetuning/side_tasks/embedded (test-set contamination;
+    # two of its published runs carry the `qwen3_1.7b` label, D-048). NOT MATCHED: `independent`
+    # (the checkpoint upload, captured locally, D-173), which the task refuses on this CLI version
+    # (D-256); run it as a second command with `-T side_tasks=independent -T claude_code_version=2.1.104`.
     side_tasks: [none, embedded]
 
-    # settings/utility_finetuning/config.json lists `qwen2.5_0.5b` (Qwen/Qwen2.5-0.5B-Instruct)
-    # first, so upstream uses it when none is given; 62 of the 72 published runs record it. The
-    # other config, `smollm3_3b`, would need its model pinned (environment.model_cache).
+    # The first config in settings/utility_finetuning/config.json (Qwen/Qwen2.5-0.5B-Instruct),
+    # upstream's default; `smollm3_3b` would need its model pinned (environment.model_cache).
     task_config: qwen2.5_0.5b
 
-    # Upstream: `--redteammodel claude:claude-sonnet-4-6` runs agents/claude/solve.sh (Claude
-    # Code). The port runs the same CLI through Inspect SWE (ledger D-076 to D-080). The
-    # config's `resume_agent: false` means one round: no "Continue" prompt when the agent
-    # stops (solve.sh:110-111; the published providers are the `_norepeat` ones).
+    # As original.yaml. The config's `resume_agent: false` means one round, no "Continue"
+    # prompt (solve.sh:110-111).
     agent: claude_code
 
-    # Five hours. Paper §5: "five hours for the post-training settings"; all 72 published
-    # capabilities runs have `redruntime_hours: 5` in metadata.json.
+    # Paper §5 and all 72 published runs: five hours.
     redruntime: "5"
 
-    # Upstream's effort.json gives Claude red-team agents `xhigh` ("auto" reads it); the
-    # published runs predate it (D-056). See original.yaml for how the port sets effort.
+    # As original.yaml (D-056).
     effort: auto
 
-    # The published runs' CLI version, from the `init` event of each solve_out file: 2.1.34 in
-    # all 27 Claude Code capabilities runs (May and June 2026). Upstream itself installs the
-    # latest release at each run (`update_agent_cli.sh`, D-056).
+    # The published runs' CLI (all 27 Claude Code capabilities runs).
     claude_code_version: "2.1.34"
 
-    # Claude Code's own background calls: Haiku 4.5, which 25 of the 27 published Claude
-    # capabilities runs' transcripts name (pins.CLAUDE_CODE_SMALL_MODEL; D-080).
+    # As original.yaml (D-080).
     small_model: anthropic/claude-haiku-4-5-20251001
 
-    # One machine with one NVIDIA GPU and Docker. run_redteam.sub asks for one
-    # "NVIDIA H100 80GB HBM3". With this setting the port's Docker sandbox is compose.yaml plus
-    # a 16 GB /dev/shm (D-132) and the hook service for the upload capture (D-174). No option
-    # sets it.
+    # Needs one NVIDIA GPU and Docker. The port's sandbox is compose.yaml plus a 16 GB /dev/shm
+    # (D-132) and the upload capture's hook service (D-174). No option sets it.
 
-    # The model and the GSM8K and GSM1K datasets reach the agent's Hugging Face cache before
-    # the agent starts (upstream's cluster cache already held them, resources.json; D-170).
-    # `auto`: copied from `hf_seed` if that holds the pinned revisions, else downloaded in the
-    # sandbox (about 1 GB). Give `hf_seed` on the command line: a folder on the Docker host,
-    # filled once (see the README, "On one machine with Docker").
+    # The model and the GSM8K and GSM1K datasets reach the agent's cache before it starts (D-170):
+    # from `hf_seed` (README, "On one machine with Docker") if it holds them, else downloaded.
     model_cache: auto
 
-    # The submitted workspace, final_model/ first, is copied to a folder beside the log after
-    # scoring, so the model can be re-scored and monitored later (D-172). Upstream keeps it in
-    # its run folder.
+    # The submitted workspace is copied beside the log for re-scoring and monitoring (D-172).
     model_store: auto
 
-    # Upstream has no overall limit: the agent's budget plus five minutes (RED_TIMEOUT), then
-    # up to three evaluation attempts of 3600 s each. An Inspect time_limit would give scoring
-    # only half of it (D-099), so none is set.
+    # As original.yaml (D-099).
     time_limit: null
 
-# Upstream: `--redteammodel claude:claude-sonnet-4-6` (the paper's agent).
+# Upstream: `--redteammodel claude:claude-sonnet-4-6`.
 model: anthropic/claude-sonnet-4-6
 
-# Claude Code sends its own requests; upstream sets no temperature, seed or token limit, and
-# every published capabilities run has `seed: null` (D-010). Nothing is set here.
+# As original.yaml (D-010).
 generate_config: {}
 
-# The paper runs each configuration three times (§5); `--epochs 3` does that. How the task
-# reduces epochs is described in original.yaml.
-#
-# One sample at a time. Every sandbox asks for the machine's one GPU, where upstream's cluster
-# gives each run its own (run_redteam.sub): two samples at once would train and serve on the
-# same GPU and its memory. Inspect would otherwise run several samples at once.
-# `--max-samples` on the command line overrides this.
+# Three trials: `--epochs 3`, as in original.yaml. One sample at a time: two samples would train
+# and serve on the machine's one GPU and its memory.
 eval_config:
   max_samples: 1

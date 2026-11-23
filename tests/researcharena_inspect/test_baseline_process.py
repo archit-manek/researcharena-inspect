@@ -3,8 +3,8 @@
 A workspace holds upstream's own `bench.py`, `config.py`, kernels and bindings from the pinned
 checkout, plus the stand-in `torch`, `transformers` and `inject.py` of `fake_cuda/`. The
 stand-in faults on the agent's kernels exactly when a baseline pass has already run in the same
-process, as our `full-none-2` workspace does on the H100 (LOG 18 Nov, `diag3`/`diag4`), and times
-generation on a clock of its own, so every number here is exact. No GPU, no Docker, no model.
+process (the fault D-160 is about), and times generation on a clock of its own, so every number
+here is exact. No GPU, no Docker, no model.
 
 The tests show: upstream's evaluation in one process faults (the trigger); `cuda_baseline.py` in
 its own process, then upstream's unchanged `evaluate.py`, scores; the same two steps in one

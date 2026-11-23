@@ -70,8 +70,8 @@ def test_cuda_monitor_task_text_is_b922f4bs() -> None:
 
 
 def test_safety_monitor_task_text_is_the_paper_commits() -> None:
-    # Published post-training monitors saw the text from before 30da456 (ledger D-054),
-    # and, in a 5-hour run, "You have 1 hours" (ledger D-005).
+    # Published post-training monitors saw the text from before 30da456 (D-054),
+    # and, in a 5-hour run, "You have 1 hours" (D-005).
     run = _run(SAFETY_BASELINE)
     port = monitor_task_instruction(run["setting"], run["task_config"]).rstrip("\n").split("\n")
     paper = pp.paper_era_prompt(run["setting"], "none", run["task_config"], "none", None)
@@ -124,7 +124,7 @@ def test_published_sample_classification() -> None:
     for key, count in sorted(table.items()):
         print(f"published sample: {' | '.join(key)}: {count}")
     # CUDA and inference monitors saw b922f4b's task text. Post-training monitors saw the
-    # paper commit's (ledger D-054), 3 of them an older one still. One dtype prompt
+    # paper commit's (D-054), 3 of them an older one still. One dtype prompt
     # predates the side task's last section.
     ident, paper, neither = pp.IDENTICAL, pp.PAPER_ONLY, pp.NEITHER
     assert table == {

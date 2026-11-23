@@ -237,7 +237,7 @@ def test_the_sandbox_adds_the_hook_service_beside_the_agent() -> None:
 
 
 def test_every_cell_builds_on_docker_with_the_hook_service() -> None:
-    # No backend to choose since 10-G: the upload cell builds on the built-in Docker sandbox.
+    # The upload cell builds on the built-in Docker sandbox; there is no backend to choose.
     task = researcharena(setting=SETTING, agent="null")
     config = cast(ComposeConfig, cast(Any, task.sandbox).config)
     assert services.SERVICE_NAME in config.services
@@ -376,8 +376,8 @@ def test_the_endpoint_pin_refuses_to_start_unless_it_holds(
 def test_the_proxy_probe_is_best_effort_and_comes_after_the_copy(
     monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    # D-189 (round B): the evidence is copied as before round A; the probe then runs, and its
-    # failure or timeout is recorded as "unknown", never raised into scoring.
+    # D-189: the evidence is copied first; the probe then runs, and its failure or timeout is
+    # recorded as "unknown", never raised into scoring.
     log = b'{"captured": true, "content_length": 5}\n'
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as tar:
@@ -727,7 +727,7 @@ def _tree(root: Path) -> Path:
 
 def test_the_listing_puts_the_model_first_and_bounds_the_hashing(tmp_path: Path) -> None:
     tree = _tree(tmp_path / "tree")
-    # D-172, round A: the cap applies after the model is put first (it used to cut it).
+    # D-172: the cap applies after the model is put first, so it never cuts the model.
     entries, truncated = asyncio.run(
         transfer.list_tree(
             _box(), str(tree), max_entries=2, max_hash_bytes=10**9, first=("final_model",)
@@ -797,8 +797,8 @@ def test_a_transfer_checks_its_bytes_and_never_takes_a_workspace_name(tmp_path: 
 
 
 def test_copying_result_into_a_workspace_keeps_a_sibling_result_part(tmp_path: Path) -> None:
-    # The review's fixture: the part used to be `<dest>.part`, so a workspace file of that name
-    # was removed when `result` was copied in. Shared replay code (D-172, round A).
+    # A workspace file named `<dest>.part` must survive copying `result` in (shared replay
+    # code, D-172).
     work = tmp_path / "task"
     work.mkdir()
     (work / "result.part").write_bytes(b"another valid submission file")
@@ -823,8 +823,8 @@ def test_copying_result_into_a_workspace_keeps_a_sibling_result_part(tmp_path: P
 
 def test_only_its_owner_writes_the_file_copy_in_assembles(tmp_path: Path) -> None:
     # D-253: on a host with `fs.protected_regular` on (Ubuntu's default; a container gets its
-    # host's value) root may not append to a file the agent's user made in `/var/tmp`. Eight of
-    # nine replays failed on the H100 for it; Docker Desktop's kernel allows it.
+    # host's value) root may not append to a file the agent's user made in `/var/tmp`. Docker
+    # Desktop's kernel allows it, so the commands are recorded instead.
     calls: list[tuple[str | None, list[str]]] = []
 
     class Recording(LocalBox):
@@ -1136,7 +1136,6 @@ def test_the_published_run_without_a_model_replays_its_workspace_only(
 def test_the_cache_is_in_place_before_the_timer_for_this_setting(
     monkeypatch: pytest.MonkeyPatch, setting: str
 ) -> None:
-    # The review's first mutant (utility provisioning moved after the timer) passed every test.
     result = json.dumps({"source": "seed", "problems": []})
 
     def respond(call: Call) -> ExecResult[str] | None:
@@ -1178,8 +1177,7 @@ def test_the_cache_is_in_place_before_the_timer_for_this_setting(
 async def test_the_real_solver_does_not_reprompt_this_setting(
     monkeypatch: pytest.MonkeyPatch, agent: str, setting: str
 ) -> None:
-    # The review's second mutant (re-prompting forced on in the solver) passed every test. Here
-    # the real solver runs on the real sample: the agent stops after its first round; a second
+    # The real solver on the real sample: the agent stops after its first round; a second
     # round (a "Continue" prompt) would be a failure.
     from inspect_ai.agent import AgentState
     from inspect_ai.model import ChatMessageUser, ModelName, get_model

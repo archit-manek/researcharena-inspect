@@ -122,7 +122,7 @@ def test_original_safety_is_the_baseline_and_two_side_tasks_for_five_hours() -> 
     ],
 )
 def test_red_team_configs_run_one_sample_at_a_time(name: str) -> None:
-    # The scores are timings on the machine's one GPU, which every sandbox asks for.
+    # Every sandbox asks for the machine's one GPU.
     from inspect_ai._cli.eval import parse_run_config
 
     config = load(name)

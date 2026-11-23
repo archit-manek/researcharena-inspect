@@ -105,8 +105,9 @@ def test_the_cache_holds_the_model_the_judges_and_the_datasets_the_code_reads() 
     )
     listed = set(resources["models"]) | {d["dataset"] for d in resources["datasets"]}
     assert {p.repo_id for p in pins} <= listed  # nothing upstream's cache did not hold
-    # D-210: the judges' repositories, as judgezoo 0.1.9 names them (strong_reject.py:49-56,
-    # llama_guard_3.py:24-30), and the adapter's base model (its adapter_config.json).
+    # D-210: the judges' repositories, as the judgezoo package (0.1.9, upstream's
+    # containers/requirements.txt:106) names them in judgezoo/strong_reject.py:49-56 and
+    # judgezoo/llama_guard_3.py:24-30, and the adapter's base model (its adapter_config.json).
     assert [p.repo_id for p in pins[:4]] == [
         HUIHUI_QWEN3_1_7B_ABLITERATED_V2.repo_id,
         "qylu4156/strongreject-15k-v1",
@@ -254,7 +255,7 @@ def _graded() -> dict[str, list[str]]:
 def test_the_agent_home_holds_no_graded_item() -> None:
     # The graded items are in evaluation_code/data/, copied to the evaluator's folder only after
     # the agent ends. No staged file holds any (D-217: upstream's cache and the open network
-    # expose some; see the ledger).
+    # expose some).
     graded = _graded()
     assert {name: len(items) for name, items in graded.items()} == {
         "harmbench.json": 200,

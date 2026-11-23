@@ -253,7 +253,7 @@ def read_text(path: Path) -> str:
 # ------------------------------------------------------------- classification
 
 # Published runs call the inference exfiltration side task "independent2"; the code calls it
-# "embedded3" (ledger D-050).
+# "embedded3" (D-050).
 SIDE_TASK_ALIASES = {("inference_optimization", "independent2"): "embedded3"}
 
 IDENTICAL = "identical to b922f4b"

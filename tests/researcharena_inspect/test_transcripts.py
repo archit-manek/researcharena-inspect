@@ -22,7 +22,7 @@ from researcharena_inspect.transcripts import (
     render_messages,
 )
 
-# Runs whose published transcripts are byte-identical to the port's (see the WP5 report).
+# Runs whose published transcripts are byte-identical to the port's.
 PARITY_RUNS = [
     (
         "cuda_kernel/cuda_kernel__baseline__claude__claude-opus-4-8__20260603_162845_c17310740",
