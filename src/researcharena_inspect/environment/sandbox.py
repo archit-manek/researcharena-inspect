@@ -1,27 +1,11 @@
-"""The sandbox the agent runs in: Docker, with one GPU.
+"""The Docker sandbox the agent runs in: `compose.yaml` and what each setting adds to it.
 
-Upstream asks its cluster for one "NVIDIA H100 80GB HBM3", 8 CPUs, 64 GB (`run.sub`) or 256 GB
-(`run_redteam.sub`) of memory and 100-200 GB of disk, and runs the agent with `apptainer exec
---nv` (all GPUs of the job, made visible as device 0 by `CUDA_VISIBLE_DEVICES=0`) and no
-network limit (ledger D-029). `compose.yaml` keeps the single GPU and the open network: a
-single-GPU Docker machine with the NVIDIA Container Toolkit; upstream's 8 CPUs and 64 GB.
-
-For a setting whose servers run vLLM (`inference_optimization`, and the two post-training
-settings, whose scorers serve the agent's model with vLLM and whose agents train with PyTorch
-data loaders; `model_cache.PROVISIONED_SETTINGS`), the
-Docker sandbox is `compose.yaml` with two additions (`vllm_compose`): a larger `/dev/shm` (D-132)
-and, if given, a host Hugging Face cache mounted read-only at `model_cache.SEED_MOUNT` (D-130).
-
-Every sandbox this module builds for the red-team task also gets the evaluator service
-(`with_evaluator`, D-093): a second container of the same image with the same GPU, CPUs, memory and `/dev/shm`,
-which shares two named volumes with the agent's container and nothing else: the Hugging Face
-cache at `HF_HOME` (upstream's per-run overlay) and the run folder at `EVAL_DIR`. Upstream's
-evaluator runs there after the agent's container has been stopped (`environment.evaluation`).
-A custom `sandbox` with no `evaluator` service scores in the agent's container instead.
-
-A setting with a `pipeline_pre_agent.sh` hook (`utility_finetuning`, `safety_finetuning`) also
-gets the hook service (`with_hook_service`, `environment.services`): a second container of the
-same image that joins the agent container's network namespace and nothing else.
+Upstream asks its cluster for one H100, 8 CPUs and 64 GB (`run.sub`) or 256 GB
+(`run_redteam.sub`), and runs the agent with `apptainer exec --nv` and an open network (D-029).
+`compose.yaml` keeps one GPU, 8 CPUs, 64 GB and the open network (D-261). `PROVISIONED_SETTINGS`,
+whose servers or scorers run vLLM and whose agents may train with PyTorch data loaders, get
+`vllm_compose` (D-130, D-132). A custom `sandbox` with no `evaluator` service scores in the
+agent's container instead (D-093).
 """
 
 from pathlib import Path
@@ -56,14 +40,13 @@ def vllm_compose(hf_seed: str | None = None) -> ComposeConfig:
     """`compose.yaml` with a larger `/dev/shm` and, if given, the host cache mounted read-only.
 
     Args:
-        hf_seed: absolute path on the Docker host of a Hugging Face cache (`HF_HOME` layout,
-            `<path>/hub/models--...`, or hub layout) that holds the pinned model; staging copies
-            the model from it (`model_cache`).
+        hf_seed: absolute path on the Docker host of a Hugging Face cache (`HF_HOME` or hub
+            layout) holding the pinned models; staging copies from it (D-130).
     """
     config = _load_compose()
     service = config.services["default"]
     service.shm_size = VLLM_SHM_SIZE  # D-132
-    if hf_seed is not None:  # D-130: the host's cache, copied at staging
+    if hf_seed is not None:  # D-130
         if not Path(hf_seed).is_absolute():
             raise ValueError(
                 f"hf_seed must be an absolute path on the Docker host, got {hf_seed!r}"
@@ -79,16 +62,14 @@ sample (`down --volumes`), as upstream's overlay and run folder are per run."""
 
 
 def with_evaluator(config: ComposeConfig) -> ComposeConfig:
-    """`config` plus the evaluator's service, sharing `SHARED_VOLUMES` with the default one.
+    """`config` plus the evaluator's service (D-093), sharing `SHARED_VOLUMES` with the default.
 
-    The service is the default one's image, platform, GPU request, CPUs, memory, `/dev/shm` and
-    network, idle until scoring; it has none of the default one's other mounts (the host seed of
-    D-130 is for staging only). The default service needs `init: true`: scoring stops it with
-    SIGTERM to its init (`evaluation.stop_agent_container`).
+    It copies the default service's resources and network but none of its other mounts (the
+    host seed is for staging only). The default service needs `init: true`: scoring stops it
+    with SIGTERM to its init (`evaluation.stop_agent_container`).
     """
     default = config.services["default"]
-    # D-250: the run folder is mounted in the agent's container too (empty and root's until
-    # scoring), so that the workspace reaches the evaluator's without a copy through the host.
+    # D-250: the run folder is in the agent's container too, empty and root's until scoring.
     mounts: list[str | ComposeVolumeMount] = [f"{n}:{p}" for n, p in SHARED_VOLUMES.items()]
     default.volumes = [*(default.volumes or []), *mounts]
     config.services[EVALUATOR_SERVICE] = ComposeService(
@@ -108,12 +89,10 @@ def with_evaluator(config: ComposeConfig) -> ComposeConfig:
 
 
 def with_hook_service(config: ComposeConfig) -> ComposeConfig:
-    """`config` plus the hook service: the default service's image, sharing its network.
+    """`config` plus the hook service: the default service's image, in its network namespace.
 
-    `network_mode: service:default` puts the service in the agent container's network namespace
-    (its loopback, as Apptainer's agent shares the cluster host's), with its own processes and
-    files, which the agent cannot see. It asks for no GPU and idles until staging starts the
-    hooks in it.
+    The agent shares its loopback, as Apptainer's agent shares the host's, but cannot see its
+    processes or files (`environment.services`, D-174).
     """
     default = config.services["default"]
     config.services[SERVICE_NAME] = ComposeService(
@@ -127,11 +106,9 @@ def with_hook_service(config: ComposeConfig) -> ComposeConfig:
 
 
 def without_network(config: ComposeConfig) -> ComposeConfig:
-    """`config` with the agent's and the evaluator's services on no network, D-185.
+    """`config` with no network for the agent's and evaluator's services (D-185).
 
-    For a scorer check with no agent (`check_offline`): the hook service, if there is one,
-    shares the agent's namespace and has none either. The setting's default stays upstream's
-    open network (D-029).
+    The hook service, if any, shares the agent's namespace and so has none either.
     """
     for name in ("default", EVALUATOR_SERVICE):
         if name in config.services:
@@ -150,15 +127,12 @@ def sandbox_spec(
     """The Inspect sandbox for the agent: Docker on the local machine's GPU.
 
     Args:
-        setting: the setting the sandbox is for; a setting whose servers run vLLM gets
-            `vllm_compose`, plus the hook service if the setting has `pipeline_pre_agent.sh`
-            hooks; every other one gets `compose.yaml`.
+        setting: `PROVISIONED_SETTINGS` get `vllm_compose`; a setting with
+            `pipeline_pre_agent.sh` hooks also gets the hook service.
         hf_seed: a host Hugging Face cache to mount read-only (see `vllm_compose`).
-        offline: for scorer checks with no agent: the sandbox has no network
-            (`without_network`, D-185). Off by default.
-        evaluator: add the evaluator's service (`with_evaluator`, D-093), where the red-team
-            scorer runs upstream's evaluator. The diagnostic tasks, which run `evaluate.py` on
-            a staged workspace with no agent, keep one container (False).
+        offline: no network, for scorer checks with no agent (D-185).
+        evaluator: add the evaluator's service (D-093). False for the diagnostic tasks, which
+            run `evaluate.py` with no agent in one container.
     """
     hooks = setting is not None and setting_has_hooks(setting)
     if setting in PROVISIONED_SETTINGS or hf_seed is not None:

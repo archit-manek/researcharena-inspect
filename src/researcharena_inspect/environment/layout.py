@@ -1,18 +1,9 @@
-"""Where things live in the agent's sandbox, who the agent runs as, and its environment.
+"""Paths in the agent's sandbox, the account the agent runs as, and its environment variables.
 
-Upstream starts the agent with (`src/pipeline_redteam.sh:357-378`, pinned commit):
-
-    apptainer exec --nv -C --env ... --bind $AGENT_TMP_DIR:/tmp \
-        --bind $HF_OVERLAY_MERGED:/home/user/hf_cache --home $AGENT_JOB_DIR:/home/user \
-        --pwd /home/user/task --writable-tmpfs image.sif \
-        bash -c "source /home/user/pre_agent_setup.sh && bash /home/user/agent_solve.sh"
-
-Apptainer runs the container as the user who started it (a non-root cluster account) with
-that account's passwd entry; `-C` cleans the host environment, so the agent sees only the
-image's environment and the `--env` values. The port runs one container per sample as root
-and the agent as a non-root user `user` (uid 1000) whose home is the staged job folder. On
-Docker, upstream's evaluator gets a second container (`EVALUATOR_SERVICE`) in which the same
-account's home is the evaluator's job folder, as upstream's `--home $EVAL_JOB_DIR:/home/user`.
+Follows upstream's `apptainer exec` of the agent (`src/pipeline_redteam.sh:357-378`) and of the
+evaluator (`:479-499`); line numbers below are that file's. Apptainer runs as the cluster account
+that started it; the port runs the container as root and the agent as `user` (D-090). `-C`
+cleans the host environment, so the agent sees only the image's variables and the `--env` ones.
 """
 
 from typing import Final
@@ -59,7 +50,7 @@ SHARED_EVAL_HOME: Final = "/home/evaluator"
 
 CUDA_VISIBLE_DEVICES: Final = "0"
 
-# `--env PATH=...` (`:367`): replaces the image's PATH for the agent.
+# `--env PATH=...` (`:367`): replaces the image's PATH.
 AGENT_PATH: Final = (
     "/home/user/task:/root/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:"
     "/usr/sbin:/usr/bin:/sbin:/bin"
@@ -72,7 +63,7 @@ IMAGE_PATH: Final = (
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
 
-# Every `apptainer exec` timeout setting the agent sees (`:368-369`).
+# `BASH_MAX_TIMEOUT_MS` and `BASH_DEFAULT_TIMEOUT_MS` (`:368-369`).
 BASH_TIMEOUT_MS: Final = "3600000"
 
 CONTAINER_ENV: Final[dict[str, str]] = {
@@ -99,22 +90,19 @@ def agent_env(
 ) -> dict[str, str]:
     """The variables upstream sets with `--env` when it starts the agent's container.
 
-    The image's own variables (`CUDA_HOME`, `TORCH_CUDA_ARCH_LIST`, `UV_LINK_MODE`, ...) come
-    from the container. Pass these with every `exec` that runs as the agent, so that they hold
-    however the sandbox switches user (some reset `HOME`, `USER`, `LOGNAME`, `SHELL` and
-    `PATH`). Not included: the CLI credentials and version pins of
-    `agents/<family>/keep_env_vars` (the agent runner's business; credentials are not
-    passed, D-066/D-091) and the `AGENT_EXTRA_ENV_ARGS` of a run's `pipeline_pre_agent.sh`
-    hooks, which staging records (`staging.agent_extra_env`) and the solver adds (D-174).
+    Pass them with every `exec` that runs as the agent: some ways of switching user reset
+    `HOME`, `USER`, `LOGNAME` and `PATH`. Not included: `agents/<family>/keep_env_vars`
+    (the agent runner's; no credentials, D-091) and the hooks' `AGENT_EXTRA_ENV_ARGS`
+    (`staging.agent_extra_env`, D-174).
 
     Args:
-        redruntime: the budget in hours as upstream's command line carries it (see
-            `researcharena_inspect.prompts.format_hours`).
+        redruntime: the budget in hours as upstream's command line carries it
+            (`prompts.format_hours`).
         resume_agent: the setting's `resume_agent` (`AGENT_RESUME`).
         agent_config: the model name (`AGENT_CONFIG`); None leaves it unset.
         agent_effort: the effort from `effort.json` (`AGENT_EFFORT`); None leaves it unset.
-        seed: `TASK_SEED` and `PYTHONHASHSEED`, set only when a seed is given (`:131-138`).
-        hf_token: `HF_TOKEN`; upstream passes the host's value or an empty string.
+        seed: `TASK_SEED` and `PYTHONHASHSEED`, set only when given (`:131-138`).
+        hf_token: `HF_TOKEN`.
 
     Returns:
         Name to value, in upstream's order.
@@ -145,13 +133,8 @@ def agent_env(
 def evaluator_env(*, seed: int | None = None, home: str = EVAL_HOME) -> dict[str, str]:
     """The variables upstream's evaluator container runs `evaluate.py` with (`:479-490`).
 
-    `apptainer exec -c` keeps the host job's environment, so upstream's evaluator also sees
-    the job's own variables (`USER`, `ARENA_ROOT`, tokens, and for the post-training
-    `independent` side task the `http_proxy` its hook exported, D-174); the port passes only
-    what `evaluate.py` can use. `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` are not passed
-    (D-092): no setting's scorer calls a paid model (`safety_finetuning`'s judges are local
-    models in the cache, D-215). `home` is the job folder: `EVAL_HOME` in the evaluator's own
-    container, `SHARED_EVAL_HOME` in the agent's (a sandbox with no `evaluator` service).
+    D-092: only what `evaluate.py` uses; no API keys, as no scorer calls a paid model (D-215).
+    `home` is `EVAL_HOME`, or `SHARED_EVAL_HOME` in a sandbox with no `evaluator` service.
     """
     env = {
         "HOME": home,

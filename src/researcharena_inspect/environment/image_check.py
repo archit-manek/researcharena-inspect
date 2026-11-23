@@ -1,13 +1,8 @@
 """Check a built image against upstream's `containers/requirements.txt` (pass rule 1).
 
-Runs inside the image with the image's own Python and the standard library only:
-
-    docker run --rm --entrypoint python3 -v "$PWD/image_check.py:/check.py:ro" IMAGE /check.py
-
-It prints one JSON report: the Python version, the CUDA toolkit version (`nvcc` and
-`/usr/local/cuda/version.json`), PyTorch's own CUDA version, every pin in
-`/opt/requirements.txt` with the version installed, and the packages installed that the file
-does not pin. It exits 1 if a pin is missing or installed at another version.
+Runs inside the image with its own Python and the standard library only (the image workflows
+mount it with `docker run`). Prints one JSON report; exits 1 if a pin is missing or installed
+at another version.
 """
 
 import argparse
@@ -50,9 +45,8 @@ def normalize(name: str) -> str:
 def parse_requirements(text: str) -> dict[str, str]:
     """Pinned name -> version. A direct wheel URL pins the version in its file name.
 
-    A wheel's file name may carry a local tag its metadata leaves out (flash-attn's
-    "2.8.3+cu128torch2.10"); `compare` accepts either form for URL pins, which are marked by
-    a leading "@".
+    URL pins are marked by a leading "@": `compare` accepts them with or without the local tag
+    that a wheel's file name may carry and its metadata leaves out (flash-attn's "+cu128...").
     """
     pins: dict[str, str] = {}
     for raw in text.splitlines():
@@ -89,10 +83,8 @@ def compare(pins: dict[str, str], installed: dict[str, str]) -> dict[str, Any]:
 def installed_distributions() -> tuple[dict[str, str], dict[str, list[str]]]:
     """Every distribution the image's Python finds, by normalised name.
 
-    Returns the version `import` resolves (the first on `sys.path`, as
-    `importlib.metadata.version` reads it) and, separately, the versions it shadows: Ubuntu's
-    own Python packages in /usr/lib/python3/dist-packages (from `software-properties-common`)
-    are on the same path, after the ones uv installed.
+    Returns the version `import` resolves and, separately, the ones it shadows: Ubuntu's own
+    packages in /usr/lib/python3/dist-packages come after uv's on the path.
     """
     first: dict[str, str] = {}
     shadowed: dict[str, list[str]] = {}

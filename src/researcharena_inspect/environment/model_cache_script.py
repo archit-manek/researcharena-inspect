@@ -1,36 +1,11 @@
-"""Put one pinned Hugging Face model into a Hugging Face cache, in the sandbox.
+"""Put one pinned Hugging Face repository into a Hugging Face cache; run in the sandbox.
 
-This file is copied into the sandbox and run there with the image's Python; it is not imported by
-the package (see `environment.model_cache`). Standard library only, apart from `huggingface_hub`
-for a download and the image's `datasets` for a dataset's prepared builds (D-187).
-
-    python3 model_cache_script.py --spec JSON --hf-home DIR [--seed DIR] --mode auto|seed|download
-
-`--spec` is the pinned repository (`PinnedModel.to_json()`; its `repo_type` is `model` or
-`dataset`, D-170). It ends up in the layout `huggingface_hub` uses,
-`<hf-home>/hub/models--<org>--<name>/{blobs,snapshots/<rev>,refs/main}` (`datasets--` for a
-dataset),
-plus `.no_exist/<rev>/<name>` for each name in the spec's `absent` (D-254),
-with `refs/main` naming the pinned revision, so that `from_pretrained("<org>/<name>")` and vLLM
-find it with `HF_HUB_OFFLINE=1`. Sources:
-
-- `seed`: a read-only cache on the host, mounted into the sandbox, in `HF_HOME` layout
-  (`<seed>/hub/models--...`) or hub layout (`<seed>/models--...`). The pinned snapshot's files
-  are copied, hashed on the way, into blobs named by their SHA-256, with the snapshot's links
-  rebuilt.
-- `download`: `huggingface_hub.snapshot_download` at the pinned revision (needs the network).
-- `auto`: `seed` if the seed holds the pinned snapshot, else `download`.
-
-A dataset's `builds` (config, split, records) are then put in `<hf-home>/datasets/`: copied
-from `<seed>/datasets/` or made by `load_dataset`, and each split loaded by name with no network
-must give its record count (`prepare_builds`).
-
-Every pinned file is then checked: present in the snapshot, the pinned size, and the pinned
-SHA-256 of its bytes (always hashed: a blob's name is not trusted, round A of the review). A file
-pinned by its git object id instead (`git_oid`: the Hub hides a gated repository's SHA-256s from
-anonymous callers, D-211) must have that id, either as its bytes' git blob or as the git LFS
-pointer that names its SHA-256 and size; its SHA-256 is then reported (`hashed`). The last line
-printed is `MODEL_CACHE_RESULT=<json>`; the exit status is 0 only when the check passed.
+Copied into the sandbox and run with the image's Python, not imported (see `model_cache`).
+Standard library only, apart from `huggingface_hub` for a download and `datasets` for a
+dataset's prepared builds (D-187). The repository ends up in `huggingface_hub`'s layout with
+`refs/main` naming the pinned revision, so `from_pretrained("<org>/<name>")` and vLLM find it
+offline. Every pinned file is then hashed, never trusting a blob's name. The last line printed
+is `MODEL_CACHE_RESULT=<json>`; the exit status is 0 only when the check passed.
 """
 
 from __future__ import annotations
@@ -90,9 +65,8 @@ def copy_hashed(source: Path, blobs: Path) -> tuple[Path, int]:
 def copy_from_seed(snapshot: Path, dest_model: Path, files: list[dict[str, Any]]) -> int:
     """Copy the pinned files from a seed snapshot into `dest_model`'s blobs and snapshot.
 
-    Each file becomes `blobs/<sha256 of its contents>` and `snapshots/<rev>/<path>` a relative
-    link to it, as a download leaves an LFS file. A blob already named by the pinned hash is
-    not copied again. Returns the bytes copied.
+    Each file becomes `blobs/<sha256>` with a relative link from `snapshots/<rev>/<path>`, as a
+    download leaves an LFS file. Returns the bytes copied.
     """
     revision = snapshot.name
     blobs = dest_model / "blobs"
@@ -116,11 +90,7 @@ def copy_from_seed(snapshot: Path, dest_model: Path, files: list[dict[str, Any]]
 def download(
     repo_id: str, revision: str, hub: Path, repo_type: str = "model", paths: list[str] | None = None
 ) -> None:
-    """Download the pinned revision's pinned files (`paths`).
-
-    Only those: a repository's other files (a GGUF copy, an original checkpoint) are not fetched
-    (D-211).
-    """
+    """Download only the pinned files (`paths`) of the pinned revision (D-211)."""
     os.environ.pop("HF_HUB_OFFLINE", None)
     os.environ.pop("TRANSFORMERS_OFFLINE", None)
     from huggingface_hub import snapshot_download
@@ -225,10 +195,8 @@ def prepare_builds(
 ) -> list[str]:
     """Put a dataset's prepared builds in place, then load each by name with no network (D-187).
 
-    From the seed (`<seed>/datasets/...`, copied) or, for a download, by `load_dataset` at the
-    pinned revision, as upstream's `download_resources.py` does. Checked by the record count of
-    each split loaded offline and by the build's folder, which names the pinned revision; the
-    files `datasets` writes are not pinned by hash.
+    Copied from the seed, or made by `load_dataset` as upstream's `download_resources.py` does.
+    Checked by record count and by the build folder's revision; the build files are not hashed.
     """
     repo, revision, builds = spec["repo_id"], spec["revision"], spec.get("builds") or []
     if source == "seed" and seed is not None:

@@ -1,57 +1,14 @@
-"""The models and datasets a setting reads, put into the agent's Hugging Face cache before it starts.
+"""The pinned models and datasets a setting reads, put into the agent's Hugging Face cache.
 
-Upstream (`src/pipeline_redteam.sh` at the pinned commit) mounts a per-run fuse-overlayfs over the
-cluster's own `$HF_HOME` at `/home/user/hf_cache` in the agent's container and again in the
-evaluator's (`:337-341`, `:373`, `:486`; `src/utils/hf_overlay.sh`): both see whatever the
-cluster's shared cache holds, and their writes go to a layer that is thrown away at the end of
-the run. The pipeline never downloads a model; it must already be in the cluster's cache, at
-whatever revision was fetched there.
-
-For `inference_optimization` that matters: the starter `launch.sh`, `server.py` and upstream's
-`baseline_server.py` all set `HF_HUB_OFFLINE=1`, so the model is read from that cache or not at
-all. The port (D-130) puts the setting's model at a pinned revision into `/home/user/hf_cache`
-at staging, as the agent's user, before the agent's clock starts, from one of:
-
-- a read-only host cache mounted into the Docker sandbox at `SEED_MOUNT` (the task's `hf_seed`),
-  copied, so that writes stay within the sample as with upstream's overlay;
-- a download inside the sandbox (its network is open, as upstream's is: D-029).
-
-The cache then holds the pinned repositories the setting needs (`models_for`), where upstream's
-held the cluster's whole cache (D-131). On Docker the evaluator's container mounts the same cache
-(D-093), as upstream's evaluator mounted the same overlay. `cuda_kernel` is not in
-`PROVISIONED_SETTINGS`: its staging is unchanged and its benchmark downloads TinyLlama at run
-time, as before.
-
-`utility_finetuning` (D-170): the agent fine-tunes the task config's model, which upstream's
-cluster cache held because `preparation_code/download_hf_cache/resources.json` lists it, with
-the two datasets the same file lists (`openai/gsm8k` main train and test, `ScaleAI/gsm1k`
-test). Its agent and evaluator do not run offline (the network is open, D-029), so the cache is
-not needed for the run to work; it is filled so that the agent finds what upstream's agent found,
-the GSM8K test split and GSM1K included. The datasets go in as their repositories' files at a
-pinned revision (`hub/datasets--...`, as `huggingface_hub` downloads them), with the
-`datasets` library's prepared builds (`datasets/`) that upstream's `download_resources.py` left
-there, made with the image's `datasets` (copied from a host seed that `seed_datasets` filled, or
-made in the sandbox when downloading) and loaded by name with no network at staging (D-187).
-`resources.json`'s second model
-(`HuggingFaceTB/SmolLM3-3B-Base`, 6 GB, for the `smollm3_3b` config) is left out, as D-131
-leaves out the cluster's other models.
-
-`safety_finetuning` (D-210): the agent fine-tunes the task config's model, and the scorer loads two
-judges from the same cache (`evaluation_code/safety_eval.py`, `backdoor_eval.py`, `german_eval.py`
-through `judgezoo` 0.1.9): `strong_reject`, a LoRA adapter (`qylu4156/strongreject-15k-v1`) on
-`google/gemma-2b`, and `llama_guard_3` (`meta-llama/Llama-Guard-3-8B`), so they are in the cache
-for every sample (`SETTING_MODELS`), with the five datasets the agent's `evaluate_model.py` reads,
-with their prepared builds. The two judges' base repositories are gated on the Hub: only a host
-seed filled with the user's token can hold them (`model_cache="seed"`); a download in the sandbox
-has no token and fails. The Hub shows a gated repository's git object ids but not its files'
-SHA-256, so those files are pinned by git object id (D-211).
-
-The scorer has no token either (D-213), and its judges load only while the Hub answers
-(D-254): `strong_reject`'s adapter repository is public and has no `config.json`, which the
-loader accepts from a 404 and not from a missing network or the offline flag; and for
-`Llama-Guard-3-8B` the cache records the three names its tokenizer asks for that the repository
-does not have (`PinnedModel.absent`), which a 401 would otherwise turn into a failed load. So
-this setting cannot be scored with the sandbox's network off (`check_offline`).
+Upstream mounts an overlay of the cluster's shared cache at `/home/user/hf_cache` for the agent
+and the evaluator (`src/pipeline_redteam.sh:337-341`, `:373`, `:486`) and never downloads a
+model; whatever revision the cluster held is what ran. Inference's servers run with
+`HF_HUB_OFFLINE=1`, so the model must be there. The port puts each pinned repository in the
+cache at staging, before the agent's clock starts, copied from a read-only host seed
+(`SEED_MOUNT`) or downloaded in the sandbox. Per setting: D-130 (inference), D-170 and D-187
+(`utility_finetuning`), D-210 and D-211 (`safety_finetuning`, whose gated judges only a seed
+filled with the user's token can hold). `safety_finetuning` cannot be scored offline: its
+judges load only while the Hub answers (D-213, D-254).
 """
 
 import json
@@ -76,7 +33,7 @@ SCRIPT_SOURCE: Final = Path(__file__).with_name("model_cache_script.py")
 SCRIPT_PATH: Final = "/var/tmp/researcharena-model-cache.py"
 RESULT_PREFIX: Final = "MODEL_CACHE_RESULT="
 
-# D-130, D-131, D-170, D-210: only these settings get a model, and only the task config's one.
+# D-130, D-131, D-170, D-210: only these settings get models, and only the ones pinned here.
 PROVISIONED_SETTINGS: Final = frozenset(
     {"inference_optimization", "utility_finetuning", "safety_finetuning"}
 )
@@ -97,7 +54,7 @@ class PinnedFile:
 
 @dataclass(frozen=True)
 class PinnedModel:
-    """A Hugging Face repository at one commit, with every file's size and SHA-256."""
+    """A Hugging Face repository at one commit, with each pinned file's size and hash."""
 
     repo_id: str
     revision: str
@@ -124,11 +81,8 @@ class PinnedModel:
         return json.dumps(asdict(self), sort_keys=True)
 
 
-# Read from the Hub API on 18 Nov 2026 (`/api/models/Qwen/Qwen2.5-3B-Instruct?blobs=true`): the
-# repository's `main` has been this commit since 25 Sep 2024 ("Update metadata: Add
-# library_name to Transformers (#2)"), so every 2026 run that downloaded `main` got these files.
-# The two weight files' SHA-256 are their LFS object ids; the others were downloaded at the
-# commit and hashed. Upstream pins no revision (config.json names the repository only).
+# D-130: upstream pins no revision. The Hub's `main` since 25 Sep 2024, so every run that
+# downloaded `main` got these files. Weight hashes are LFS object ids; the rest were hashed.
 QWEN2_5_3B_INSTRUCT: Final = PinnedModel(
     repo_id="Qwen/Qwen2.5-3B-Instruct",
     revision="aa8e72537993ba99e69dfaafa59ed015b17504d1",
@@ -190,10 +144,8 @@ QWEN2_5_3B_INSTRUCT: Final = PinnedModel(
     ),
 )
 
-# D-170: read from the Hub API on 18 Nov 2026 (`/api/models/Qwen/Qwen2.5-0.5B-Instruct?blobs=true`):
-# `main` has been this commit since 25 Sep 2024, before every published run. The weights'
-# SHA-256 is its LFS object id; the other files were downloaded at the commit and hashed. Two
-# published capabilities submissions have exactly these weights (D-171).
+# D-170: the Hub's `main` since 25 Sep 2024, before every published run; two published
+# submissions have exactly these weights (D-171). Weight hash is the LFS object id.
 QWEN2_5_0_5B_INSTRUCT: Final = PinnedModel(
     repo_id="Qwen/Qwen2.5-0.5B-Instruct",
     revision="7ae557604adf67be50417f59c2c2f167def9a775",
@@ -245,10 +197,8 @@ QWEN2_5_0_5B_INSTRUCT: Final = PinnedModel(
     ),
 )
 
-# D-170: the two datasets of `utility_finetuning/preparation_code/download_hf_cache/resources.json`,
-# at the commits the Hub's `main` had on 18 Nov 2026 (`openai/gsm8k` since 23 Mar 2026,
-# `ScaleAI/gsm1k` since 1 Apr 2025). The revision upstream's cluster cache held is not recorded.
-# Parquet and Arrow SHA-256 are LFS object ids; the small files were downloaded and hashed.
+# D-170: the two datasets of `utility_finetuning`'s `resources.json`, at the Hub's `main` on
+# 18 Nov 2026; the revision upstream's cache held is not recorded.
 OPENAI_GSM8K: Final = PinnedModel(
     repo_id="openai/gsm8k",
     revision="740312add88f781978c0658806c59bc2815b9866",
@@ -325,13 +275,9 @@ SCALEAI_GSM1K: Final = PinnedModel(
     ),
 )
 
-# D-210: `safety_finetuning`'s repositories, read from the Hub API on 18 Nov 2026 at the
-# commit each `main` had (every one older than the published runs). Files whose SHA-256 the Hub
-# shows (LFS files of public repositories) are pinned by it; the rest by their git object id
-# (D-211). Every file of a public repository; of the two gated ones,
-# the files `from_pretrained` reads (not `google/gemma-2b`'s 10 GB GGUF copy or
-# `meta-llama/Llama-Guard-3-8B`'s 16 GB `original/` checkpoint, which no code loads). Datasets:
-# the files `load_dataset` reads for `resources.json`'s config, and their prepared builds.
+# D-210: `safety_finetuning`'s repositories at the Hub's `main` on 18 Nov 2026, each older than
+# the published runs. Pinned by SHA-256 where the Hub shows it, else by git object id (D-211).
+# Every file of a public repository; of a gated one, only what `from_pretrained` reads.
 HUIHUI_QWEN3_1_7B_ABLITERATED_V2: Final = PinnedModel(
     repo_id="huihui-ai/Huihui-Qwen3-1.7B-abliterated-v2",
     revision="4462327af009cd482a6b308b67ec9b3a6eeb006a",
@@ -471,10 +417,7 @@ LLAMA_GUARD_3_8B: Final = PinnedModel(
             "tokenizer_config.json", 51967, git_oid="2c7389eb390e538cee452e5049fb65f440d49d86"
         ),
     ),
-    # D-254: the three names `AutoTokenizer` asks this repository for that it does not have
-    # (the Hub's listing at this revision, read 19 Nov 2026). Upstream's evaluator, with the
-    # host's token, gets a 404 for each; without a token the answer is 401 and the judge does
-    # not load.
+    # D-254: the names `AutoTokenizer` asks for that this revision lacks.
     absent=("added_tokens.json", "chat_template.jinja", "tokenizer.model"),
 )
 
@@ -626,9 +569,6 @@ class ModelCacheError(RuntimeError):
 def models_for(setting: str, task_config: str, upstream: Path | None = None) -> list[PinnedModel]:
     """The pinned repositories a run of this setting and task config needs in its cache.
 
-    The task config's model, the setting's other models (`SETTING_MODELS`), then its datasets
-    (`SETTING_DATASETS`).
-
     Raises:
         ModelCacheError: the config names a model that has no pin here.
     """
@@ -666,8 +606,7 @@ async def provision_models(
 ) -> list[dict[str, Any]]:
     """Put the setting's pinned models into the agent's cache in the current sample's sandbox.
 
-    Runs as the agent's user, after `HF_HOME` exists. Nothing happens for a setting outside
-    `PROVISIONED_SETTINGS` or with `mode="none"`.
+    Runs as the agent's user, after `HF_HOME` exists.
 
     Returns:
         One record per model: the script's result, its exit status, output and time.
@@ -724,10 +663,8 @@ def seed_datasets(
 ) -> None:
     """Prepare the setting's dataset builds in a host seed, with the network (D-187).
 
-    Runs this module's script in the agent's image (its `datasets` version) in `download` mode
-    with `seed` as `HF_HOME`: the pinned repositories go to `<seed>/hub/` (kept if already
-    there) and each build to `<seed>/datasets/`, from where staging copies it. As
-    `python -m researcharena_inspect.environment.model_cache <seed folder> [setting]`.
+    Runs the script in the agent's image, so the builds come from the image's `datasets`.
+    Command line: `python -m researcharena_inspect.environment.model_cache <seed> [setting]`.
     """
     import os
     import subprocess

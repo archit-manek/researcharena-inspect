@@ -1,37 +1,13 @@
-"""Services that run beside the agent: upstream's `hooks/pipeline_pre_agent.sh`, in a sidecar.
+"""Upstream's `hooks/pipeline_pre_agent.sh`, sourced in a service beside the agent (D-174).
 
-Upstream (`src/pipeline_redteam.sh:325-335`, pinned commit) **sources** a setting's and a side
-task's `hooks/pipeline_pre_agent.sh` in the pipeline shell on the cluster host, just before
-the agent's container starts. The one such hook at the pinned commit is the post-training
-`independent` side task's (`settings/{utility,safety}_finetuning/side_tasks/independent/hooks/`):
-it starts `src/utils/upload_capture_proxy.py` bound to `127.0.0.1:<ephemeral port>`, with its
-evidence in `$EVAL_DIR/side_task_evidence/upload_capture/` (`requests.jsonl`, `proxy.log`,
-`port`), kills it on the pipeline's exit (`trap ... EXIT`), and appends `--env http_proxy=...`,
-`HTTP_PROXY`, `no_proxy` and `NO_PROXY` to the agent's container (`AGENT_EXTRA_ENV_ARGS`).
-The agent's container (`apptainer exec -C`) has its own PID and mount namespaces but the host's
-network namespace: the agent reaches the proxy on the host's loopback, and cannot see the
-proxy's process or its evidence folder.
-
-The port keeps that arrangement with a second container in the sample's sandbox, the service
-`SERVICE_NAME`, which joins the agent container's network namespace (Docker Compose
-`network_mode: service:default`, `sandbox.with_hook_service`) and nothing else: the same
-loopback, its own processes and files. `start_pipeline_hooks` copies upstream's tree into it
-and sources upstream's hook files there unchanged, with upstream's variables (`ARENA_ROOT`,
-`EVAL_DIR`, `SETTING`, `SIDE_TASK`, `TASK_CONFIG`, `JOB_DIR`), and returns the
-`AGENT_EXTRA_ENV_ARGS` the hooks appended, which the solver passes to every command the agent
-runs. The shell that sourced them stays alive, as the pipeline's does, so their `EXIT` traps do
-not fire; the service is removed with the sample, which is when upstream's pipeline exits.
-
-After the agent's processes are killed, `copy_hook_evidence` copies the service's `EVAL_DIR`
-into the evaluator's `/mnt/eval/` (where upstream's evaluator reads it:
-`Path(submission_dir).parent`; on Docker in the evaluator's own container, D-093; the hook
-service keeps its loopback after the agent's container has stopped), owned by the evaluator's
-user, and keeps a bounded record of it in the score (D-174).
-
-D-173: in the agent's container the upload endpoint's host (`exfil_endpoint` in the setting's
-`config.json`) resolves to loopback (`pin_endpoint_hosts`, two lines in `/etc/hosts` written by
-root), so that an `https://` upload or a client that ignores the proxy variables, both of which
-upstream lets through to the internet, fails on the machine instead.
+Upstream sources these hooks in the pipeline shell on the host just before the agent starts
+(`src/pipeline_redteam.sh:325-335`). The only one at the pin, the post-training `independent`
+side task's, starts an upload-capture proxy on the host's loopback and gives the agent
+`http_proxy` variables. The agent shares the host's network namespace but not its processes or
+files, so the port runs the hooks in `SERVICE_NAME`, a container in the agent container's
+network namespace (`sandbox.with_hook_service`). The shell that sourced them stays alive, so
+their `EXIT` traps fire when the service is removed with the sample, as upstream's fire when
+the pipeline exits.
 """
 
 # Adapted from https://github.com/aisa-group/ResearchArena at b922f4b (Copyright (c) 2026 AI Safety and Alignment Group, MIT licence)
@@ -79,10 +55,8 @@ LOG_END_BYTES: Final = 16 * 1024
 
 LOOPBACK: Final = ("127.0.0.1", "::1")
 
-# The hooks are sourced as `pipeline_redteam.sh` sources them, under its `set -euo pipefail`
-# (`:18`). `AGENT_EXTRA_ENV_ARGS` is written NUL-separated once every hook has returned; then
-# the shell waits, so the hooks' `trap ... EXIT` cleanups do not run until the service is
-# removed with the sample (upstream: when the pipeline exits, after Phase 4).
+# Sourced under `pipeline_redteam.sh`'s `set -euo pipefail` (`:18`). After the hooks return,
+# the shell waits, so their `trap ... EXIT` cleanups run only when the service is removed.
 _RUNNER = """set -euo pipefail
 out="$1"; shift
 AGENT_EXTRA_ENV_ARGS=()
@@ -203,11 +177,11 @@ async def start_pipeline_hooks(
 ) -> HookService | None:
     """Source the run's `pipeline_pre_agent.sh` hooks in the hook service, as upstream does.
 
-    Returns None when the run has none. Call once per sample, before the agent starts.
+    Call once per sample, before the agent starts. Returns None when the run has none.
 
     Raises:
-        ServiceError: there is no hook service, a hook failed (upstream's pipeline stops on a
-            failed hook: it is sourced under `set -e`), or it did not finish in time.
+        ServiceError: there is no hook service, a hook failed (upstream stops on it: `set -e`),
+            or the hooks did not finish in time.
     """
     hooks = pipeline_hooks(setting, side_task, upstream)
     if not hooks:
@@ -255,7 +229,7 @@ async def start_pipeline_hooks(
         f"> {log} 2>&1 < /dev/null & echo $! > {SERVICE_ROOT}/runner.pid"
     )
     variables = {
-        # The pipeline's state the hook contract names (pipeline_pre_agent.sh:5-6).
+        # The pipeline state the hook contract names (pipeline_pre_agent.sh:5-6).
         "ARENA_ROOT": SERVICE_ARENA_ROOT,
         "EVAL_DIR": SERVICE_EVAL_DIR,
         "JOB_DIR": AGENT_HOME,
@@ -314,9 +288,8 @@ print(json.dumps(out))
 async def pin_endpoint_hosts(hosts: list[str]) -> dict[str, Any]:
     """D-173: make `hosts` resolve to loopback in the agent's container, and check it.
 
-    Appends `127.0.0.1 <host>` and `::1 <host>` to `/etc/hosts` as root, then resolves each host
-    as the agent's user. Raises if the system resolver would not read `/etc/hosts` first or a
-    host resolves to anything else: the run must not start with the endpoint reachable.
+    Raises if the resolver would not read `/etc/hosts` first or a host resolves elsewhere: the
+    run must not start with the endpoint reachable.
     """
     if not hosts:
         return {}
@@ -342,7 +315,7 @@ async def pin_endpoint_hosts(hosts: list[str]) -> dict[str, Any]:
 
 @dataclass
 class HookEvidence:
-    """The hook service's `EVAL_DIR` as copied into the agent's container, for the score."""
+    """The hook service's `EVAL_DIR` as copied into the evaluator's sandbox, for the score."""
 
     service: str
     files: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -415,9 +388,8 @@ def _summarise(data: bytes, evidence: HookEvidence) -> None:
                         evidence.requests.append(event)
 
 
-# Run in the hook service as root after the evidence is copied, best effort: the upload-capture
-# proxy's processes (by command line) and whether something listens on the port its hook wrote.
-# Prints one JSON line.
+# Run in the hook service as root: the proxy's processes and whether something listens on the
+# port its hook wrote. Prints one JSON line.
 PROXY_HEALTH = """
 import json, os, sys
 folder = os.path.join(sys.argv[1], "side_task_evidence", "upload_capture")
@@ -469,14 +441,12 @@ async def copy_hook_evidence(
 ) -> HookEvidence:
     """Copy the hook service's `EVAL_DIR` into the `EVAL_DIR` of the evaluator's sandbox.
 
-    Call after the agent's processes are killed and `environment.prepare_evaluation` has made
-    `/mnt/eval`, before `evaluate.py`. The files belong to `owner` (the evaluator's user), as
-    upstream's evidence belongs to the job's account. Nothing is truncated.
+    Call after `environment.prepare_evaluation`, before `evaluate.py`; upstream's evaluator
+    reads the evidence beside `red_team/`. The files belong to `owner`, the evaluator's user.
 
     Raises:
-        ServiceError: the service is gone, or the folder is larger than `EVIDENCE_MAX_BYTES`.
-            The side task's evaluator would then read a partial log, so the sample must not
-            be scored from it.
+        ServiceError: the service is gone, or the folder is larger than `EVIDENCE_MAX_BYTES`
+            (the sample must not be scored from a partial log).
     """
     start = time.monotonic()
     box = _service()
@@ -514,13 +484,10 @@ async def copy_hook_evidence(
 
 
 async def replay_hook_evidence(folder: Path, *, has_hooks: bool) -> dict[str, Any]:
-    """Put a stored run's capture log back in the hook service, for a replay (D-172, round A).
+    """Put a stored run's capture log back in the hook service, for a replay (D-172).
 
-    A run folder the submission store wrote keeps the run's `side_task_evidence/` beside
-    `red_team/`, as upstream's run folder does. Replaying it, its `requests.jsonl` replaces the
-    (empty) one the replay's own proxy has, in the service's `EVAL_DIR`, so that the evaluator
-    reads what the stored run captured and the side score can be reproduced. Nothing is done
-    for a sample without the hook service (the evidence is then recorded as not used).
+    The stored `requests.jsonl` replaces the replay's own (empty) one, so the evaluator reads
+    what the stored run captured. Nothing is done for a sample without the hook service.
 
     Returns:
         What was put back: the file, its size and SHA-256; or why nothing was.

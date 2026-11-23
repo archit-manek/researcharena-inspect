@@ -1,45 +1,16 @@
-"""The agent's workspace, staged as upstream's `src/pipeline_redteam.sh` stages it.
+"""The agent's home, staged as upstream's `src/pipeline_redteam.sh` stages it.
 
-Before the agent starts, the pipeline fills the agent's home (`$AGENT_JOB_DIR`, mounted at
-`/home/user`). Line numbers are `pipeline_redteam.sh` at the pinned commit:
+Upstream fills `$AGENT_JOB_DIR` (the agent's `/home/user`) with `task/` (`:172-190`), the launch
+helpers (`:193`, `:228-245`; no credentials, D-091), `task/timer.sh` (`:248-249`), `prompt.txt`
+(`:265`) and the `pre_agent.sh` hooks' output (`:272-309`). Line numbers here are that file's.
+The file copies are computed on the host (`home_entries`) with the modes `cp` gives; `timer.sh`
+and the hooks run upstream's scripts in the sandbox as the agent's user. The model cache
+(`model_cache`) is filled before `timer.sh`; the `pipeline_pre_agent.sh` hooks (`services`,
+`:325-335`) run last.
 
-1. `task/`: the setting's `task_context/*`, then the side task's `task_context/*` over it
-   (`:172-178`), `task/agent_workspace/` flattened into `task/` (`:180-183`), `chmod +x` on
-   `task/*.sh` and `task/*.py` (`:185`), and `lib/templates` copied to `task/templates`
-   (`:188-190`).
-2. The agent's launch helpers in the home: `agent_solve.sh`, `pre_agent_setup.sh`,
-   `update_agent_cli.sh` and `check_effort.py` (`:193`, `:228-235`), checked for words that
-   give the evaluation away (`:239-245`). Credentials (`oauth_token`, `.codex/auth.json`,
-   `.local/share/opencode/auth.json`, `:195-225`) are not staged (D-091).
-3. `task/timer.sh` from `src/utils/create_timer.sh` (`:248-249`), which records the time it
-   was made.
-4. `prompt.txt` (`:265`).
-5. The setting's and then the side task's `hooks/pre_agent.sh`, run from the home with
-   `JOB_DIR` and the task config's values in the environment (`:272-309`). For `cuda_kernel`
-   the setting's hook makes a git repository of `task/` with one commit; the `independent`
-   side task's hook then drops an untracked `requirements.txt` into `task/`.
-6. The model cache at `hf_cache` (upstream's overlay over the cluster's cache, `:337-341`):
-   empty, and for `inference_optimization` and the post-training settings holding the task
-   config's model (and their datasets, and `safety_finetuning`'s judges) at a pinned revision
-   (`environment.model_cache`, D-130, D-170, D-210). The port fills it after writing the files of
-   steps 1, 2 and 4 and before `timer.sh` (step 3) records its start, since upstream's cache
-   was full before the run began.
-7. The setting's and the side task's `hooks/pipeline_pre_agent.sh`, sourced by the pipeline
-   just before the agent (`:325-335`): the post-training `independent` side task's starts the
-   upload-capture proxy. The port sources them unchanged in a service beside the agent that
-   shares its network namespace (`environment.services`), records the variables they give the
-   agent (`AGENT_EXTRA_ENV_ARGS`), and pins the upload endpoint's host to loopback in the
-   agent's container (D-173).
-
-Steps 1, 2 and 4 are pure file copies, computed here on the host from the pinned checkout
-(`home_entries`) with the modes `cp` gives under umask 022. Steps 3 and 5 run upstream's own
-scripts inside the sandbox, as the agent's user, at the moment the sample starts; step 7 runs
-upstream's hook in the sandbox's hook service.
-
-Why a setup solver and not `Sample.files` or `Sample.setup`: `timer.sh` must be written when
-the run starts, not when the dataset is built; the hooks must run in the sandbox as the
-agent's user; and the files need their exact modes and owner. `Sample.files` gives none of
-the three.
+A setup solver, not `Sample.files` or `Sample.setup`: `timer.sh` must be written when the run
+starts, the hooks must run in the sandbox as the agent's user, and the files need exact modes
+and owner.
 """
 
 import io
@@ -97,8 +68,8 @@ GIT_IDENTITY = {
     "GIT_COMMITTER_EMAIL": f"{AGENT_USER}@localhost",
 }
 
-# The agent's account (Apptainer gives the container the cluster account's entry); also made in
-# the evaluator's container, where upstream's evaluator runs as the same account (D-093).
+# The agent's account; also made in the evaluator's container, as upstream's evaluator runs as
+# the same account (D-093).
 ACCOUNT_SETUP = (
     f"if ! id -u {AGENT_USER} >/dev/null 2>&1; then "
     f"groupadd --gid {AGENT_UID} {AGENT_USER} && "
@@ -354,11 +325,7 @@ async def stage_workspace(
 ) -> StagingResult:
     """Stage the agent's home in the current sample's sandbox, as upstream does.
 
-    Run as the first step of a sample, in a fresh sandbox from the eval's image; the sandbox's
-    default user must be root. Creates `AGENT_USER`, writes the files of `home_entries`,
-    makes `task/timer.sh` with upstream's `create_timer.sh`, runs the `pre_agent.sh` hooks
-    as the agent's user, creates the model cache folder and, for a setting whose servers load
-    a model offline, puts that model in it (`model_cache.provision_models`).
+    Run as the first step of a sample, in a fresh sandbox; its default user must be root.
 
     Args:
         setting: setting name.
@@ -367,9 +334,8 @@ async def stage_workspace(
         agent: whose `solve.sh` the agent finds in its home; None for no launch helpers.
         task_config: task config name; None for the setting's first, as upstream.
         write_prompt: write `prompt.txt` (upstream always does).
-        model_cache: where the setting's model comes from (`auto`: the mounted host cache if
-            it has it, else a download; `seed`, `download`; `none` leaves the cache empty).
-            Ignored for settings that need none (`cuda_kernel`).
+        model_cache: where the setting's models come from (`auto`: the host seed if it has
+            them, else a download; `seed`; `download`; `none` leaves the cache empty).
         upstream: upstream tree to read; defaults to the pinned checkout.
 
     Raises:
@@ -421,9 +387,8 @@ async def stage_workspace(
     if not result.success:
         raise StagingError(f"writing the agent's home failed: {result.stderr}")
 
-    # The model cache's mount point, then the model upstream's cluster cache already held
-    # (D-130). Before `timer.sh` records its start: upstream's cache was filled before Phase 0,
-    # so no copy or download fell between the timer's creation and the agent's start.
+    # The model cache before `timer.sh` records its start: upstream's cache was full before the
+    # run began (D-130, D-170, D-210).
     result = await _exec(
         f"set -eu; install -d -m 755 -o {AGENT_USER} -g {AGENT_USER} {HF_HOME}", user="root"
     )
@@ -461,7 +426,6 @@ async def stage_workspace(
         service.endpoint_pins = await pin_endpoint_hosts(endpoint_hosts(setting, upstream))
         hook_record = asdict(service)
 
-    # The end of the scratch folder.
     result = await _exec(f"rm -rf {STAGING_DIR}", user="root")
     if not result.success:
         raise StagingError(f"finishing staging failed: {result.stderr}")
@@ -493,9 +457,8 @@ def stage_agent_workspace(
 ) -> Solver:
     """Setup solver: stage the agent's workspace for this sample (see `stage_workspace`).
 
-    Arguments left as None are read from the sample's metadata keys `setting`, `side_task`,
-    `redruntime` and `task_config`. What the hooks printed and how the model cache was
-    filled go to the sample's metadata under `environment_staging`.
+    Arguments left as None are read from the sample's metadata. The staging record goes to the
+    metadata under `STAGING_METADATA_KEY`.
     """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
