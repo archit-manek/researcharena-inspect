@@ -4,16 +4,15 @@ An [Inspect](https://inspect.aisi.org.uk/) port of [ResearchArena](https://resea
 
 **Reference setup:** the four-setting evaluation is run and evidenced on Docker with one NVIDIA H100, the port's built-in sandbox. Another Inspect sandbox can be given with `sandbox` and `sandbox_config`; without an `evaluator` service the scorer then runs in the agent's own container instead of a separate one.
 
-New to the benchmark or to this code? Start with the short review guide, [docs/REVIEW-GUIDE.md](docs/REVIEW-GUIDE.md).
+The eval's documentation, written for a reviewer, is [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md): what the port is and what "the original" means, how to run it, how a sample is scored, what has been verified, the evaluation report, one line per deviation from upstream and the main limitations. Two appendices beside it hold the detail: [EVIDENCE.md](src/researcharena_inspect/EVIDENCE.md), everything measured (the full verification table, the full evaluation report and the log behind each result), and [DEVIATIONS.md](src/researcharena_inspect/DEVIATIONS.md), everything that differs from upstream (the full deviations table and known limitations).
 
-The eval's documentation is in [src/researcharena_inspect/README.md](src/researcharena_inspect/README.md). For a review, read it in this order:
+Where things stand (version 10-G, 23 Nov 2026; every result was produced at 10-F or earlier, and 10-G only removes the built-in Kubernetes backend and the Hawk material):
 
-1. [What is in the port](src/researcharena_inspect/README.md#what-is-in-the-port) and [what "the original" means here](src/researcharena_inspect/README.md#what-the-original-means-here): the port follows upstream's code at commit `b922f4b`, reuses its task files, evaluators and templates unchanged, and rewrites only the bash orchestration as Inspect tasks.
-2. [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how): one row per check, with the result and the test or run behind it, and a list of what has not been verified.
-3. [Deviations from upstream](src/researcharena_inspect/README.md#deviations-from-upstream) and [Known limitations](src/researcharena_inspect/README.md#known-limitations).
-4. [How to run it](src/researcharena_inspect/README.md#how-to-run-it), on one machine with Docker, and the paper's setup as run configs, one per setting and one for the monitor: [`run_configs/`](src/researcharena_inspect/run_configs/).
-
-Where things stand (22 Nov 2026, version 10-F; version 10-G, 23 Nov, only removes the built-in Kubernetes backend and the Hawk material, and every result was produced at 10-F or earlier): all four settings and all 13 of upstream's side tasks are ported, and the monitor task builds for all four. In the tests, prompts match upstream's own scripts byte for byte, and staged workspaces and scorer outputs match upstream's pipeline on CPU stand-ins (staging and orchestration, not GPU behaviour). On the H100 the port's scoring agrees with upstream's `evaluate.py` run directly on two capabilities and two safety submissions, within bands fixed beforehand, and published submissions were re-scored (safety 94 of 94, mean absolute difference 0.027; capabilities 61 of 71, 0.028; CUDA all 113 workspaces, 107 at 0.824 to 1.039 of published and 6 at 0.0); inference is the exception, with 20 of the 104 published passes scoring 0.0 on the released image (vLLM 0.19.1) in one scoring each (19 go with the serving stack and one was a one-off of upstream's scorer); on a separate comparison image with vLLM 0.17.0, a version seen in the published artifacts, all 20 pass every gate, while the released image stays the port's default; the general shortfall from the published scores remains unexplained. Live, with Sonnet 4.6: sixteen one-hour `cuda_kernel` runs, fifteen one-hour `inference_optimization` runs and seven five-hour post-training runs, one per cell, reported as observed and not as a reproduction of the paper's rates; ReAct with GPT-5.5 ran a half-hour baseline in each setting at 10-F. On Docker every setting is scored in a container of its own; replayed that way, three of the fifteen live inference runs give 0.0 (D-255). Since 9-F Claude Code gets its first prompt on stdin, as upstream does; every headline Claude Code run predates that (D-078). In both upload (`independent`) runs the agent refused the upload, so capture is shown by tests, not live. The details, and what has not been verified, are in [What has been verified, and how](src/researcharena_inspect/README.md#what-has-been-verified-and-how).
+- All four settings and all 13 of upstream's side tasks are ported, and the monitor task builds for all four.
+- In the tests, prompts match upstream's own scripts byte for byte, and staged workspaces and scorer outputs match upstream's pipeline on CPU stand-ins; on the H100 the port's scoring agrees with upstream's `evaluate.py` run directly, within bands fixed beforehand.
+- Published submissions re-scored on the H100: safety 94 of 94 (mean absolute difference 0.027), capabilities 61 of 71 (0.028), CUDA 107 of 113 at 0.824 to 1.039 of published; inference is the exception, with 20 of the 104 published passes scoring 0.0 on the released image (vLLM 0.19.1), all of which pass on a comparison image with vLLM 0.17.0.
+- Live, with Sonnet 4.6: sixteen one-hour `cuda_kernel` runs, fifteen one-hour `inference_optimization` runs and seven five-hour post-training runs, reported as observed and not as a reproduction of the paper's rates; ReAct with GPT-5.5 ran a half-hour baseline in each setting at 10-F.
+- What has not been shown: [the eval README](src/researcharena_inspect/README.md#what-has-been-verified-and-how).
 
 ## Getting started
 
@@ -63,8 +62,8 @@ src/researcharena_inspect/        the eval
   run_configs/                    the paper's setup as `inspect eval --run-config` files: one per setting, one for the monitor
   pins.py, upstream.py, published.py   pinned versions, the upstream checkout, the published runs
   eval.yaml, README.md            the eval's metadata and documentation
+  EVIDENCE.md, DEVIATIONS.md      the README's appendices: everything measured; everything that differs from upstream
 tests/researcharena_inspect/      its tests
-docs/REVIEW-GUIDE.md              a short guide for reviewers
 agent_artefacts/                  the validity report, the review summary, and the trajectory analysis (Scout scanners, runner, results, ..._ANALYSIS.md)
 NOTICE                            attribution for the code adapted from ResearchArena (MIT)
 ```

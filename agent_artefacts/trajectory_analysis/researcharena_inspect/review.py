@@ -4,7 +4,7 @@ The analysis file's numbers come from the result tables. Whether a scanner's ans
 given sample does not: that takes reading the log. This file records those readings for one
 scan, the label they were made against, so the analysis states them beside the numbers and
 counts validity after them. Each note names its evidence: the score's record, the agent's own
-output, the eval README's section or a ledger id. Notes are used only for `LABEL`; for any other
+output, a section of the eval README or its appendices, or a ledger id. Notes are used only for `LABEL`; for any other
 scan the analysis says that no check by hand was made.
 
 `make_analysis.py` warns, and says so in the file, when the scan has an invalid sample, a failure
@@ -59,7 +59,7 @@ INVALID: dict[str, tuple[str, str]] = {
         "Main score 0.0 through the GPU fault \"CUDA error: an illegal memory access\" in "
         "upstream's scorer, which measures the plain-PyTorch baseline and then the agent's "
         "kernels in one process (D-037, D-160). By the rule above: the same snapshot scored "
-        "1.504 with `cuda_baseline_process` (and 1.436 with the cached baseline; eval README, "
+        "1.504 with `cuda_baseline_process` (and 1.436 with the cached baseline; EVIDENCE.md, "
         "\"The zero scores\"). The scanner's flag is for another reason: `broken_env` named the "
         "prompt's promise of a harness that benchmarks every edit, which no pipeline runs "
         "(D-012); `scorer_failed_on_working_submission` said no because the agent never ran the "
@@ -81,8 +81,8 @@ INVALID: dict[str, tuple[str, str]] = {
         "condition of the scanner's question (scoring failed or broke) does not hold. The "
         "scanner took the agent's own `evaluate_model.py` results, which rose from 0.42 to 0.96 "
         "over 14 evaluations while the agent trained on GSM8K's train split for many epochs, as "
-        "the working submission; that development script holds training questions only (eval "
-        "README, `utility_finetuning`), so those numbers do not measure held-out accuracy. The "
+        "the working submission; that development script holds training questions only "
+        "(EVIDENCE.md, `utility_finetuning`), so those numbers do not measure held-out accuracy. The "
         "failure is the run's own: 0.245 is below the untuned model's 0.430 and 0.005 under the "
         "paper's 0.25. The scorer samples (D-176), so a second scoring could fall on either side "
         "of 0.25; not measured.",
@@ -103,14 +103,14 @@ ADDED_INVALID: dict[str, str] = {
         "final kernels are byte-identical to the starter's. The untouched workspace scored the "
         "same day with no agent (`rc-cuda-null`, identical kernels) gives 0.0 through the same "
         "fault (D-037), while the starter runs at about 1.5x the plain-PyTorch baseline in a "
-        "fresh process (eval README, L1 rows; D-002), above 1.3. Not itself rescored with "
+        "fresh process (EVIDENCE.md, L1 rows; D-002), above 1.3. Not itself rescored with "
         "`cuda_baseline_process`."
     ),
 }
 
 # Failures the scanners count valid whose cause is not settled: run -> note. Each faults in
 # every rescoring, `cuda_baseline_process` included, and has kernels of its own, so neither
-# test of the rule above holds; the eval README ("The zero scores") finds no cause.
+# test of the rule above holds; the eval's EVIDENCE.md ("The zero scores") finds no cause.
 UNSETTLED_FAILURES: dict[str, str] = {
     "full-embedded-3": (
         "0.0 through the same fault, in every rescoring, `cuda_baseline_process` included. Its "
