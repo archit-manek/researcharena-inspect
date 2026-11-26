@@ -340,7 +340,7 @@ Upstream's behaviour is the default, flaws included. These are the deviations th
 | D-057 | `main_score` as the index's main score |
 | D-072 | A judgement the pipeline rejects is read as upstream's results table reads it |
 
-The other 43 deviations change how a run is set up or recorded (the containers, the CLI's installation, the model cache, the timers, what the log keeps): [DEVIATIONS.md](DEVIATIONS.md#deviations-from-upstream). The ReAct, `null` and `replay` agents and the checks without an agent are additions with no upstream counterpart.
+The other 41 deviations change how a run is set up or recorded (the containers, the CLI's installation, the model cache, the timers, what the log keeps): [DEVIATIONS.md](DEVIATIONS.md#set-up-and-recording-deviations). The ReAct, `null` and `replay` agents and the checks without an agent are additions with no upstream counterpart.
 
 ## Known limitations
 
